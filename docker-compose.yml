@@ -1,0 +1,68 @@
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    env_file:
+      - litellm/litellm.env
+    environment:
+      - DATABASE_ENABLE_SESSION_SHARING=True
+      - STORE_MODEL_IN_DB=True
+    ports:
+      - "4000:4000"
+    volumes:
+     - ./litellm/config.yaml:/app/config.yaml
+    command:
+     - "--config=/app/config.yaml"
+    depends_on:
+      - litellm-claude
+      - litellm-db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  litellm-claude:
+    image: ghcr.io/cabinlab/litellm-claude-code:latest
+    env_file:
+      - litellm/litellm-claude.env
+    volumes:
+      # The permissions don't work with directory mounting.
+      # - ./litellm/claude:/home/claude/.claude
+      - claude-auth:/home/claude/.claude
+  litellm-db:
+    image: postgres:18-alpine
+    env_file:
+      - litellm/litellm-db.env
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: llmproxy
+    volumes:
+      - ./litellm/db:/var/lib/postgresql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d litellm -U llmproxy" ]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    env_file:
+      - open-webui/open-webui.env
+    environment:
+      - CORS_ALLOW_ORIGIN=https://webui.agx.fi;http://192.168.20.25:3000;http://localhost:3000
+      - ENABLE_OLLAMA_API=false
+      - ENABLE_OPENAI_API=true
+      - OPENAI_API_BASE_URL=http://litellm:4000/v1
+      - USER_AGENT="Mozilla/5.0 (X11; Linux x86_64; rv:151.0) Gecko/20100101 Firefox/151.0"
+      # - WEBUI_SESSION_COOKIE_SECURE=true
+      # - WEBUI_AUTH_COOKIE_SECURE=true
+    ports:
+      - "3000:8080"
+    volumes:
+      - ./open-webui/data:/app/backend/data
+    depends_on:
+      - litellm
+
+volumes:
+  claude-auth:

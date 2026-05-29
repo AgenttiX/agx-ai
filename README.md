@@ -1,2 +1,1 @@
-# agx-ai
-AI server configs
+# AgenttiX AI server configs

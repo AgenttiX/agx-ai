@@ -1,0 +1,6 @@
+.idea
+litellm/litellm.env
+litellm/litellm-claude.env
+litellm/litellm-db.env
+open-webui/data
+open-webui/open-webui.env

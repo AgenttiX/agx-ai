@@ -1,0 +1,15 @@
+# model_list:
+
+general_settings:
+  # master-key: sk-SET_ME_IN_ENV
+  # alerting: [""]
+
+litellm_settings:
+  allowed_fails: 3
+  # fallbacks:
+  # context_window_fallbacks:
+
+router_settings:
+  routing_strategy: "simple-shuffle"
+  num_retries: 2
+  timeout: 6000
