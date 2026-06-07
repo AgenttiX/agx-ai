@@ -1,6 +1,50 @@
 services:
+  gpt-researcher:
+    image: gptresearcher/gpt-researcher
+    container_name: gpt-researcher
+    env_file:
+      - ./gpt-researcher/gpt-researcher.env
+    environment:
+      # Descriptions of the options are available here:
+      # https://docs.gptr.dev/docs/gpt-researcher/gptr/config
+      - IMAGE_GENERATION_ENABLED=true
+      # - IMAGE_GENERATION_MAX_IMAGES=3
+      - IMAGE_GENERATION_MODEL=models/gemini-3.1-flash-image
+      # - IMAGE_GENERATION_STYLE=dark
+      # - LANGCHAIN_TRACING_V2=true
+      # - LANGCHAIN_PROJECT=gpt-researcher
+      - OPENAI_BASE_URL=http://litellm:4000/v1
+      - RETRIEVER=tavily,arxiv
+      - SCRAPER=tavily_extract
+      # ------
+      # LLM types
+      # ------
+      - FAST_LLM=openai:google/gemma-4-e4b
+      - SMART_LLM=openai:google/gemma-4-31b
+      # Model for strategic operations like generating research plans and strategies
+      - STRATEGIC_LLM=openai:google/gemma-4-31b
+      - EMBEDDING=openai:text-embedding-nomic-embed-text-v2-moe
+    ports:
+      - "8000:8000"
+    user: root
+    volumes:
+      - ./gpt-researcher/logs:/usr/src/app/logs
+      - ./gpt-researcher/my-docs:/usr/src/app/my-docs
+      - ./gpt-researcher/outputs:/usr/src/app/outputs
+  gptr-nextjs:
+    image: gptresearcher/gptr-nextjs
+    container_name: gptr-nextjs
+    depends_on:
+      - gpt-researcher
+    environment:
+      - NEXT_PUBLIC_GPTR_API_URL=http://gpt-researcher:8000
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./gptr-nextjs/outputs:/app/outputs
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable
+    container_name: litellm
     env_file:
       - litellm/litellm.env
     environment:
@@ -25,6 +69,7 @@ services:
       start_period: 40s
   litellm-claude:
     image: ghcr.io/cabinlab/litellm-claude-code:latest
+    container_name: litellm-claude
     env_file:
       - litellm/litellm-claude.env
     volumes:
@@ -33,6 +78,7 @@ services:
       - claude-auth:/home/claude/.claude
   litellm-db:
     image: postgres:18-alpine
+    container_name: litellm-db
     env_file:
       - litellm/litellm-db.env
     environment:

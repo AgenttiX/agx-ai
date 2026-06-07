@@ -6,6 +6,8 @@ general_settings:
 
 litellm_settings:
   allowed_fails: 3
+  # Drop unrecognized parameters
+  drop_params: true
   # fallbacks:
   # context_window_fallbacks:
 

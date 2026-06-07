@@ -1,4 +1,7 @@
 .idea
+gpt-researcher/gpt-researcher.env
+gpt-researcher/logs
+gpt-researcher/outputs
 litellm/litellm.env
 litellm/litellm-claude.env
 litellm/litellm-db.env
