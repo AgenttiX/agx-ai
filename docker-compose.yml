@@ -20,9 +20,9 @@ services:
       # LLM types
       # ------
       - FAST_LLM=openai:google/gemma-4-e4b
-      - SMART_LLM=openai:google/gemma-4-31b
+      - SMART_LLM=openai:google/gemma-4-26b-a4b-qat
       # Model for strategic operations like generating research plans and strategies
-      - STRATEGIC_LLM=openai:google/gemma-4-31b
+      - STRATEGIC_LLM=openai:google/gemma-4-26b-a4b-qat
       - EMBEDDING=openai:text-embedding-nomic-embed-text-v2-moe
     ports:
       - "8000:8000"
