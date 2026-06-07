@@ -1,0 +1,31 @@
+services:
+  llama-cpp:
+    # Todo: test the rocm-727 tag
+    image: mxxm/llama-cpp-gfx906:rocm-633
+    container_name: llama-cpp
+    entrypoint: ["llama-server"]
+    command: [
+      "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
+      "--gpu-layers", "all",
+      # "--ctx-size", "24832",  # This is set automatically
+      "--host", "0.0.0.0"
+    ]
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    env_file:
+      - ./llama-cpp.env
+    group_add:
+      - video
+    ports:
+      - "8080:8080"
+    volumes:
+      - /home/mika/.lmstudio/models:/models
+    restart: unless-stopped
+    # security_opt:
+    #   - seccomp:unconfined
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
