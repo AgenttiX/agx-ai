@@ -91,14 +91,35 @@ services:
       interval: 1s
       timeout: 5s
       retries: 10
+  open-terminal:
+    image: ghcr.io/open-webui/open-terminal
+    container_name: open-terminal
+    env_file:
+      - open-terminal/open-terminal.env
+    # environment:
+      # - CORS_ALLOWED_ORIGINS=""
+      # - OPEN_TERMINAL_PACKAGES="gfortran optipng pandoc pdftk"
+      # - OPEN_TERMINAL_NPM_PACKAGES=""
+      # - OPEN_TERMINAL_PIP_PACKAGES=""
+    ports:
+      - "8001:8000"
+    volumes:
+      # This effectively gives the container root access on the host machine. Use with caution.
+      # - /var/run/docker.sock:/var/run/docker.sock
+      - ./open-terminal/logs:/var/log/open-terminal
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
     env_file:
       - open-webui/open-webui.env
     environment:
+      # Descriptions of the options are available here:
+      # https://docs.openwebui.com/reference/env-configuration/
       - CORS_ALLOW_ORIGIN=https://webui.agx.fi;http://192.168.20.25:3000;http://localhost:3000
+      # - ENABLE_IMAGE_GENERATION=true
       - ENABLE_OLLAMA_API=false
       - ENABLE_OPENAI_API=true
+      # - ENABLE_WEB_SEARCH=true
       - OPENAI_API_BASE_URL=http://litellm:4000/v1
       - USER_AGENT="Mozilla/5.0 (X11; Linux x86_64; rv:151.0) Gecko/20100101 Firefox/151.0"
       # - WEBUI_SESSION_COOKIE_SECURE=true
