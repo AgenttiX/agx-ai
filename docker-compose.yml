@@ -26,6 +26,7 @@ services:
       - EMBEDDING=openai:text-embedding-nomic-embed-text-v2-moe
     ports:
       - "8000:8000"
+    restart: unless-stopped
     user: root
     volumes:
       - ./gpt-researcher/logs:/usr/src/app/logs
@@ -40,6 +41,7 @@ services:
       - NEXT_PUBLIC_GPTR_API_URL=http://gpt-researcher:8000
     ports:
       - "3001:3000"
+    restart: unless-stopped
     volumes:
       - ./gptr-nextjs/outputs:/app/outputs
   litellm:
@@ -52,6 +54,7 @@ services:
       - STORE_MODEL_IN_DB=True
     ports:
       - "4000:4000"
+    restart: unless-stopped
     volumes:
      - ./litellm/config.yaml:/app/config.yaml
     command:
@@ -72,6 +75,7 @@ services:
     container_name: litellm-claude
     env_file:
       - litellm/litellm-claude.env
+    restart: unless-stopped
     volumes:
       # The permissions don't work with directory mounting.
       # - ./litellm/claude:/home/claude/.claude
@@ -84,6 +88,7 @@ services:
     environment:
       POSTGRES_DB: litellm
       POSTGRES_USER: llmproxy
+    restart: unless-stopped
     volumes:
       - ./litellm/db:/var/lib/postgresql
     healthcheck:
@@ -103,6 +108,7 @@ services:
       # - OPEN_TERMINAL_PIP_PACKAGES=""
     ports:
       - "8001:8000"
+    restart: unless-stopped
     volumes:
       # This effectively gives the container root access on the host machine. Use with caution.
       # - /var/run/docker.sock:/var/run/docker.sock
@@ -126,6 +132,7 @@ services:
       # - WEBUI_AUTH_COOKIE_SECURE=true
     ports:
       - "3000:8080"
+    restart: unless-stopped
     volumes:
       - ./open-webui/data:/app/backend/data
     depends_on:
