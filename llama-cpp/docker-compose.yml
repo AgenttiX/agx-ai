@@ -1,10 +1,16 @@
 services:
   llama-cpp:
-    # Todo: test the rocm-727 tag
-    image: mxxm/llama-cpp-gfx906:rocm-633
+    # Image 1)
+    # The rocm-727 tag crashes with this error:
+    # llama-server: error while loading shared libraries: librccl.so.1: cannot open shared object file: No such file or directory
+    # image: mxxm/llama-cpp-gfx906:rocm-633
+    # Image 2)
+    # https://github.com/mixa3607/ML-gfx906
+    image: mixa3607/llama.cpp-gfx906:b10069-rocm-7.2.4-858c6fc
     container_name: llama-cpp
-    entrypoint: ["llama-server"]
+    # entrypoint: ["llama-server"]
     command: [
+      "--server",
       "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
       "--gpu-layers", "all",
       # "--ctx-size", "24832",  # This is set automatically
