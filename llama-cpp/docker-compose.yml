@@ -3,8 +3,10 @@ services:
     # Image 1)
     # The rocm-727 tag crashes with this error:
     # llama-server: error while loading shared libraries: librccl.so.1: cannot open shared object file: No such file or directory
+    # The rocm-633 tag works.
     # image: mxxm/llama-cpp-gfx906:rocm-633
     # Image 2)
+    # This provides a newer ROCm version.
     # https://github.com/mixa3607/ML-gfx906
     image: mixa3607/llama.cpp-gfx906:b10069-rocm-7.2.4-858c6fc
     container_name: llama-cpp
