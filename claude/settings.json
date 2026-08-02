@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(* --help *)",
+      "Bash(* --version)",
+      "Bash(apt-cache *)",
+      "Bash(arduino-cli board *)",
+      "Bash(arduino-cli help *)",
+      "Bash(arduino-cli sketch *)",
+      "Bash(arduino-cli compile *)",
+      "Bash(arduino-cli upload *)",
+      "Bash(cargo build *)",
+      "Bash(cargo info *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fetch *)",
+      "Bash(cargo search *)",
+      "Bash(cargo test *)",
+      "Bash(conda * --dry-run *)",
+      "Bash(conda list)",
+      "Bash(curl *)",
+      "Bash(dpkg -l *)",
+      "Bash(lsb_release *)",
+      "bash(lspci *)",
+      "Bash(mypy)",
+      "Bash(pip-check)",
+      "Bash(pip download *)",
+      "Bash(pip freeze *)",
+      "Bash(pip list *)",
+      "Bash(pip search *)",
+      "Bash(pip show *)",
+      "Bash(pip check *)",
+      "Bash(pylint *)",
+      "Bash(pytest *)",
+      "Bash(timeout * cargo run)",
+      "Bash(uname *)",
+      "Bash(vulkaninfo *)",
+      "Read(/dev/**)",
+      "Read(~/.cargo/**)",
+      "Read(~/.zgen/**)",
+      "Read(~/.zshenv)",
+      "Read(~/.zshrc)",
+      "Read(~/Git/**)",
+      "Edit(/tmp/**)",
+      "WebFetch(domain:*)",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(git push *)"
+    ]
+  },
+  "model": "opus",
+  "enableWorkflows": true,
+  "enabledPlugins": {
+    "clangd-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "tui": "fullscreen",
+  "theme": "dark",
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true
+}
