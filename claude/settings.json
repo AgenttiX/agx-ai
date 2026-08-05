@@ -22,7 +22,7 @@
       "Bash(curl *)",
       "Bash(dpkg -l *)",
       "Bash(lsb_release *)",
-      "bash(lspci *)",
+      "Bash(lspci *)",
       "Bash(mypy)",
       "Bash(pip-check)",
       "Bash(pip download *)",
@@ -36,18 +36,34 @@
       "Bash(timeout * cargo run)",
       "Bash(uname *)",
       "Bash(vulkaninfo *)",
-      "Read(/dev/**)",
+      "Bash(where *)",
+      "Bash(which *)",
+      "Edit(//tmp/**)",
+      "PowerShell(Test-Path *)",
+      "Read(//c/cygwin64/**)",
+      "Read(//c/phoronix-test-suite/**)",
+      "Read(//c/PHP/**)",
+      "Read(//c/ProgramData/chocolatey/**)",
+      "Read(//c/Qt/**)",
+      "Read(//c/tools/**)",
+      "Read(//dev/**)",
       "Read(~/.cargo/**)",
       "Read(~/.zgen/**)",
       "Read(~/.zshenv)",
       "Read(~/.zshrc)",
       "Read(~/Git/**)",
-      "Edit(/tmp/**)",
-      "WebFetch(domain:*)",
+      "WebFetch",
       "WebSearch"
     ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "PowerShell(git commit *)",
+      "PowerShell(git push *)"
+    ],
     "deny": [
-      "Bash(git push *)"
+      "Edit(//v/**)",
+      "Edit(//w/**)"
     ]
   },
   "model": "opus",
