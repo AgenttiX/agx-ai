@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 CLAUDE_SETTINGS="${CLAUDE_DIR}/settings.json"
@@ -18,3 +18,4 @@ else
   fi
   ln -s "${SCRIPT_DIR}/settings.json" "${CLAUDE_SETTINGS}"
 fi
+echo "Claude configured."
