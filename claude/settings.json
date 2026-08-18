@@ -93,6 +93,7 @@
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
+  "remoteControlAtStartup": true,
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
