@@ -20,6 +20,7 @@
       "Bash(cargo search *)",
       "Bash(cargo test *)",
       "Bash(chromium * --screenshot=* *)",
+      "Bash(clinfo *)",
       "Bash(conda * --dry-run *)",
       "Bash(conda list)",
       "Bash(convert *)",
@@ -32,6 +33,7 @@
       "Bash(lspci *)",
       "Bash(montage *)",
       "Bash(mypy *)",
+      "Bash(nvidia-smi *)",
       "Bash(pdfinfo *)",
       "Bash(pip-check *)",
       "Bash(pip download *)",
@@ -79,6 +81,7 @@
       "Edit(//v/**)",
       "Edit(//w/**)",
       "Read(//mnt/**)",
+      "Read(//mnt/holvi)",
       "Read(~/Vaults)"
     ]
   },
@@ -86,6 +89,8 @@
   "enableWorkflows": true,
   "enabledPlugins": {
     "clangd-lsp@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
   "tui": "fullscreen",
