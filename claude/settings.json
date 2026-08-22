@@ -80,9 +80,14 @@
     "deny": [
       "Edit(//v/**)",
       "Edit(//w/**)",
-      "Read(//mnt/**)",
-      "Read(//mnt/holvi)",
-      "Read(~/Vaults)"
+      "Read(//mnt/agx-file/archive/**)",
+      "Read(//mnt/agx-file/backup/**)",
+      "Read(//mnt/agx-file/files/**)",
+      "Read(//mnt/dbfiles/**)",
+      "Read(//mnt/holvi/**)",
+      "Read(//mnt/rk-files/**)",
+      "Read(//mnt/vxl-files/**)",
+      "Read(~/Vaults/**)"
     ]
   },
   "model": "opus",
