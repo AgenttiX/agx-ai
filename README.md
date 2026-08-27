@@ -22,3 +22,6 @@
 
 ## Other software
 - [Claude Desktop for Linux](https://github.com/aaddrick/claude-desktop-debian)
+
+## Notes
+- [Don't oversaturate the CPU with too many threads](https://github.com/ggml-org/llama.cpp/blob/master/docs/development/token_generation_performance_tips.md#verifying-that-the-cpu-is-not-oversaturated)

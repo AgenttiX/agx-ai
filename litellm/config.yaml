@@ -3,15 +3,24 @@
 general_settings:
   # master-key: sk-SET_ME_IN_ENV
   # alerting: [""]
+  background_health_checks: true
+  enable_health_check_routing: true
+  health_check_details: true
+  health_check_ignore_transient_errors: true
+  health_check_interval: 60
 
 litellm_settings:
-  allowed_fails: 3
   # Drop unrecognized parameters
   drop_params: true
   # fallbacks:
   # context_window_fallbacks:
 
 router_settings:
-  routing_strategy: "simple-shuffle"
-  num_retries: 2
+  allowed_fails: 0
+  cooldown_time: 120  # This must be longer than health_check_interval.
+  enable_pre_call_checks: true
+  enable_weighted_failover: true
+  routing_strategy: simple-shuffle
+  # max_fallbacks: 5
+  num_retries: 1
   timeout: 6000
