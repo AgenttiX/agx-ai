@@ -121,15 +121,18 @@ services:
     environment:
       # Descriptions of the options are available here:
       # https://docs.openwebui.com/reference/env-configuration/
-      - CORS_ALLOW_ORIGIN=https://webui.agx.fi;http://192.168.20.25:3000;http://localhost:3000
-      # - ENABLE_IMAGE_GENERATION=true
-      - ENABLE_OLLAMA_API=false
-      - ENABLE_OPENAI_API=true
-      # - ENABLE_WEB_SEARCH=true
-      - OPENAI_API_BASE_URL=http://litellm:4000/v1
-      - USER_AGENT="Mozilla/5.0 (X11; Linux x86_64; rv:151.0) Gecko/20100101 Firefox/151.0"
-      # - WEBUI_SESSION_COOKIE_SECURE=true
-      # - WEBUI_AUTH_COOKIE_SECURE=true
+      CORS_ALLOW_ORIGIN: https://webui.agx.fi;http://192.168.20.25:3000;http://localhost:3000
+      DEFAULT_MODEL_PARAMS: '{"function_calling": "native"}'
+      # ENABLE_IMAGE_GENERATION: true
+      ENABLE_OLLAMA_API: false
+      ENABLE_OPENAI_API: true
+      # ENABLE_WEB_SEARCH: true
+      FORWARDED_ALLOW_IPS: 192.168.25.21
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      USER_AGENT: "Mozilla/5.0 (X11; Linux x86_64; rv:151.0) Gecko/20100101 Firefox/151.0"
+      # WEBUI_SESSION_COOKIE_SAME_SITE: strict
+      # WEBUI_SESSION_COOKIE_SECURE: true
+      # WEBUI_AUTH_COOKIE_SECURE: true
     ports:
       - "3000:8080"
     restart: unless-stopped
