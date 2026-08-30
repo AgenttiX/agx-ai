@@ -1,0 +1,27 @@
+services:
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    container_name: llama-cpp
+    env_file:
+      - ../llama-cpp-radeon-vii/llama-cpp.env
+    restart: unless-stopped
+    ports:
+      - "9931:9931"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      # Select the LLM model here
+      # - ./preset-gemma.ini:/etc/llama.cpp/preset.ini:ro
+      - ./preset-qwen.ini:/etc/llama.cpp/preset.ini:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
