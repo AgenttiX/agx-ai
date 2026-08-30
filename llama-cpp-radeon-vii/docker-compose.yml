@@ -8,15 +8,16 @@ services:
     # Image 2)
     # This provides a newer ROCm version.
     # https://github.com/mixa3607/ML-gfx906
-    image: mixa3607/llama.cpp-gfx906:b10069-rocm-7.2.4-858c6fc
-    container_name: llama-cpp
-    # entrypoint: ["llama-server"]
+    image: mixa3607/llama.cpp-gfx906:v0.3.0-rocm-7.14
+    container_name: llama-cpp-radeon-vii
+    entrypoint: ["/app/llama-server"]
     # command: [
-    #   "--server",
-    #   "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
-    #   "--gpu-layers", "all",
-    #   # "--ctx-size", "24832",  # This is set automatically
-    #   "--host", "0.0.0.0"
+      # "--server",
+      # "--models-preset", "/etc/llama.cpp/preset.ini"
+      # "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
+      # "--gpu-layers", "all",
+      # "--ctx-size", "24832",  # This is set automatically
+      # "--host", "0.0.0.0"
     # ]
     devices:
       - /dev/dri:/dev/dri
@@ -30,12 +31,12 @@ services:
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
-      - ../llama-cpp/preset-cpu.ini:/etc/llama.cpp/preset.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
     restart: unless-stopped
     # security_opt:
     #   - seccomp:unconfined
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
       interval: 30s
       timeout: 5s
       retries: 3
