@@ -1,5 +1,5 @@
 services:
-  llama-cpp:
+  llama-cpp-radeon-vii:
     # Image 1)
     # The rocm-727 tag crashes with this error:
     # llama-server: error while loading shared libraries: librccl.so.1: cannot open shared object file: No such file or directory
@@ -11,13 +11,13 @@ services:
     image: mixa3607/llama.cpp-gfx906:b10069-rocm-7.2.4-858c6fc
     container_name: llama-cpp
     # entrypoint: ["llama-server"]
-    command: [
-      "--server",
-      "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
-      "--gpu-layers", "all",
-      # "--ctx-size", "24832",  # This is set automatically
-      "--host", "0.0.0.0"
-    ]
+    # command: [
+    #   "--server",
+    #   "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
+    #   "--gpu-layers", "all",
+    #   # "--ctx-size", "24832",  # This is set automatically
+    #   "--host", "0.0.0.0"
+    # ]
     devices:
       - /dev/dri:/dev/dri
       - /dev/kfd:/dev/kfd
@@ -26,9 +26,11 @@ services:
     group_add:
       - video
     ports:
-      - "8080:8080"
+      - "9932:9931"
     volumes:
-      - /home/mika/.lmstudio/models:/models
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      - ../llama-cpp/preset-cpu.ini:/etc/llama.cpp/preset.ini:ro
     restart: unless-stopped
     # security_opt:
     #   - seccomp:unconfined

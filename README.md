@@ -8,7 +8,7 @@
   - Use Claude Pro or Max subscription instead of an API key
 - [llama.cpp](https://llama-cpp.com/)
   - For running local models
-  - [Custom container for Radeon VII with ROCm](./llama-cpp/docker-compose.yml)
+  - [Custom container for Radeon VII with ROCm](llama-cpp-radeon-vii/docker-compose.yml)
 - [LM Studio](https://lmstudio.ai/)
   - For running local models
 - [Open Terminal](https://github.com/open-webui/open-terminal)

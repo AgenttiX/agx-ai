@@ -1,39 +1,40 @@
+x-common: &common
+  env_file:
+    - ./llama-cpp.env
+  restart: unless-stopped
+  healthcheck:
+    test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
 services:
-  llama-cpp:
-    # Image 1)
-    # The rocm-727 tag crashes with this error:
-    # llama-server: error while loading shared libraries: librccl.so.1: cannot open shared object file: No such file or directory
-    # The rocm-633 tag works.
-    # image: mxxm/llama-cpp-gfx906:rocm-633
-    # Image 2)
-    # This provides a newer ROCm version.
-    # https://github.com/mixa3607/ML-gfx906
-    image: mixa3607/llama.cpp-gfx906:b10069-rocm-7.2.4-858c6fc
-    container_name: llama-cpp
-    # entrypoint: ["llama-server"]
-    command: [
-      "--server",
-      "--model", "/models/lmstudio-community/gemma-4-26B-A4B-it-QAT-GGUF/gemma-4-26B-A4B-it-QAT-Q4_0.gguf",
-      "--gpu-layers", "all",
-      # "--ctx-size", "24832",  # This is set automatically
-      "--host", "0.0.0.0"
-    ]
-    devices:
-      - /dev/dri:/dev/dri
-      - /dev/kfd:/dev/kfd
-    env_file:
-      - ./llama-cpp.env
-    group_add:
-      - video
+  llama-cpp-gpu:
+    <<: *common
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    container_name: llama-cpp-gpu
     ports:
-      - "8080:8080"
+      - "9931:9931"
     volumes:
-      - /home/mika/.lmstudio/models:/models
-    restart: unless-stopped
-    # security_opt:
-    #   - seccomp:unconfined
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      # - ../models:/models
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset-gpu.ini:/etc/llama.cpp/preset.ini:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all
+  llama-cpp-cpu:
+    <<: *common
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama-cpp-cpu
+    ports:
+      - "9932:9931"
+    volumes:
+      # - ../models:/models
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset-cpu.ini:/etc/llama.cpp/preset.ini:ro

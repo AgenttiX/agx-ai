@@ -7,6 +7,7 @@ litellm/litellm-claude.env
 litellm/litellm-db.env
 llama-cpp/llama-cpp.env
 llama-cpp-radeon-vii/llama-cpp.env
+models
 open-terminal/open-terminal.env
 open-webui/data
 open-webui/open-webui.env
