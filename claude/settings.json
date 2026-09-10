@@ -71,12 +71,6 @@
       "WebFetch",
       "WebSearch"
     ],
-    "ask": [
-      "Bash(git commit *)",
-      "Bash(git push *)",
-      "PowerShell(git commit *)",
-      "PowerShell(git push *)"
-    ],
     "deny": [
       "Edit(//v/**)",
       "Edit(//w/**)",
@@ -88,9 +82,15 @@
       "Read(//mnt/rk-files/**)",
       "Read(//mnt/vxl-files/**)",
       "Read(~/Vaults/**)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "PowerShell(git commit *)",
+      "PowerShell(git push *)"
     ]
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "enableWorkflows": true,
   "enabledPlugins": {
     "clangd-lsp@claude-plugins-official": true,
@@ -98,9 +98,9 @@
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "remoteControlAtStartup": true,
   "tui": "fullscreen",
   "theme": "dark",
-  "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }
