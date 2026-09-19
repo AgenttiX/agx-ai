@@ -35,15 +35,26 @@ def latex_errors(log: Path) -> list[str]:
 
 
 def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -> bool:
-    """Build ``out_pdf`` from one chat. Returns True when a PDF was written."""
+    """Build ``out_pdf`` from one chat. Returns True when a PDF was written.
+
+    All intermediate files (Markdown, LaTeX sources, extracted images, TeX
+    auxiliary files, bibliography) are written to one build directory. Without
+    ``--keep-tex`` that is a fresh directory under ``$TMPDIR`` (usually /tmp)
+    created with mode 0700 and removed again when the conversion finishes,
+    also on errors. With ``--keep-tex`` it is ``<pdf name>_tex`` next to the
+    PDF, created with the same (umask-based) permissions as the PDF.
+    """
     if opts.keep_tex:
         build_dir = (out_pdf.parent / (out_pdf.stem + "_tex")).resolve()
         build_dir.mkdir(parents=True, exist_ok=True)
-        tmp = None
-    else:
-        tmp = tempfile.TemporaryDirectory(prefix="owui2pdf-")
-        build_dir = Path(tmp.name).resolve()
+        return _build(chat_item, out_pdf, opts, emoji_font, build_dir, keep=True)
+    # mkdtemp creates the directory with mode 0700; the context manager deletes it.
+    with tempfile.TemporaryDirectory(prefix="owui2pdf-") as tmp:
+        return _build(chat_item, out_pdf, opts, emoji_font, Path(tmp).resolve(), keep=False)
 
+
+def _build(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None,
+           build_dir: Path, keep: bool) -> bool:
     media_dir = build_dir / "media"
     media_dir.mkdir(exist_ok=True)
     md, meta, bib = build_markdown(chat_item, opts, media_dir)
@@ -95,7 +106,7 @@ def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -
         print(res.stdout[-4000:], file=sys.stderr)
         print("\n".join(errors[:20]), file=sys.stderr)
         print(f"error: LaTeX failed for '{meta['title']}' (build dir: {build_dir})", file=sys.stderr)
-        if tmp:
+        if not keep:
             print("hint: rerun with --keep-tex to inspect the LaTeX sources", file=sys.stderr)
         return False
 
@@ -107,6 +118,4 @@ def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -
         for e in errors[:15]:
             print("  " + e, file=sys.stderr)
     print(f"wrote {out_pdf}")
-    if tmp:
-        tmp.cleanup()
     return True

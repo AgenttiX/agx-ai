@@ -91,3 +91,28 @@ JSON files that are not chat exports are reported and skipped.
 
 LaTeX errors caused by unusual content (for example KaTeX-only macros) are
 reported as warnings and the PDF is still produced unless `--strict` is given.
+
+## Temporary files and privacy
+
+Every conversion writes its intermediate files (the Markdown document, the
+LaTeX sources, extracted images, `refs.bib`, and the TeX/biber auxiliary
+files such as `.aux`, `.log`, `.bcf`, `.bbl`) into one build directory.
+The chat text is contained in these files, so they are kept private:
+
+* **Default:** the build directory is `owui2pdf-<random>` under the system
+  temporary directory (`$TMPDIR`, usually `/tmp`). It is created with mode
+  `0700` (owner only) and deleted when the conversion of that chat finishes,
+  also when pandoc or LaTeX fail. Set `TMPDIR` to move it elsewhere.
+* **`--keep-tex`:** the build directory is `<pdf name>_tex/` next to the PDF.
+  It is not deleted and, like the PDF itself, is created with the user's
+  normal umask; adjust the umask if these should be private as well.
+
+Nothing else is written outside the build directory by the script. Two
+side effects of the tools it calls are worth knowing:
+
+* LuaLaTeX keeps a font-name database and font caches in
+  `TEXMFVAR/luatex-cache/` (typically `~/.texlive<year>/texmf-var/`). They
+  contain only font data, never chat content, and are updated on first use.
+* TeX Live's upstream `biber` binary (not the Debian/Ubuntu package, which is
+  a plain Perl script) unpacks itself into `$TMPDIR/par-<user>/` on first run.
+  That directory contains biber's own code only.
