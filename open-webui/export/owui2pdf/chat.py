@@ -113,38 +113,6 @@ def attachments_markdown(msg: dict) -> str:
     return "\n\n".join(out)
 
 
-def _is_url(v) -> bool:
-    return isinstance(v, str) and v.startswith(("http://", "https://"))
-
-
-def sources_markdown(msg: dict) -> str:
-    """RAG / web search sources of an assistant message as one line."""
-    sources = msg.get("sources") or msg.get("citations") or []
-    lines = []
-    seen = set()
-    for i, src in enumerate(sources, 1):
-        if not isinstance(src, dict):
-            continue
-        s = src.get("source") or {}
-        metas = src.get("metadata") or []
-        meta0 = metas[0] if metas and isinstance(metas[0], dict) else {}
-        candidates = [s.get("title"), s.get("name"), meta0.get("title"), meta0.get("name"), meta0.get("source")]
-        name = next((c for c in candidates if c and not _is_url(c)), None) \
-            or next((c for c in candidates if c), f"source {i}")
-        url = next((c for c in [s.get("url"), meta0.get("source"), s.get("name")] if _is_url(c)), "")
-        key = (name, url)
-        if key in seen:
-            continue
-        seen.add(key)
-        if url:
-            lines.append(f"[{i}] [{md_escape_inline(str(name))}]({url})")
-        else:
-            lines.append(f"[{i}] {md_escape_inline(str(name))}")
-    if not lines:
-        return ""
-    return "*Sources:* " + " · ".join(lines)
-
-
 def usage_text(msg: dict) -> str:
     """Token counts and generation speed, e.g. '5870→1157 tokens, 22.3 tok/s'."""
     usage = msg.get("usage") or {}

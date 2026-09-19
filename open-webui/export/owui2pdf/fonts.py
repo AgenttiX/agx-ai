@@ -108,11 +108,16 @@ def find_emoji_font(explicit: str | None) -> str | None:
     return best[1] if best else None
 
 
-def build_header(opts, emoji_font: str | None) -> str:
+BIBLATEX_TEX = ("\\usepackage[backend=biber,style=numeric,sorting=none]{biblatex}\n"
+                "\\addbibresource{refs.bib}")
+
+
+def build_header(opts, emoji_font: str | None, use_bib: bool = False) -> str:
     """Fill the placeholders of resources/header.tex.
 
     ``opts`` may carry ``main_font``, ``sans_font``, ``mono_font`` and
-    ``math_font`` overrides (None to auto-detect).
+    ``math_font`` overrides (None to auto-detect). ``use_bib`` loads biblatex
+    with ``refs.bib`` from the build directory.
     """
     fams = fc_families()
 
@@ -152,6 +157,7 @@ def build_header(opts, emoji_font: str | None) -> str:
     replacements = {
         "@@FALLBACK_FONTS@@": ",\n".join("    " + f for f in fallbacks),
         "@@EMOJI_FAMILY@@": emoji_family,
+        "@@BIBLATEX@@": BIBLATEX_TEX if use_bib else "",
         "@@MAINFONT@@": main,
         "@@SANSFONT@@": sans,
         "@@MONOFONT@@": mono,

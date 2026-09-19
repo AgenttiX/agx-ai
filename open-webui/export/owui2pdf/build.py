@@ -12,7 +12,7 @@ from pathlib import Path
 from . import RESOURCE_DIR
 from .fonts import build_header
 from .markdown import build_markdown
-from .util import run
+from .util import run, which_or_die
 
 # pandoc's commonmark_x is close to the GFM dialect Open WebUI (marked) uses.
 # Extensions that marked does not have are switched off for fidelity.
@@ -46,10 +46,14 @@ def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -
 
     media_dir = build_dir / "media"
     media_dir.mkdir(exist_ok=True)
-    md, meta = build_markdown(chat_item, opts, media_dir)
+    md, meta, bib = build_markdown(chat_item, opts, media_dir)
+    if bib is not None:
+        which_or_die("biber")
+        (build_dir / "refs.bib").write_text(bib, encoding="utf-8")
 
     (build_dir / "doc.md").write_text(md, encoding="utf-8")
-    (build_dir / "header.tex").write_text(build_header(opts, emoji_font), encoding="utf-8")
+    (build_dir / "header.tex").write_text(build_header(opts, emoji_font, use_bib=bib is not None),
+                                          encoding="utf-8")
     shutil.copyfile(RESOURCE_DIR / "filter.lua", build_dir / "filter.lua")
     (build_dir / "langs.txt").write_text("\n".join(pandoc_langs()), encoding="utf-8")
 

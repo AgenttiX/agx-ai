@@ -24,7 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-reasoning", action="store_true",
                    help="include model reasoning/thinking blocks")
     p.add_argument("--no-sources", dest="show_sources", action="store_false",
-                   help="omit RAG/web sources")
+                   help="omit citations and the bibliography of referenced notes/files/web pages")
+    p.add_argument("--include-notes", action="store_true",
+                   help="append the full text of referenced notes as an appendix "
+                        "(default: only metadata in the bibliography)")
     p.add_argument("--no-usage", dest="show_usage", action="store_false",
                    help="omit token usage in message headers")
     p.add_argument("--emoji-font", help="path to a colour emoji font (CBDT/COLRv0 TTF)")

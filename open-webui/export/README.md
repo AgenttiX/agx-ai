@@ -21,8 +21,14 @@ characters, emoji, attachments/sources and long text.
    (role, model, timestamp, token usage). Open WebUI specifics are normalised:
    `<details type="reasoning">` blocks are dropped (use `--include-reasoning` to
    keep them), tool calls are summarised, `\( … \)` / `\[ … \]` math is turned
-   into `$ … $` / `$$ … $$`, base64 images are extracted, attachments and RAG/web
-   sources are listed, and unclosed code fences are closed.
+   into `$ … $` / `$$ … $$`, base64 images are extracted, attachments are listed,
+   and unclosed code fences are closed.
+   Source markers such as `[1]` become biblatex citations; every referenced
+   note, file or web page gets one numbered entry in a *References* section
+   at the end (biber backend, numeric style, ordered by first citation).
+   Notes and files are listed with their creation and update time, character
+   count and word count only. With `--include-notes` the full text of each
+   referenced note is added as an appendix that the bibliography entry links to.
 3. pandoc converts the Markdown (`commonmark_x`, close to the GFM dialect Open WebUI
    uses) into LaTeX. A Lua filter handles plain code blocks, task lists,
    table column widths, unreachable images, very long words and emoji sequences.
@@ -39,6 +45,7 @@ characters, emoji, attachments/sources and long text.
 | `owui2pdf/cli.py` | Argument parsing, output file naming |
 | `owui2pdf/chat.py` | Reading the export, walking the conversation branch, attachments, sources, usage |
 | `owui2pdf/markdown.py` | Normalising message content and assembling the Markdown document |
+| `owui2pdf/sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
 | `owui2pdf/fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
 | `owui2pdf/build.py` | Running pandoc and latexmk |
 | `owui2pdf/util.py` | Escaping, timestamps, subprocess helpers |
@@ -49,9 +56,9 @@ characters, emoji, attachments/sources and long text.
 
 * Python 3.10+ (standard library only)
 * pandoc ≥ 3
-* TeX Live with `latexmk` and LuaLaTeX, including `fontspec`, `unicode-math`,
-  `fvextra`, `tcolorbox`, `enumitem`, `titlesec`, `needspace`, `mathtools`,
-  `cancel`, `braket` and optionally `mhchem`
+* TeX Live with `latexmk`, LuaLaTeX and `biber`, including `fontspec`,
+  `unicode-math`, `biblatex`, `fvextra`, `tcolorbox`, `enumitem`, `titlesec`,
+  `needspace`, `mathtools`, `cancel`, `braket` and optionally `mhchem`
 * Fonts: Noto Serif / Noto Sans / Noto Sans Mono (falls back to TeX Gyre and
   Latin Modern) and a colour emoji font. The emoji font is located with
   `fc-list`, in `~/.local/share/fonts`, in a `fonts/` directory next to the
@@ -67,7 +74,8 @@ characters, emoji, attachments/sources and long text.
 | `--keep-tex` | Keep the LaTeX sources in `<name>_tex/` next to the PDF |
 | `--hard-breaks` | Treat single newlines as line breaks |
 | `--include-reasoning` | Render model reasoning blocks as quotes |
-| `--no-sources`, `--no-usage` | Omit source lists / token usage |
+| `--include-notes` | Append the full text of referenced notes as an appendix |
+| `--no-sources`, `--no-usage` | Omit citations and bibliography / token usage |
 | `--main-font`, `--sans-font`, `--mono-font`, `--math-font` | Font overrides |
 | `--paper`, `--font-size`, `--highlight-style` | Layout tweaks |
 | `--strict` | Stop at the first LaTeX error instead of producing a best-effort PDF |

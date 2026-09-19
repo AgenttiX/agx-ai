@@ -7,6 +7,7 @@ text to pandoc we
   into Markdown,
 * rewrite ``\\( … \\)`` / ``\\[ … \\]`` math into ``$ … $`` / ``$$ … $$``,
 * map the few inline HTML tags Open WebUI shows onto Markdown or LaTeX,
+* turn ``[n]`` source markers into biblatex citations,
 * extract base64 images to files, and
 * close unclosed code fences so a message cannot swallow the following ones.
 """
@@ -19,7 +20,8 @@ import re
 from pathlib import Path
 
 from .chat import (attachments_markdown, chat_body, chat_title, error_text, message_text,
-                   ordered_messages, sources_markdown, usage_text)
+                   ordered_messages, usage_text)
+from .sources import SourceRegistry, cite_inline, convert_citation_marks
 from .util import fmt_timestamp, tex_escape
 
 FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
@@ -28,6 +30,8 @@ SUMMARY_RE = re.compile(r"\s*<summary>(.*?)</summary>\s*", re.S | re.I)
 ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 THINK_RE = re.compile(r"<(think|thinking)>(.*?)</\1>", re.S | re.I)
 CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1", re.S)
+# Code spans and math spans: no inline conversions inside these.
+PROTECTED_RE = re.compile(r"(`+)(?:.+?)\1|\$\$.+?\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$", re.S)
 DISPLAY_MATH_RE = re.compile(r"\\\[(.+?)\\\]", re.S)
 INLINE_MATH_RE = re.compile(r"\\\((.+?)\\\)", re.S)
 DATA_IMG_RE = re.compile(
@@ -41,6 +45,7 @@ INLINE_HTML = [
 ]
 SUPSUB_RE = re.compile(r"<(sup|sub)>(.*?)</\1>", re.S | re.I)
 BR_RE = re.compile(r"<br\s*/?>", re.I)
+RAW_LATEX_INLINE_RE = re.compile(r"`\\[a-zA-Z]+\{[^`]*\}`\{=latex\}")
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +105,7 @@ def convert_details(md: str, include_reasoning: bool) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Inline-level: math delimiters, inline HTML
+# Inline-level: math delimiters, inline HTML, citation marks
 # ---------------------------------------------------------------------------
 
 def convert_inline_html(text: str) -> str:
@@ -121,29 +126,35 @@ def convert_inline_html(text: str) -> str:
     return "\n".join(lines)
 
 
-def _convert_math(text: str) -> str:
+def _convert_math_delimiters(text: str) -> str:
     text = DISPLAY_MATH_RE.sub(lambda m: "$$" + m.group(1).strip() + "$$", text)
-    text = INLINE_MATH_RE.sub(lambda m: "$" + m.group(1).strip() + "$", text)
-    return convert_inline_html(text)
+    return INLINE_MATH_RE.sub(lambda m: "$" + m.group(1).strip() + "$", text)
 
 
-def convert_inline_segment(text: str) -> str:
-    """Inline conversions on text that contains no fenced code (skips code spans)."""
-    pieces = []
-    pos = 0
-    for m in CODE_SPAN_RE.finditer(text):
-        pieces.append(_convert_math(text[pos:m.start()]))
+def _outside(rx: re.Pattern, text: str, func) -> str:
+    """Apply func to the parts of text not matched by rx."""
+    pieces, pos = [], 0
+    for m in rx.finditer(text):
+        pieces.append(func(text[pos:m.start()]))
         pieces.append(m.group(0))
         pos = m.end()
-    pieces.append(_convert_math(text[pos:]))
+    pieces.append(func(text[pos:]))
     return "".join(pieces)
+
+
+def convert_inline_segment(text: str, cite_map: dict[int, str] | None = None) -> str:
+    """Inline conversions on text that contains no fenced code."""
+    text = _outside(CODE_SPAN_RE, text, _convert_math_delimiters)
+    return _outside(PROTECTED_RE, text,
+                    lambda t: convert_citation_marks(convert_inline_html(t), cite_map or {}))
 
 
 # ---------------------------------------------------------------------------
 # Whole message
 # ---------------------------------------------------------------------------
 
-def preprocess_markdown(md: str, include_reasoning: bool) -> str:
+def preprocess_markdown(md: str, include_reasoning: bool,
+                        cite_map: dict[int, str] | None = None) -> str:
     md = md.replace("\r\n", "\n")
     md = convert_details(md, include_reasoning)
     out_lines = []
@@ -152,7 +163,7 @@ def preprocess_markdown(md: str, include_reasoning: bool) -> str:
 
     def flush_text():
         if text_buf:
-            out_lines.append(convert_inline_segment("\n".join(text_buf)))
+            out_lines.append(convert_inline_segment("\n".join(text_buf), cite_map))
             text_buf.clear()
 
     for line in md.split("\n"):
@@ -209,15 +220,86 @@ def raw_latex_block(tex: str) -> str:
 
 
 def bookmark_preview(body: str, limit: int = 60) -> str:
+    body = RAW_LATEX_INLINE_RE.sub("", body)
     preview = re.sub(r"\s+", " ", re.sub(r"[#*`>_\[\]\\{}~^$&%]", "", body)).strip()
     return preview[:limit] + ("…" if len(preview) > limit else "")
 
 
-def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict]:
-    """Return (markdown document, pandoc metadata) for one chat.
+def message_markdown(msg: dict, opts, media_dir: Path, img_counter: list[int],
+                     registry: SourceRegistry | None) -> str:
+    role = (msg.get("role") or "assistant").lower()
+    label, bg, fg = ROLE_STYLES.get(role, ROLE_STYLES["assistant"])
+    if role == "user":
+        user = msg.get("user") if isinstance(msg.get("user"), dict) else {}
+        if user.get("name"):
+            label = f"User ({user['name']})"
 
-    ``opts`` needs the attributes ``show_usage``, ``show_sources`` and
-    ``include_reasoning`` (the parsed command line arguments work).
+    meta_bits = []
+    if role != "user" and msg.get("model"):
+        meta_bits.append(str(msg["model"]))
+    ts = fmt_timestamp(msg.get("timestamp"))
+    if ts:
+        meta_bits.append(ts)
+    if opts.show_usage:
+        u = usage_text(msg)
+        if u:
+            meta_bits.append(u)
+    meta_str = " · ".join(meta_bits)
+
+    cite_map = registry.register_message_sources(msg) if registry is not None else {}
+
+    body = message_text(msg)
+    err = error_text(msg)
+    if err:
+        body = (body + "\n\n" if body else "") + f"> **Error:** {err}"
+    att = attachments_markdown(msg)
+    if att:
+        body = att + "\n\n" + body
+    body = extract_data_images(body, media_dir, img_counter)
+    body = preprocess_markdown(body, opts.include_reasoning, cite_map)
+    if cite_map:
+        body = body.rstrip() + "\n\n*Sources:* " + cite_inline(list(cite_map.values()))
+    if not body.strip():
+        body = "*(empty message)*"
+
+    preview = bookmark_preview(body)
+    bookmark = f"{label}: {preview}" if preview else label
+    header = "\\owuiheader{%s}{%s}{%s}{%s}{%s}" % (
+        bg, fg, tex_escape(label), tex_escape(meta_str), tex_escape(bookmark))
+    return raw_latex_block(header) + body.strip("\n") + "\n"
+
+
+def bibliography_markdown() -> str:
+    return raw_latex_block(
+        "\\nocite{*}\n"
+        "\\par\\Needspace*{6\\baselineskip}\n"
+        "\\pdfbookmark[0]{References}{owuirefs}\n"
+        "\\section*{References}\n"
+        "\\printbibliography[heading=none]")
+
+
+def appendix_markdown(registry: SourceRegistry) -> str:
+    notes = registry.notes_with_content()
+    if not notes:
+        return ""
+    parts = [raw_latex_block(
+        "\\clearpage\n"
+        "\\pdfbookmark[0]{Appendix: Referenced notes}{owuiappendix}\n"
+        "\\section*{Appendix: Referenced notes}")]
+    for src in notes:
+        meta = src.metadata_text()
+        head = "\\section{%s}\\label{note:%s}\n\\owuinote{Reference \\cite{%s}%s}" % (
+            tex_escape(src.title), src.key, src.key, tex_escape("; " + meta) if meta else "")
+        parts.append(raw_latex_block(head) + preprocess_markdown(src.text, False).strip("\n") + "\n")
+    return "\n\n".join(parts)
+
+
+def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict, str | None]:
+    """Return (markdown document, pandoc metadata, bibtex or None) for one chat.
+
+    ``opts`` needs the attributes ``show_usage``, ``show_sources``,
+    ``include_reasoning`` and ``include_notes`` (the parsed command line
+    arguments work).
     """
     chat = chat_body(chat_item)
     models = chat.get("models") or []
@@ -230,48 +312,27 @@ def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict]:
         "keywords": [str(t) for t in tags if isinstance(t, (str, int))],
     }
 
+    messages = ordered_messages(chat)
+    registry = SourceRegistry() if opts.show_sources else None
+    if registry is not None:
+        # Full note/file objects (with content) live in chat.files and in the
+        # files attached to user messages; sources only carry metadata.
+        for f in chat.get("files") or []:
+            registry.register_file(f)
+        for msg in messages:
+            for f in msg.get("files") or []:
+                registry.register_file(f)
+
     parts = []
     img_counter = [0]
-    for msg in ordered_messages(chat):
-        role = (msg.get("role") or "assistant").lower()
-        label, bg, fg = ROLE_STYLES.get(role, ROLE_STYLES["assistant"])
-        if role == "user":
-            user = msg.get("user") if isinstance(msg.get("user"), dict) else {}
-            if user.get("name"):
-                label = f"User ({user['name']})"
+    for msg in messages:
+        parts.append(message_markdown(msg, opts, media_dir, img_counter, registry))
 
-        meta_bits = []
-        if role != "user" and msg.get("model"):
-            meta_bits.append(str(msg["model"]))
-        ts = fmt_timestamp(msg.get("timestamp"))
-        if ts:
-            meta_bits.append(ts)
-        if opts.show_usage:
-            u = usage_text(msg)
-            if u:
-                meta_bits.append(u)
-        meta_str = " · ".join(meta_bits)
+    bib = None
+    if registry is not None and len(registry):
+        bib = registry.bibtex(opts.include_notes)
+        parts.append(bibliography_markdown())
+        if opts.include_notes:
+            parts.append(appendix_markdown(registry))
 
-        body = message_text(msg)
-        err = error_text(msg)
-        if err:
-            body = (body + "\n\n" if body else "") + f"> **Error:** {err}"
-        att = attachments_markdown(msg)
-        if att:
-            body = att + "\n\n" + body
-        body = extract_data_images(body, media_dir, img_counter)
-        body = preprocess_markdown(body, opts.include_reasoning)
-        if opts.show_sources:
-            src = sources_markdown(msg)
-            if src:
-                body = body.rstrip() + "\n\n" + src
-        if not body.strip():
-            body = "*(empty message)*"
-
-        preview = bookmark_preview(body)
-        bookmark = f"{label}: {preview}" if preview else label
-        header = "\\owuiheader{%s}{%s}{%s}{%s}{%s}" % (
-            bg, fg, tex_escape(label), tex_escape(meta_str), tex_escape(bookmark))
-        parts.append(raw_latex_block(header) + body.strip("\n") + "\n")
-
-    return "\n\n".join(parts), meta
+    return "\n\n".join(parts), meta, bib
