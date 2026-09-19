@@ -13,11 +13,20 @@ from .util import slugify, which_or_die
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="owui2pdf",
-                                description="Convert an Open WebUI JSON chat export to PDF.")
-    p.add_argument("input", type=Path, help="JSON export (single chat or list of chats)")
-    p.add_argument("-o", "--output", type=Path, help="output PDF (single-chat exports only)")
-    p.add_argument("--outdir", type=Path, help="directory for output PDFs (default: next to input)")
+    p = argparse.ArgumentParser(
+        prog="owui2pdf",
+        description="Convert Open WebUI JSON chat exports to PDF. INPUT may be a JSON file "
+                    "(single chat or list of chats) or a directory, which is searched "
+                    "recursively for *.json files; each PDF is written next to its JSON "
+                    "file with the same name.")
+    p.add_argument("input", type=Path, nargs="+", help="JSON export file(s) or directory(ies)")
+    p.add_argument("-o", "--output", type=Path,
+                   help="output PDF (only for a single input file containing one chat)")
+    p.add_argument("--outdir", type=Path,
+                   help="directory for output PDFs (default: next to each input file; "
+                        "for directory inputs the directory structure is mirrored)")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="do not rebuild PDFs that already exist and are newer than the JSON")
     p.add_argument("--keep-tex", action="store_true",
                    help="keep the LaTeX build directory (<name>_tex) next to the PDF")
     p.add_argument("--hard-breaks", action="store_true", help="treat single newlines as line breaks")
@@ -46,17 +55,45 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def output_paths(chats: list[dict], args) -> list[Path]:
-    outdir = args.outdir or args.input.resolve().parent
-    if args.output and len(chats) > 1:
-        sys.exit("error: -o/--output can only be used with a single-chat export; use --outdir")
+def collect_inputs(inputs: list[Path]) -> list[tuple[Path, Path]]:
+    """Expand files/directories into (json file, base directory) pairs.
+
+    The base directory is the input directory the file was found in (or the
+    file's own directory) and is used to mirror the layout under --outdir.
+    """
+    jobs: list[tuple[Path, Path]] = []
+    seen: set[Path] = set()
+    for inp in inputs:
+        if inp.is_dir():
+            files = sorted(p for p in inp.rglob("*.json") if p.is_file())
+            if not files:
+                print(f"warning: no *.json files found under {inp}", file=sys.stderr)
+            base = inp
+        elif inp.is_file():
+            files, base = [inp], inp.parent
+        else:
+            sys.exit(f"error: input not found: {inp}")
+        for f in files:
+            key = f.resolve()
+            if key not in seen:
+                seen.add(key)
+                jobs.append((f, base))
+    return jobs
+
+
+def output_paths(json_path: Path, base: Path, chats: list[dict], args) -> list[Path]:
+    """PDF paths for the chats of one JSON file: <stem>.pdf, or <stem>-NNN-<title>.pdf."""
     if args.output:
         return [args.output]
+    if args.outdir:
+        outdir = args.outdir / json_path.parent.resolve().relative_to(base.resolve())
+    else:
+        outdir = json_path.parent
     if len(chats) == 1:
-        return [outdir / (args.input.stem + ".pdf")]
+        return [outdir / (json_path.stem + ".pdf")]
     paths, used = [], set()
     for i, chat_item in enumerate(chats, 1):
-        name = f"{i:03d}-{slugify(chat_title(chat_item))}"
+        name = f"{json_path.stem}-{i:03d}-{slugify(chat_title(chat_item))}"
         while name in used:
             name += "-x"
         used.add(name)
@@ -64,13 +101,21 @@ def output_paths(chats: list[dict], args) -> list[Path]:
     return paths
 
 
+def is_up_to_date(pdf: Path, json_path: Path) -> bool:
+    try:
+        return pdf.stat().st_mtime >= json_path.stat().st_mtime
+    except OSError:
+        return False
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
     for tool in ("pandoc", "latexmk", "lualatex"):
         which_or_die(tool)
-    if not args.input.is_file():
-        sys.exit(f"error: input file not found: {args.input}")
+    jobs = collect_inputs(args.input)
+    if args.output and (len(jobs) != 1 or args.input[0].is_dir()):
+        sys.exit("error: -o/--output requires a single input file; use --outdir instead")
 
     emoji_font = None if args.no_emoji_font else find_emoji_font(args.emoji_font)
     if emoji_font is None and not args.no_emoji_font:
@@ -79,8 +124,26 @@ def main(argv=None) -> int:
     elif args.verbose:
         print(f"emoji font: {emoji_font}", file=sys.stderr)
 
-    chats = load_chats(args.input)
-    ok = True
-    for chat_item, out_pdf in zip(chats, output_paths(chats, args)):
-        ok &= convert_chat(chat_item, out_pdf, args, emoji_font)
-    return 0 if ok else 1
+    converted = skipped = failed = 0
+    for json_path, base in jobs:
+        try:
+            chats = load_chats(json_path)
+        except ValueError as e:
+            print(f"warning: skipping {json_path}: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        if args.output and len(chats) > 1:
+            sys.exit("error: -o/--output can only be used with a single-chat export; use --outdir")
+        for chat_item, out_pdf in zip(chats, output_paths(json_path, base, chats, args)):
+            if args.skip_existing and is_up_to_date(out_pdf, json_path):
+                if args.verbose:
+                    print(f"up to date: {out_pdf}")
+                skipped += 1
+                continue
+            if convert_chat(chat_item, out_pdf, args, emoji_font):
+                converted += 1
+            else:
+                failed += 1
+    if len(jobs) > 1 or failed:
+        print(f"{converted} PDF(s) written, {skipped} skipped, {failed} failed", file=sys.stderr)
+    return 0 if failed == 0 else 1

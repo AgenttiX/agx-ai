@@ -9,9 +9,17 @@ characters, emoji, attachments/sources and long text.
 ```bash
 ./owui2pdf.py example.json                 # writes example.pdf next to the input
 ./owui2pdf.py example.json -o out.pdf
-./owui2pdf.py all-chats.json --outdir pdfs # one PDF per chat
+./owui2pdf.py all-chats.json               # one PDF per chat: all-chats-001-<title>.pdf, ...
+./owui2pdf.py exports/                     # every *.json below exports/, PDF next to each JSON
+./owui2pdf.py exports/ --outdir pdfs       # same, mirroring the folder layout under pdfs/
+./owui2pdf.py exports/ --skip-existing     # only JSON files without an up-to-date PDF
 ./owui2pdf.py --help
 ```
+
+Inputs may be JSON files or directories, which are searched recursively for
+`*.json`. A file containing a single chat becomes `<name>.pdf`; a file with
+several chats becomes `<name>-001-<title>.pdf`, `<name>-002-<title>.pdf`, …
+JSON files that are not chat exports are reported and skipped.
 
 ## How it works
 
@@ -70,7 +78,8 @@ characters, emoji, attachments/sources and long text.
 
 | Option | Effect |
 | --- | --- |
-| `-o FILE`, `--outdir DIR` | Output location |
+| `-o FILE`, `--outdir DIR` | Output location (default: next to each JSON file) |
+| `--skip-existing` | Skip JSON files whose PDF already exists and is newer |
 | `--keep-tex` | Keep the LaTeX sources in `<name>_tex/` next to the PDF |
 | `--hard-breaks` | Treat single newlines as line breaks |
 | `--include-reasoning` | Render model reasoning blocks as quotes |

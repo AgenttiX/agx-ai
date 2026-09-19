@@ -3,25 +3,30 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from .util import md_escape_inline
 
 
 def load_chats(path: Path) -> list[dict]:
-    """Return the chat objects in an export (single chat or list of chats)."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """Return the chat objects in an export (single chat or list of chats).
+
+    Raises ValueError when the file is not a readable Open WebUI chat export.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError(f"cannot read JSON ({e})") from e
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
-        sys.exit("error: unexpected JSON structure (expected a chat object or a list of chats)")
+        raise ValueError("unexpected JSON structure (expected a chat object or a list of chats)")
     chats = []
     for item in data:
         if isinstance(item, dict) and ("chat" in item or "history" in item or "messages" in item):
             chats.append(item)
     if not chats:
-        sys.exit("error: no chats found in the export")
+        raise ValueError("no chats found in the file")
     return chats
 
 
