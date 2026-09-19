@@ -149,12 +149,38 @@ def convert_inline_segment(text: str, cite_map: dict[int, str] | None = None) ->
                     lambda t: convert_citation_marks(convert_inline_html(t), cite_map or {}))
 
 
+# Lines whose meaning depends on staying adjacent to their neighbours: list
+# items, table rows, block quotes, headings (ATX and setext underlines),
+# indented code, fences, link/footnote definitions.
+STRUCTURAL_LINE_RE = re.compile(
+    r"^\s*(?:[-*+]\s|\d+[.)]\s|\||>|#{1,6}\s|```|~~~|\[[^\]]+\]:|(?:=+|-+)\s*$)|^(?: {4}|\t)")
+
+
+def single_newlines_to_paragraphs(text: str) -> str:
+    """Insert a blank line between adjacent plain text lines.
+
+    For prompts typed with a single Enter between paragraphs: Markdown would
+    join such lines into one paragraph, this makes each line its own paragraph.
+    """
+    lines = text.split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        out.append(line)
+        if i + 1 < len(lines):
+            nxt = lines[i + 1]
+            if (line.strip() and nxt.strip()
+                    and not STRUCTURAL_LINE_RE.match(line) and not STRUCTURAL_LINE_RE.match(nxt)):
+                out.append("")
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------------------
 # Whole message
 # ---------------------------------------------------------------------------
 
 def preprocess_markdown(md: str, include_reasoning: bool,
-                        cite_map: dict[int, str] | None = None) -> str:
+                        cite_map: dict[int, str] | None = None,
+                        paragraph_breaks: bool = False) -> str:
     md = md.replace("\r\n", "\n")
     md = convert_details(md, include_reasoning)
     out_lines = []
@@ -163,7 +189,10 @@ def preprocess_markdown(md: str, include_reasoning: bool,
 
     def flush_text():
         if text_buf:
-            out_lines.append(convert_inline_segment("\n".join(text_buf), cite_map))
+            text = "\n".join(text_buf)
+            if paragraph_breaks:
+                text = single_newlines_to_paragraphs(text)
+            out_lines.append(convert_inline_segment(text, cite_map))
             text_buf.clear()
 
     for line in md.split("\n"):
@@ -256,7 +285,8 @@ def message_markdown(msg: dict, opts, media_dir: Path, img_counter: list[int],
     if att:
         body = att + "\n\n" + body
     body = extract_data_images(body, media_dir, img_counter)
-    body = preprocess_markdown(body, opts.include_reasoning, cite_map)
+    body = preprocess_markdown(body, opts.include_reasoning, cite_map,
+                               paragraph_breaks=opts.user_paragraphs and role == "user")
     if cite_map:
         body = body.rstrip() + "\n\n*Sources:* " + cite_inline(list(cite_map.values()))
     if not body.strip():
@@ -298,8 +328,8 @@ def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict, s
     """Return (markdown document, pandoc metadata, bibtex or None) for one chat.
 
     ``opts`` needs the attributes ``show_usage``, ``show_sources``,
-    ``include_reasoning`` and ``include_notes`` (the parsed command line
-    arguments work).
+    ``include_reasoning``, ``include_notes`` and ``user_paragraphs`` (the
+    parsed command line arguments work).
     """
     chat = chat_body(chat_item)
     models = chat.get("models") or []

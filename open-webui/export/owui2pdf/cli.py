@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-tex", action="store_true",
                    help="keep the LaTeX build directory (<name>_tex) next to the PDF")
     p.add_argument("--hard-breaks", action="store_true", help="treat single newlines as line breaks")
+    p.add_argument("--user-paragraphs", action="store_true",
+                   help="in user messages, treat single newlines between plain text lines as "
+                        "paragraph breaks (for prompts typed with one Enter between paragraphs)")
     p.add_argument("--include-reasoning", action="store_true",
                    help="include model reasoning/thinking blocks")
     p.add_argument("--no-sources", dest="show_sources", action="store_false",

@@ -81,7 +81,8 @@ JSON files that are not chat exports are reported and skipped.
 | `-o FILE`, `--outdir DIR` | Output location (default: next to each JSON file) |
 | `--skip-existing` | Skip JSON files whose PDF already exists and is newer |
 | `--keep-tex` | Keep the LaTeX sources in `<name>_tex/` next to the PDF |
-| `--hard-breaks` | Treat single newlines as line breaks |
+| `--hard-breaks` | Treat single newlines as line breaks (all messages) |
+| `--user-paragraphs` | In user messages, treat single newlines between plain text lines as paragraph breaks; lists, tables, quotes, headings and code are left alone |
 | `--include-reasoning` | Render model reasoning blocks as quotes |
 | `--include-notes` | Append the full text of referenced notes as an appendix |
 | `--no-sources`, `--no-usage` | Omit citations and bibliography / token usage |
