@@ -9,6 +9,7 @@
 - [llama.cpp](https://llama-cpp.com/)
   - For running local models
   - [Custom container for Radeon VII with ROCm](llama-cpp-radeon-vii/docker-compose.yml)
+  - [Dual RTX A4000 config for PaperQA2 RAG](llama-cpp-big-machine/docker-compose.yml)
 - [LM Studio](https://lmstudio.ai/)
   - For running local models
 - [Open Terminal](https://github.com/open-webui/open-terminal)

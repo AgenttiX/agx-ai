@@ -1,3 +1,4 @@
+**/llama-cpp.env
 .idea
 gpt-researcher/gpt-researcher.env
 gpt-researcher/logs
@@ -5,8 +6,6 @@ gpt-researcher/outputs
 litellm/litellm.env
 litellm/litellm-claude.env
 litellm/litellm-db.env
-llama-cpp/llama-cpp.env
-llama-cpp-radeon-vii/llama-cpp.env
 models
 open-terminal/open-terminal.env
 open-webui/data
