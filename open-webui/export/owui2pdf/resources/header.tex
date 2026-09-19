@@ -1,0 +1,113 @@
+% ---- owui2pdf header ------------------------------------------------------
+\usepackage[margin=20mm]{geometry}
+\usepackage{fvextra}
+\usepackage{framed}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{needspace}
+\usepackage[many]{tcolorbox}
+\usepackage{mathtools}
+\usepackage{cancel}
+\usepackage{braket}
+\IfFileExists{mhchem.sty}{\usepackage[version=4]{mhchem}}{}
+\raggedbottom
+\clubpenalty=10000
+\widowpenalty=10000
+
+% ---- fonts ----------------------------------------------------------------
+\directlua{
+  luaotfload.add_fallback("owuifallback", {
+@@FALLBACK_FONTS@@
+  })
+}
+\setmainfont{@@MAINFONT@@}[RawFeature={fallback=owuifallback}]
+\setsansfont{@@SANSFONT@@}[RawFeature={fallback=owuifallback}]
+\setmonofont{@@MONOFONT@@}[Scale=MatchLowercase,RawFeature={fallback=owuifallback}]
+\setmathfont{@@MATHFONT@@}
+% Emoji sequences (ZWJ, flags, skin tones) only shape correctly when the whole
+% run is set in the emoji font with HarfBuzz; the filter wraps them in \owuiemoji.
+@@EMOJI_FAMILY@@
+
+% ---- KaTeX compatibility ----------------------------------------------------
+% KaTeX allows \LaTeX / \TeX inside math mode; LaTeX does not.
+\expandafter\let\expandafter\owuiOrigLaTeX\csname LaTeX \endcsname
+\DeclareRobustCommand{\LaTeX}{\ifmmode\text{\owuiOrigLaTeX}\else\owuiOrigLaTeX\fi}
+\expandafter\let\expandafter\owuiOrigTeX\csname TeX \endcsname
+\DeclareRobustCommand{\TeX}{\ifmmode\text{\owuiOrigTeX}\else\owuiOrigTeX\fi}
+\providecommand{\degree}{\ensuremath{^\circ}}
+\providecommand{\bold}{\mathbf}
+\providecommand{\llbracket}{[\![}
+\providecommand{\rrbracket}{]\!]}
+\providecommand{\lparen}{(}
+\providecommand{\rparen}{)}
+
+% ---- code blocks ------------------------------------------------------------
+\ifcsname Shaded\endcsname\else
+  \definecolor{shadecolor}{RGB}{248,248,248}
+  \newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\fi
+\ifcsname Highlighting\endcsname
+  \RecustomVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\},breaklines=true,breakanywhere=true,breaknonspaceingroup=true,fontsize=\small}
+\else
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\},breaklines=true,breakanywhere=true,breaknonspaceingroup=true,fontsize=\small}
+\fi
+\DefineVerbatimEnvironment{PlainCode}{Verbatim}{breaklines=true,breakanywhere=true,fontsize=\small}
+\RecustomVerbatimEnvironment{verbatim}{Verbatim}{breaklines=true,breakanywhere=true,fontsize=\small}
+
+% ---- lists: allow deep nesting ---------------------------------------------
+\setlistdepth{9}
+\renewlist{itemize}{itemize}{9}
+\setlist[itemize]{label=\textbullet}
+\setlist[itemize,2]{label=--}
+\setlist[itemize,3]{label=\textasteriskcentered}
+\setlist[itemize,4]{label=\textperiodcentered}
+\setlist[itemize,5]{label=\textbullet}
+\setlist[itemize,6]{label=--}
+\setlist[itemize,7]{label=\textasteriskcentered}
+\setlist[itemize,8]{label=\textperiodcentered}
+\setlist[itemize,9]{label=\textbullet}
+\renewlist{enumerate}{enumerate}{9}
+\setlist[enumerate]{label=\arabic*.}
+\setlist[enumerate,2]{label=\alph*.}
+\setlist[enumerate,3]{label=\roman*.}
+\setlist[enumerate,4]{label=\Alph*.}
+\setlist[enumerate,5]{label=\arabic*.}
+\setlist[enumerate,6]{label=\alph*.}
+\setlist[enumerate,7]{label=\roman*.}
+\setlist[enumerate,8]{label=\Alph*.}
+\setlist[enumerate,9]{label=\arabic*.}
+
+% ---- headings inside messages -----------------------------------------------
+\titleformat{\section}{\normalfont\Large\bfseries}{}{0em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{}{0em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\bfseries}{}{0em}{}
+\titleformat{\paragraph}{\normalfont\normalsize\bfseries\itshape}{}{0em}{}
+\titleformat{\subparagraph}{\normalfont\normalsize\itshape}{}{0em}{}
+\titlespacing*{\section}{0pt}{2ex plus 1ex minus .2ex}{1ex}
+\titlespacing*{\subsection}{0pt}{1.8ex plus .8ex minus .2ex}{0.8ex}
+\titlespacing*{\subsubsection}{0pt}{1.5ex plus .6ex minus .2ex}{0.6ex}
+\titlespacing*{\paragraph}{0pt}{1.2ex plus .5ex minus .2ex}{0.5ex}
+\titlespacing*{\subparagraph}{0pt}{1.2ex plus .5ex minus .2ex}{0.5ex}
+
+% ---- message headers --------------------------------------------------------
+\definecolor{owuiUserBg}{RGB}{225,236,250}
+\definecolor{owuiUserFg}{RGB}{28,68,120}
+\definecolor{owuiAssistantBg}{RGB}{236,244,234}
+\definecolor{owuiAssistantFg}{RGB}{40,90,45}
+\definecolor{owuiSystemBg}{RGB}{242,238,228}
+\definecolor{owuiSystemFg}{RGB}{110,80,30}
+\definecolor{owuiMeta}{RGB}{100,100,100}
+\newcounter{owuimsg}
+% \owuiheader{Bg colour}{Fg colour}{role label}{meta text}{bookmark text}
+\newcommand{\owuiheader}[5]{%
+  \stepcounter{owuimsg}%
+  \par\Needspace*{5\baselineskip}%
+  \pdfbookmark[0]{#5}{owuimsg\theowuimsg}%
+  \noindent\begin{tcolorbox}[enhanced,colback=#1,colframe=#1,boxrule=0pt,arc=2pt,
+      left=6pt,right=6pt,top=3pt,bottom=3pt,boxsep=0pt,
+      before skip=2ex plus .5ex,after skip=1.2ex]
+    \textcolor{#2}{\textbf{\sffamily #3}}\hfill{\small\color{owuiMeta}\sffamily #4}%
+  \end{tcolorbox}\nobreak\noindent\ignorespaces
+}
+\newcommand{\owuinote}[1]{{\small\color{owuiMeta}#1}\par}
+% ---- end owui2pdf header ---------------------------------------------------

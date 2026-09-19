@@ -1,4 +1,5 @@
 **/llama-cpp.env
+*.pdf
 .idea
 gpt-researcher/gpt-researcher.env
 gpt-researcher/logs
