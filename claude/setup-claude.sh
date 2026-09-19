@@ -18,4 +18,9 @@ else
   fi
   ln -s "${SCRIPT_DIR}/settings.json" "${CLAUDE_SETTINGS}"
 fi
+
+set +e
+# https://dash.plotly.com/mcp
+claude mcp add plotly-dash-documentation --transport http --scope user https://dash.plotly.com/_mcp
+
 echo "Claude configured."

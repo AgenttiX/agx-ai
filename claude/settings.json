@@ -43,7 +43,9 @@
       "Bash(pip show *)",
       "Bash(pip check *)",
       "Bash(pylint *)",
+      "Bash(pyrefly *)",
       "Bash(pytest *)",
+      "Bash(ruff *)",
       "Bash(uname *)",
       "Bash(vulkaninfo *)",
       "Bash(where *)",
@@ -82,12 +84,6 @@
       "Read(//mnt/rk-files/**)",
       "Read(//mnt/vxl-files/**)",
       "Read(~/Vaults/**)"
-    ],
-    "ask": [
-      "Bash(git commit *)",
-      "Bash(git push *)",
-      "PowerShell(git commit *)",
-      "PowerShell(git push *)"
     ]
   },
   "model": "opus[1m]",
@@ -95,8 +91,10 @@
   "enabledPlugins": {
     "clangd-lsp@claude-plugins-official": true,
     "github@claude-plugins-official": true,
+    "gitlab@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
   },
   "tui": "fullscreen",
   "theme": "dark",
