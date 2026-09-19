@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from .build import convert_chat
 from .chat import chat_title, load_chats
 from .fonts import find_emoji_font
+from .notes import load_note_library
 from .util import slugify, which_or_die
 
 
@@ -40,6 +42,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-notes", action="store_true",
                    help="append the full text of referenced notes as an appendix "
                         "(default: only metadata in the bibliography)")
+    p.add_argument("--notes", type=Path, action="append", default=[], metavar="PATH",
+                   help="JSON export(s) of notes (GET /api/v1/notes/<id>), Markdown files named "
+                        "<note id>.md, or directories of these, providing the full note text "
+                        "(chat exports contain at most the first 1000 characters); repeatable")
+    p.add_argument("--notes-url", metavar="URL",
+                   help="Open WebUI base URL, e.g. https://ai.example.com, to fetch the full text "
+                        "of referenced notes; the API key is read from --notes-token or the "
+                        "OWUI_API_KEY environment variable")
+    p.add_argument("--notes-token", metavar="KEY", help="API key for --notes-url")
     p.add_argument("--no-usage", dest="show_usage", action="store_false",
                    help="omit token usage in message headers")
     p.add_argument("--emoji-font", help="path to a colour emoji font (CBDT/COLRv0 TTF)")
@@ -119,6 +130,12 @@ def main(argv=None) -> int:
     jobs = collect_inputs(args.input)
     if args.output and (len(jobs) != 1 or args.input[0].is_dir()):
         sys.exit("error: -o/--output requires a single input file; use --outdir instead")
+
+    args.note_library = load_note_library(args.notes) if args.notes else {}
+    if args.notes_url:
+        args.notes_token = args.notes_token or os.environ.get("OWUI_API_KEY")
+        if not args.notes_token:
+            sys.exit("error: --notes-url needs an API key (--notes-token or OWUI_API_KEY)")
 
     emoji_font = None if args.no_emoji_font else find_emoji_font(args.emoji_font)
     if emoji_font is None and not args.no_emoji_font:

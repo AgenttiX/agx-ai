@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 
 from .util import fmt_timestamp, tex_escape
 
+# Open WebUI's notes list API (used by the note picker) truncates the note
+# Markdown to this many characters; the chat export then carries only that.
+NOTE_TRUNCATION_LIMIT = 1000
+
 
 def _is_url(v) -> bool:
     return isinstance(v, str) and v.startswith(("http://", "https://"))
@@ -46,7 +50,7 @@ class Source:
     created_at: str = ""
     updated_at: str = ""
     content: str | None = None
-    content_kind: str = "full"  # full | excerpts
+    content_kind: str = "full"  # full | truncated | excerpts
     excerpts: list[str] = field(default_factory=list)
     content_type: str = ""
     size: int | None = None
@@ -60,6 +64,35 @@ class Source:
     def counts(self) -> tuple[int, int]:
         t = self.text
         return len(t), len(t.split())
+
+    @property
+    def has_full_content(self) -> bool:
+        return self.content is not None and self.content_kind == "full"
+
+    def set_full_content(self, content: str, created_at=None, updated_at=None) -> None:
+        self.content = content
+        self.content_kind = "full"
+        if created_at and not self.created_at:
+            self.created_at = fmt_timestamp(created_at)
+        if updated_at and not self.updated_at:
+            self.updated_at = fmt_timestamp(updated_at)
+
+    def _set_export_content(self, content: str) -> None:
+        """Content found in the chat export; may be truncated for notes."""
+        self.content = content
+        truncated = self.kind == "note" and len(content) >= NOTE_TRUNCATION_LIMIT
+        self.content_kind = "truncated" if truncated else "full"
+
+    def counts_text(self) -> str:
+        chars, words = self.counts()
+        if self.content_kind == "full":
+            return f"{chars} characters, {words} words"
+        if self.content_kind == "truncated":
+            return (f"at least {chars} characters, {words} words "
+                    f"(text truncated to {NOTE_TRUNCATION_LIMIT} characters in the export)")
+        n = len(self.excerpts)
+        return (f"{chars} characters, {words} words in {n} retrieved excerpt{'s' if n != 1 else ''} "
+                "(full text not in the export)")
 
     def label(self) -> str:
         return {"note": "Open WebUI note", "file": "Uploaded file", "web": "Web page"}.get(self.kind, "Source")
@@ -75,9 +108,7 @@ class Source:
         if self.size:
             bits.append(f"{self.size / 1024:.0f} kB" if self.size >= 1024 else f"{self.size} B")
         if self.kind != "web" and self.text:
-            chars, words = self.counts()
-            what = "" if self.content_kind == "full" else " in retrieved excerpts"
-            bits.append(f"{chars} characters, {words} words{what}")
+            bits.append(self.counts_text())
         return "; ".join(bits)
 
 
@@ -113,9 +144,8 @@ class SourceRegistry:
         src = self._get_or_create(ident, kind, str(title))
         self._update_meta(src, f)
         content = _text_content(f)
-        if content is not None:
-            src.content = content
-            src.content_kind = "full"
+        if content is not None and not src.has_full_content:
+            src._set_export_content(content)
         return src
 
     def register_source(self, entry: dict) -> Source | None:
@@ -142,11 +172,19 @@ class SourceRegistry:
         if url and not src.url:
             src.url = url
         self._update_meta(src, s)
+        content = _text_content(s)
+        if content is not None and not src.has_full_content:
+            src._set_export_content(content)
         for d in docs:
             if d not in src.excerpts:
                 src.excerpts.append(d)
         if src.content is None:
             src.content_kind = "excerpts"
+        elif src.content_kind == "full" and src.kind == "note" and any(
+                d.strip() and d.strip() not in src.content for d in docs):
+            # A retrieved chunk that is not part of the stored text: the
+            # stored text cannot be the complete note.
+            src.content_kind = "truncated"
         return src
 
     @staticmethod

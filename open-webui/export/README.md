@@ -37,6 +37,24 @@ JSON files that are not chat exports are reported and skipped.
    Notes and files are listed with their creation and update time, character
    count and word count only. With `--include-notes` the full text of each
    referenced note is added as an appendix that the bibliography entry links to.
+
+   A chat export does not necessarily contain the whole note: Open WebUI's
+   note picker stores the note as returned by the notes *list* API, which cuts
+   the text at 1000 characters, and a reply's `sources` only hold the
+   retrieved chunks. The script detects this and reports "at least N
+   characters … (text truncated in the export)" or "… in K retrieved
+   excerpts" instead of a misleading exact count. To get exact counts and the
+   complete appendix, supply the notes:
+
+   ```bash
+   # from the server (API key: Settings → Account → API keys)
+   OWUI_API_KEY=sk-... ./owui2pdf.py chat.json --include-notes --notes-url https://ai.example.com
+   # or from files: GET /api/v1/notes/<id> saved as JSON, or <note id>.md files
+   ./owui2pdf.py chat.json --include-notes --notes notes/
+   ```
+
+   `--notes-url` fetches every referenced note from `<url>/api/v1/notes/<id>`
+   and sends the API key only to that host.
 3. pandoc converts the Markdown (`commonmark_x`, close to the GFM dialect Open WebUI
    uses) into LaTeX. A Lua filter handles plain code blocks, task lists,
    table column widths, unreachable images, very long words and emoji sequences.
@@ -54,6 +72,7 @@ JSON files that are not chat exports are reported and skipped.
 | `owui2pdf/chat.py` | Reading the export, walking the conversation branch, attachments, sources, usage |
 | `owui2pdf/markdown.py` | Normalising message content and assembling the Markdown document |
 | `owui2pdf/sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
+| `owui2pdf/notes.py` | Loading full note texts from files or the Open WebUI API |
 | `owui2pdf/fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
 | `owui2pdf/build.py` | Running pandoc and latexmk |
 | `owui2pdf/util.py` | Escaping, timestamps, subprocess helpers |
@@ -85,6 +104,7 @@ JSON files that are not chat exports are reported and skipped.
 | `--user-paragraphs` | In user messages, treat single newlines between plain text lines as paragraph breaks; lists, tables, quotes, headings and code are left alone |
 | `--include-reasoning` | Render model reasoning blocks as quotes |
 | `--include-notes` | Append the full text of referenced notes as an appendix |
+| `--notes PATH`, `--notes-url URL`, `--notes-token KEY` | Supply the complete text of referenced notes from files or from the server (see above) |
 | `--no-sources`, `--no-usage` | Omit citations and bibliography / token usage |
 | `--main-font`, `--sans-font`, `--mono-font`, `--math-font` | Font overrides |
 | `--paper`, `--font-size`, `--highlight-style` | Layout tweaks |

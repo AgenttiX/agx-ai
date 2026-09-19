@@ -21,6 +21,7 @@ from pathlib import Path
 
 from .chat import (attachments_markdown, chat_body, chat_title, error_text, message_text,
                    ordered_messages, usage_text)
+from .notes import resolve_notes
 from .sources import SourceRegistry, cite_inline, convert_citation_marks
 from .util import fmt_timestamp, tex_escape
 
@@ -320,7 +321,12 @@ def appendix_markdown(registry: SourceRegistry) -> str:
         meta = src.metadata_text()
         head = "\\section{%s}\\label{note:%s}\n\\owuinote{Reference \\cite{%s}%s}" % (
             tex_escape(src.title), src.key, src.key, tex_escape("; " + meta) if meta else "")
-        parts.append(raw_latex_block(head) + preprocess_markdown(src.text, False).strip("\n") + "\n")
+        body = preprocess_markdown(src.text, False).strip("\n")
+        if src.content_kind == "truncated":
+            body += "\n\n*[… note text truncated in the export; pass --notes or --notes-url for the full note]*"
+        elif src.content_kind == "excerpts":
+            body += "\n\n*[retrieved excerpts only; the full note is not in the export]*"
+        parts.append(raw_latex_block(head) + body + "\n")
     return "\n\n".join(parts)
 
 
@@ -360,6 +366,7 @@ def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict, s
 
     bib = None
     if registry is not None and len(registry):
+        resolve_notes(registry, opts)
         bib = registry.bibtex(opts.include_notes)
         parts.append(bibliography_markdown())
         if opts.include_notes:
