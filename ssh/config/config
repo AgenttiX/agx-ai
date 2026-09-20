@@ -1,0 +1,21 @@
+# SSH config
+
+Include /ssh/private.conf
+
+Host *
+    ForwardAgent no
+    ForwardX11 no
+    IdentitiesOnly yes
+    IdentityFile /ssh/id_ed25519
+    # If the servers require password authentication on the first login after a reboot to e.g. obtain Kerberos tickets,
+    # then you may have to disable this temporarily.
+    PasswordAuthentication no
+    # Disable this for the first run to populate known_hosts.
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /ssh/known_hosts
+
+Host remote
+    ProxyJump jump
+    ExitOnForwardFailure yes
+    ServerAliveInterval 25
+    ServerAliveCountMax 3

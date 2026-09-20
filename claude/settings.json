@@ -76,6 +76,7 @@
     "deny": [
       "Edit(//v/**)",
       "Edit(//w/**)",
+      "Edit(~/.ssh/id_*)",
       "Read(//mnt/agx-file/archive/**)",
       "Read(//mnt/agx-file/backup/**)",
       "Read(//mnt/agx-file/files/**)",
@@ -83,6 +84,10 @@
       "Read(//mnt/holvi/**)",
       "Read(//mnt/rk-files/**)",
       "Read(//mnt/vxl-files/**)",
+      "Read(~/.ssh/id_*[!b])",
+      "Read(~/.ssh/id_*[!u]b)",
+      "Read(~/.ssh/id_*[!p]ub)",
+      "Read(~/.ssh/id_*[!.]pub)",
       "Read(~/Vaults/**)"
     ]
   },
