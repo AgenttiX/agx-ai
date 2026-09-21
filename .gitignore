@@ -2,6 +2,7 @@
 *.pdf
 __pycache__
 .idea
+benchmark/results
 gpt-researcher/gpt-researcher.env
 gpt-researcher/logs
 gpt-researcher/outputs
