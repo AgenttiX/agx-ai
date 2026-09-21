@@ -1,0 +1,12 @@
+name: ssh-debug
+services:
+  ssh-debug:
+    build: .
+    entrypoint: ["/bin/sh"]
+    # user: "0:0"
+    restart: "no"
+    stdin_open: true
+    tty: true
+    volumes:
+     - "./config:/ssh:rw"
+    working_dir: "/ssh"

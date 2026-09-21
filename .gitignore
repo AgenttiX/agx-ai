@@ -1,7 +1,8 @@
-**/llama-cpp.env
+*.env
 *.pdf
 __pycache__
 .idea
+benchmark/results
 gpt-researcher/gpt-researcher.env
 gpt-researcher/logs
 gpt-researcher/outputs
@@ -13,3 +14,6 @@ open-terminal/open-terminal.env
 open-webui/data
 open-webui/open-webui.env
 preset-*uncensored*
+ssh/config/id_*
+ssh/config/known_hosts
+ssh/config/private.conf

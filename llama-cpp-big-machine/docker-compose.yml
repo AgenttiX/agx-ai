@@ -1,3 +1,5 @@
+# llama.cpp router server for PaperQA2 on the Big Machine (2x RTX A4000, 16 GB each).
+# Models, their settings and the VRAM/context notes are in preset.ini; server-wide settings in config.ini.
 services:
   llama-cpp:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda13
