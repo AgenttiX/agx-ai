@@ -9,7 +9,7 @@ services:
       - "9931:9931"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      - ../llama-cpp-agx-ai/config.ini:/etc/llama.cpp/config.ini:ro
       # Select the LLM model here
       # - ./preset-gemma-4-26b-a4b-qat.ini:/etc/llama.cpp/preset.ini:ro
       - ./preset-gemma-4-31b-qat.ini:/etc/llama.cpp/preset.ini:ro
