@@ -12,7 +12,6 @@ models
 open-terminal/open-terminal.env
 open-webui/data
 open-webui/open-webui.env
-preset-*uncensored*
 ssh/config/id_*
 ssh/config/known_hosts
 ssh/config/private.conf
