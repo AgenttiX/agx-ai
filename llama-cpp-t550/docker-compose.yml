@@ -1,0 +1,43 @@
+# llama.cpp router server for the NVIDIA T550 Laptop GPU (4 GB) under Docker Desktop with WSL 2 on Windows.
+# Models, their settings and the VRAM/context notes are in preset.ini; server-wide settings in config.ini.
+services:
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    container_name: llama-cpp
+    env_file:
+      - path: ./llama-cpp.env
+        # required: false
+    environment:
+      # The image requires CUDA >= 13.4, but the driver 596.52 provides CUDA 13.2.
+      # The CUDA 13.4 runtime works with it thanks to CUDA minor version compatibility.
+      NVIDIA_DISABLE_REQUIRE: "1"
+      # The image ships the CUDA forward compatibility libcuda (/usr/local/cuda/compat) in the ldconfig cache,
+      # which does not work on WSL 2 ("no CUDA-capable device is detected").
+      # Load the WSL libcuda mounted by the NVIDIA container runtime instead.
+      LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+      # The image has no native kernels for the T550 (Turing, sm_75), so the CUDA driver JIT-compiles them from PTX
+      # on first use. Keep the compiled kernels in a volume, so that only the first request after an image update is slow.
+      CUDA_CACHE_MAXSIZE: "4294967296"
+    restart: unless-stopped
+    ports:
+      - "9931:9931"
+    volumes:
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+      - cuda-cache:/root/.nv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cuda-cache:
