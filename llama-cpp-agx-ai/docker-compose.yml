@@ -1,25 +1,35 @@
-x-common: &common
-  env_file:
-    - ./llama-cpp.env
-  restart: unless-stopped
-  healthcheck:
-    test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-
 services:
-  llama-cpp-gpu:
-    <<: *common
+  llama-cpp:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda13
-    container_name: llama-cpp-gpu
+    container_name: llama-cpp
+    env_file:
+      - ./llama-cpp.env
+    environment:
+      # The image requires CUDA >= 13.4 (build b11176), but the driver 610.57 provides CUDA 13.3.
+      # CUDA minor version compatibility lets it run anyway.
+      - NVIDIA_DISABLE_REQUIRE=1
     ports:
       - "9931:9931"
+    restart: unless-stopped
+    # For load-mode = mmap+mlock of the CPU model. The default limit of 8 MiB makes mlock fail:
+    # "warning: failed to mlock 621395968-byte buffer ... Try increasing RLIMIT_MEMLOCK"
+    # This requires lxc.prlimit.memlock: unlimited in the Proxmox config of the agx-ai LXC container,
+    # as otherwise the container fails to start with "error setting rlimit type 8: operation not permitted".
+    # See README.md.
+    # ulimits:
+    #   memlock:
+    #     soft: -1
+    #     hard: -1
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     volumes:
       # - ../models:/models
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - ./config.ini:/etc/llama.cpp/config.ini:ro
-      - ./preset-gpu.ini:/etc/llama.cpp/preset.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
     deploy:
       resources:
         reservations:
@@ -27,14 +37,3 @@ services:
             - driver: nvidia
               capabilities: [ gpu ]
               count: all
-  llama-cpp-cpu:
-    <<: *common
-    image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: llama-cpp-cpu
-    ports:
-      - "9932:9931"
-    volumes:
-      # - ../models:/models
-      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ./config.ini:/etc/llama.cpp/config.ini:ro
-      - ./preset-cpu.ini:/etc/llama.cpp/preset.ini:ro

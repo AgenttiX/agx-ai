@@ -17,3 +17,4 @@ preset-*uncensored*
 ssh/config/id_*
 ssh/config/known_hosts
 ssh/config/private.conf
+benchmark/scratch
