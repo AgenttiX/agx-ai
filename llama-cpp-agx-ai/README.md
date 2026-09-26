@@ -12,20 +12,21 @@ so each is tuned for running alone.
 
 | Model | Runs on | Chat generation | Prompt processing |
 |---|---|---|---|
-| `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 77824 | GPU, with the experts of 25 of 30 layers on the CPU | 46-62 t/s | ~1600 t/s for a 75k-token prompt |
+| `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 77824 | GPU, with the experts of 25 of 30 layers on the CPU, core clock locked to 1600 MHz | 46-72 t/s | ~1510 t/s for a 75k-token prompt |
 | [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 75000 | CPU only | 17-24 t/s | ~74 t/s |
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
 processed, see [Prompt cache](#prompt-cache).
 
-**The GPU model requires the 170 W power limit**, which is set by [`gpu-power-limit/`](gpu-power-limit) on the host.
-Without it, the GPU crashes under long prompts, see [Xid 79 crashes](#xid-79-crashes).
+**The GPU model requires the core clock lock of 1600 MHz or the 170 W power limit**, which are both set by
+[`gpu-power-limit/`](gpu-power-limit) on the host. Without them, the GPU crashes under long prompts,
+see [Xid 79 crashes](#xid-79-crashes) and [Locking the GPU clock](#locking-the-gpu-clock).
 
 ## Setup
 
-### Power limit on agx-h12
+### Power limit and clock lock on agx-h12
 
-The power limit resets at every reboot of the host. Install the script and the systemd service on `agx-h12`:
+The power limit and the clock lock reset at every reboot of the host. Install the script and the systemd service on `agx-h12`:
 
 ```sh
 sudo install -m 755 gpu-power-limit/gpu-power-limit.sh /usr/local/sbin/gpu-power-limit.sh
@@ -36,19 +37,23 @@ systemctl status gpu-power-limit.service
 nvidia-smi --query-gpu=power.limit --format=csv
 ```
 
-The script waits up to 300 s for the driver and the GPU after boot, enables persistence mode (so that the limit is kept
-when no program uses the GPU) and sets the limit. It also creates the NVIDIA device nodes, including
+The script waits up to 300 s for the driver and the GPU after boot, enables persistence mode (so that the limits are kept
+when no program uses the GPU), sets the power limit to 170 W and locks the core clock to 210-1600 MHz. It also creates the NVIDIA device nodes, including
 `/dev/nvidia-uvm-tools`, before Proxmox starts the guests. Previously, the autostart of the `agx-ai` container failed
 with `TASK ERROR: Device /dev/nvidia-uvm-tools does not exist`, as the node only appears when something first uses
 the GPU, so the container can now be set to start at boot. The settings (`POWER_LIMIT_W`, `MAX_CLOCK_MHZ`,
 `GPU_BUS_ID`, `WAIT_TIMEOUT_S`) can be overridden in `/etc/default/gpu-power-limit`, e.g.:
 
 ```sh
-echo 'MAX_CLOCK_MHZ=1600' | sudo tee -a /etc/default/gpu-power-limit
+echo 'MAX_CLOCK_MHZ=1700' | sudo tee -a /etc/default/gpu-power-limit
 sudo systemctl restart gpu-power-limit.service
 ```
 
-### Locking the GPU clock (to be tested)
+An empty value leaves that setting unchanged, e.g. `POWER_LIMIT_W=` to lock only the clock. Restarting the service
+does not raise a power limit that was set earlier, so after changing it, also run
+`sudo nvidia-smi -i 00000000:81:00.0 -pl 240` or reboot.
+
+### Locking the GPU clock
 
 A power limit makes the GPU boost to its highest clocks and voltages and then pull back, which still allows short
 power and voltage spikes. Under load, the core clock ranged from 1515 to 1920 MHz (mean ~1760 MHz) both with and
@@ -75,6 +80,24 @@ Suggested test sequence, each with 20 consecutive near-full-context prompts whil
 4. Optionally the memory clock at 5001 MHz, if the GPU still runs hot.
 Keep the setting that passes with the highest prompt processing speed, and set it in
 `/etc/default/gpu-power-limit`.
+
+Results with `n-cpu-moe = 25`, ctx 77824 and 20 consecutive 75k-token prompts (the power and temperature without
+the clock lock are from the 20-run test with `n-cpu-moe = 24` and 63k-token prompts):
+
+| Setting | Result | Core clock under load | Power | Temperature | pp | Chat tg (English / code / Finnish) |
+|---|---|---|---|---|---|---|
+| 170 W | passed | 1755 MHz mean, max 1920 | 161 W mean, max 169 | 80 °C mean, max 85 | 1589-1617 t/s | 59 / 62 / 46 t/s |
+| 170 W + 1600 MHz (2026-09-26) | 20/20 passed, no PCIe replays | 1590 MHz | 120 W mean, max 128 | 72 °C mean, max 75 | 1507-1511 t/s | 64 / 72 / 46 t/s |
+| 240 W (no power limit) + 1600 MHz (2026-09-26) | 20/20 passed, no PCIe replays | 1590 MHz | 120 W mean, max 127 | 71 °C mean, max 73 | 1505-1511 t/s | 62 / 61 / 50 t/s |
+
+The clock lock reduces power by 25 % and temperature by 8-10 °C for 6 % slower prompt processing, and token generation
+is not slower, as it is mostly limited by the experts on the CPU. As the GPU stays well below 170 W, the power limit
+only cuts short spikes, which the 5 s samples of `nvidia-smi dmon` do not show. Without the power limit, the results
+are practically identical, so the clock lock alone prevents the crashes (for comparison, `ubatch-size = 2048` without
+any limits crashed on the 5th prompt). [`gpu-power-limit/`](gpu-power-limit) sets both: the clock lock for
+the lower temperature, and the power limit as a safety net against spikes, which costs nothing, as the GPU stays
+below it. A higher clock (e.g. 1700 MHz) could win back some of the 6 % of prompt processing speed, but 1600 MHz
+was kept, as it is more power-efficient and keeps the GPU coolest.
 
 ### Memory locking
 

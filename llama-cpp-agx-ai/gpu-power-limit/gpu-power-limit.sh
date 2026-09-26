@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Sets the power limit (and optionally a core clock limit) of the NVIDIA GPU on the Proxmox host agx-h12 at boot.
 #
-# The RTX 3070 crashes with Xid 79 ("GPU has fallen off the bus") under long full loads at the default 240 W,
-# but has been stable at 170 W. See ../README.md. The limit resets at every reboot, hence this script.
+# The RTX 3070 crashes with Xid 79 ("GPU has fallen off the bus") under long full loads at the default settings,
+# but has been stable with a 170 W power limit, and with the core clock locked to 1600 MHz (with or without the power
+# limit). Both are set, as the clock lock also keeps the GPU cooler. See ../README.md.
+# The settings reset at every reboot, hence this script.
 #
 # The script also creates the NVIDIA device nodes, including /dev/nvidia-uvm and /dev/nvidia-uvm-tools,
 # as they only appear when something first uses the GPU. Without them, Proxmox fails to autostart the agx-ai
@@ -11,9 +13,10 @@
 # Settings can be overridden in /etc/default/gpu-power-limit.
 set -u
 
+# Power limit in W (nvidia-smi -pl). Empty = not changed (the default of the card is 240 W).
 POWER_LIMIT_W=170
-# Optional maximum core clock in MHz (nvidia-smi -lgc). Empty = not locked. See ../README.md.
-MAX_CLOCK_MHZ=""
+# Maximum core clock in MHz (nvidia-smi -lgc). Empty = not locked. See ../README.md.
+MAX_CLOCK_MHZ=1600
 # PCI bus ID of the GPU, as shown by nvidia-smi
 GPU_BUS_ID="00000000:81:00.0"
 # How long to wait for the driver and the GPU to become available after boot
@@ -59,11 +62,12 @@ done
 # Persistence mode keeps the driver state, including the power limit, when no program is using the GPU.
 nvidia-smi -i "$GPU_BUS_ID" -pm 1 || log "could not enable persistence mode"
 
-if ! nvidia-smi -i "$GPU_BUS_ID" -pl "$POWER_LIMIT_W"; then
-    log "setting the power limit failed"
-    exit 1
+if [ -n "$POWER_LIMIT_W" ]; then
+    if ! nvidia-smi -i "$GPU_BUS_ID" -pl "$POWER_LIMIT_W"; then
+        log "setting the power limit failed"
+        exit 1
+    fi
 fi
-
 current=$(nvidia-smi -i "$GPU_BUS_ID" --query-gpu=power.limit --format=csv,noheader,nounits)
 log "power limit is now $current W"
 
