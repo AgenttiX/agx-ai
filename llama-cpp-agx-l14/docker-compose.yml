@@ -1,6 +1,6 @@
 # llama.cpp router server for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Intel Graphics iGPU, 32 GB RAM).
 # Models, their settings and the benchmark notes (CPU vs. iGPU vs. NPU) are in preset.ini; server-wide settings in config.ini.
-# The NPU is used by a separate server in ../llama-cpp-agx-l14-npu. Do not run both at the same time: together they
+# The NPU is used by a separate server in ../openvino-agx-l14. Do not run both at the same time: together they
 # exhausted the 32 GB of RAM and the kernel killed the desktop session.
 services:
   llama-cpp:
