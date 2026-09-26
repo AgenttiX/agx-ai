@@ -13,6 +13,7 @@
   - [NVIDIA T550 Laptop GPU (4 GB) config for Docker Desktop on Windows](llama-cpp-t550/docker-compose.yml)
   - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU config](llama-cpp-agx-l14/docker-compose.yml)
   - [ThinkPad L14 Gen 5 NPU config with OpenVINO Model Server](openvino-agx-l14/docker-compose.yml)
+  - [ThinkPad L14 Gen 5 NPU config for Gemma 4 E4B with a third-party server](openvino-agx-l14-npu-e4b/docker-compose.yml)
   - [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
 - [LM Studio](https://lmstudio.ai/)
   - For running local models

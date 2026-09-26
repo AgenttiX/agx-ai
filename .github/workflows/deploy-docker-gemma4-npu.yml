@@ -1,0 +1,58 @@
+name: Publish Gemma 4 NPU Docker image
+on:
+  push:
+    branches: [main]
+    paths:
+      - "openvino-agx-l14-npu-e4b/**"
+      - ".github/workflows/deploy-docker-gemma4-npu.yml"
+  workflow_dispatch:
+jobs:
+  push_to_registry:
+    name: Push Docker image to GitHub Container registry
+    runs-on: ubuntu-latest
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      id-token: write
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GitHub Container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # QEMU is not needed, as the image is built only for x86-64 (the Intel NPU driver is available only for it).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}/gemma4-npu
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          cache-from: type=gha
+          cache-to: type=gha
+          # The Dockerfile is in a subdirectory of the repository.
+          context: "{{defaultContext}}:openvino-agx-l14-npu-e4b"
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          provenance: mode=max
+          pull: true
+          push: true
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/gemma4-npu
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

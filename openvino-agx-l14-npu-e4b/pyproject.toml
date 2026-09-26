@@ -1,0 +1,42 @@
+# Python dependencies of the ryugyosoft/gemma-4-E4B-it-npu server (see Dockerfile).
+# Update the lock file with: docker run --rm -v "$PWD":/src -w /src ghcr.io/astral-sh/uv:0.12 lock
+[project]
+name = "gemma4-npu"
+version = "0.1.0"
+description = "Container for the ryugyosoft/gemma-4-E4B-it-npu server"
+# Ubuntu 26.04 includes Python 3.14.
+requires-python = "==3.14.*"
+# The versions tested upstream (requirements.txt: openvino>=2026.5.0b1, transformers==5.5.4).
+dependencies = [
+    "fastapi",
+    "huggingface-hub",
+    "numpy>=1.26",
+    "openvino==2026.5.0b1",
+    "pillow",
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+    "transformers==5.5.4",
+    "uvicorn",
+]
+
+# The upstream requirements.txt uses --extra-index-url, which lets a package with the same name on PyPI take
+# precedence (dependency confusion). Here the extra indexes are explicit, i.e. used only for the packages listed
+# in tool.uv.sources, and everything else comes from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "openvino-nightly"
+url = "https://storage.openvinotoolkit.org/simple/wheels/nightly"
+explicit = true
+
+[tool.uv.sources]
+openvino = { index = "openvino-nightly" }
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[tool.uv]
+# The server is run from the downloaded source files, not installed as a package.
+package = false
