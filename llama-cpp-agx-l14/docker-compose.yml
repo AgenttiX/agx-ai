@@ -1,22 +1,20 @@
-# llama.cpp router server for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Meteor Lake NPU, 32 GB RAM).
+# llama.cpp router server for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Intel Graphics iGPU, 32 GB RAM).
 # Models, their settings and the benchmark notes (CPU vs. iGPU vs. NPU) are in preset.ini; server-wide settings in config.ini.
+# The NPU is used by a separate server in ../llama-cpp-agx-l14-npu. Do not run both at the same time: together they
+# exhausted the 32 GB of RAM and the kernel killed the desktop session.
 services:
   llama-cpp:
-    # The OpenVINO image contains both the ggml CPU backend (device = none), used for the Gemma models,
-    # and the OpenVINO backend (device = OPENVINO0), used for the NPU model.
-    image: ghcr.io/ggml-org/llama.cpp:server-openvino
+    # The Vulkan image contains both the Vulkan (iGPU) and the CPU backends.
+    image: ghcr.io/ggml-org/llama.cpp:server-vulkan
     container_name: llama-cpp
     devices:
-      - /dev/accel:/dev/accel
-    environment:
-      # The OpenVINO backend can use only one device per process, and the router passes this to all models.
-      # GPU would give faster prompt processing for E4B and 12B on the iGPU, see preset.ini.
-      GGML_OPENVINO_DEVICE: NPU
+      - /dev/dri:/dev/dri
     env_file:
       - path: ./llama-cpp.env
         required: false
-    # /dev/accel/accel0 belongs to the host's render group, whose name does not exist in the image (getent group render).
+    # The group names do not exist in the image, so use the host's GIDs (getent group video render).
     group_add:
+      - "44"
       - "992"
     restart: unless-stopped
     ports:
