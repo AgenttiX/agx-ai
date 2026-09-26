@@ -1,0 +1,32 @@
+# llama.cpp router server for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Meteor Lake NPU, 32 GB RAM).
+# Models, their settings and the benchmark notes (CPU vs. iGPU vs. NPU) are in preset.ini; server-wide settings in config.ini.
+services:
+  llama-cpp:
+    # The OpenVINO image contains both the ggml CPU backend (device = none), used for the Gemma models,
+    # and the OpenVINO backend (device = OPENVINO0), used for the NPU model.
+    image: ghcr.io/ggml-org/llama.cpp:server-openvino
+    container_name: llama-cpp
+    devices:
+      - /dev/accel:/dev/accel
+    environment:
+      # The OpenVINO backend can use only one device per process, and the router passes this to all models.
+      # GPU would give faster prompt processing for E4B and 12B on the iGPU, see preset.ini.
+      GGML_OPENVINO_DEVICE: NPU
+    env_file:
+      - path: ./llama-cpp.env
+        required: false
+    # /dev/accel/accel0 belongs to the host's render group, whose name does not exist in the image (getent group render).
+    group_add:
+      - "992"
+    restart: unless-stopped
+    ports:
+      - "9931:9931"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
