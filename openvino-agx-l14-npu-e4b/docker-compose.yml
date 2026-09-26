@@ -4,10 +4,11 @@
 # OpenVINO Model Server can do for Gemma 4 on this NPU (see ../openvino-agx-l14 and ../llama-cpp-agx-l14).
 #
 # Setup (the model files are ~15.5 GB):
-#   docker compose pull    (or "docker compose build" to build the image locally)
+#   docker compose pull
 #   docker compose run --rm download
 #   docker compose up -d
-# The image is built by ../.github/workflows/deploy-docker-gemma4-npu.yml.
+# The image is built by ../.github/workflows/deploy-docker-gemma4-npu.yml. To build it locally instead, run:
+#   docker build -t ghcr.io/agenttix/agx-ai/gemma4-npu:latest .
 # The first start compiles the model for the NPU (~10 min, 578-632 s measured); later starts load the compiled
 # blobs from models/npu_cache (9 GB) in ~30 s. The blobs depend on the NPU driver version in the image, so a driver
 # update recompiles them, and the old blobs have to be deleted by hand.
@@ -40,7 +41,6 @@
 #   storing client ID. No data will be sent."
 services:
   gemma4-npu:
-    build: .
     image: ghcr.io/agenttix/agx-ai/gemma4-npu:latest
     container_name: gemma4-npu
     devices:
