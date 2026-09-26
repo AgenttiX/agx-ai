@@ -1,5 +1,5 @@
 # Python dependencies of the ryugyosoft/gemma-4-E4B-it-npu server (see Dockerfile).
-# Update the lock file with: docker run --rm -v "$PWD":/src -w /src ghcr.io/astral-sh/uv:0.12 lock
+# Update the lock file with "uv lock" in Ubuntu 26.04 with its system Python (see README.md).
 [project]
 name = "gemma4-npu"
 version = "0.1.0"

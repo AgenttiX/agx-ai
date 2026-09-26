@@ -3,7 +3,7 @@
 # https://docs.docker.com/build/checks/#fail-build-on-check-violations
 
 # Container for ryugyosoft/gemma-4-E4B-it-npu (Gemma 4 E4B with every model component on the Intel NPU),
-# so that the third-party code never runs on the host. See docker-compose.yml for the usage and the review notes.
+# so that the third-party code never runs on the host. See README.md for the usage and the review notes.
 # Only x86-64 is supported, as the Intel NPU driver is available only for it.
 
 # Ubuntu 26.04 includes Python 3.14.
