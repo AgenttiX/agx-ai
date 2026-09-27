@@ -27,7 +27,8 @@ Examples (arguments after ``--`` go to ``llama bench``; match the server preset'
         --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 
 The Markdown table is printed and the JSON lines that ``llama bench`` emits are appended, with the label and date,
-to ``results/<hostname>-llama-bench.jsonl``. Only the Python standard library is needed.
+to ``results/<hostname>-llama-bench.jsonl``, or to ``results/<SHA-256 of the hostname>-llama-bench.jsonl`` with
+``--hash-hostname``. Only the Python standard library is needed.
 """
 
 from __future__ import annotations
@@ -36,14 +37,13 @@ import argparse
 import datetime as dt
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from llama_cpp_bench_http import Server, read_env_key
+from llama_cpp_bench_http import Server, host_name, read_env_key
 
 
 def pick_chat_model(models: list[dict[str, Any]]) -> str:
@@ -144,6 +144,8 @@ def main() -> int:
     parser.add_argument("--keep-loaded", action="store_true",
                         help="do not unload the server's models first (only if there is enough GPU memory)")
     parser.add_argument("--output", type=Path, help="JSON lines file (default results/<hostname>-llama-bench.jsonl)")
+    parser.add_argument("--hash-hostname", action="store_true",
+                        help="use the SHA-256 hash of the hostname in the default output file name")
     parser.add_argument("bench_args", nargs="*", help="arguments for llama bench, after --")
     args = parser.parse_args()
 
@@ -168,7 +170,7 @@ def main() -> int:
     ]
     if loaded:
         unload_models(server, loaded)
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{socket.gethostname().split('.')[0]}-llama-bench.jsonl"
+    output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname).split('.')[0]}-llama-bench.jsonl"
     try:
         return run_bench(docker_prefix(args), model_path, args.bench_args, args.label, args.image, output)
     finally:

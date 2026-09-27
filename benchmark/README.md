@@ -2,6 +2,8 @@
 
 Tools for measuring how a model, its settings or the hardware affect llama.cpp performance.
 Results accumulate in `results/<host>.jsonl` (one JSON line per run) so that configurations can be compared later.
+On computers whose hostname should not be published (e.g. work computers), pass `--hash-hostname` to either script:
+the hostname is then replaced by its SHA-256 hash, both in the stored results and in the file name.
 
 ## `llama_cpp_bench_http.py`: the serving configuration over HTTP
 

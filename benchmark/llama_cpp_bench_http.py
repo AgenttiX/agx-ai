@@ -26,6 +26,7 @@ For the raw model speed independent of the server configuration, see ``llama_cpp
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
 so that runs with different models, settings or hardware can be compared afterwards.
+With ``--hash-hostname``, the hostname is replaced by its SHA-256 hash in the result and the file name.
 
 Note: LiteLLM on the personal agx-ai server (``../litellm/config.yaml``, ``health_check_interval: 60``) sends a health
 check request to every model once a minute over the network, which adds noise to the measurements and reloads
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import platform
@@ -396,6 +398,12 @@ def read_env_key(path: Path, name: str = "LLAMA_API_KEY") -> str | None:
     return None
 
 
+def host_name(hashed: bool = False) -> str:
+    """The hostname, or its SHA-256 hex digest, e.g. to keep the name of a work computer out of a public repository."""
+    name = socket.gethostname()
+    return hashlib.sha256(name.encode()).hexdigest() if hashed else name
+
+
 def pick_models(models: list[dict[str, Any]], chat: str | None, embedding: str | None) -> tuple[str | None, str | None]:
     """Choose the chat and embedding model ids: explicit arguments, else the loaded (or first) ones by name."""
     def is_embedding(m: dict[str, Any]) -> bool:
@@ -451,6 +459,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=900.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", default="", help="free-text label stored with the result, e.g. what was changed")
     parser.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<hostname>.jsonl)")
+    parser.add_argument("--hash-hostname", action="store_true",
+                        help="store the hostname as its SHA-256 hash in the result and the default output file name")
     args = parser.parse_args()
 
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
@@ -470,7 +480,7 @@ def main() -> int:
 
     result: dict[str, Any] = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": socket.gethostname(),
+        "host": host_name(args.hash_hostname),
         "client_platform": platform.platform(),
         "label": args.label,
         "url": server.url,
@@ -519,7 +529,7 @@ def main() -> int:
     if gpu.available:
         result["gpu"] = {"names": gpu.names, "peak_memory_used_mib": gpu.peak}
 
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{socket.gethostname().split('.')[0]}.jsonl"
+    output = args.output or Path(__file__).resolve().parent / "results" / f"{result['host'].split('.')[0]}.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("a", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
