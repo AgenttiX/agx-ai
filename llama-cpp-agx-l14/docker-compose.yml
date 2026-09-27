@@ -12,7 +12,7 @@ services:
       - /dev/dri:/dev/dri
     env_file:
       - path: ./llama-cpp.env
-        required: false
+        # required: false
     # The group names do not exist in the image, so use the host's GIDs (getent group video render).
     group_add:
       - "44"
