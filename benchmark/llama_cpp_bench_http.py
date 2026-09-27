@@ -6,7 +6,11 @@ Measures, for the serving configuration as it actually runs (router presets, slo
 - prompt processing speed (tokens/s) for a long prompt,
 - throughput with concurrent requests (aggregate tokens/s and per-request speed),
 - embedding throughput (tokens/s) for the embedding model, if one is served,
-- peak GPU memory during the run (nvidia-smi, if available on this machine).
+- optionally, generation speed for realistic chat prompts (``chat``) and prompt processing and generation with
+  real code as a long context (``depth``); these use the chat template and the server's own sampling settings, so
+  they give representative draft acceptance for speculative decoding, unlike the repeated-text prompts at
+  temperature 0 of the other tests,
+- peak GPU memory during the run (nvidia-smi or amd-smi, if available on this machine).
 
 Speeds for the LLM come from the ``timings`` object that llama-server attaches to every completion (server-side
 prompt and generation timings, plus draft-token acceptance when speculative decoding is on). Embedding timings are
@@ -16,6 +20,7 @@ Examples:
     ./llama_cpp_bench_http.py --env-file ../llama-cpp-big-machine/llama-cpp.env --label "Qwen3.8-27B ctx 65536"
     ./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --model gemma --no-embedding
     ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
+    ./llama_cpp_bench_http.py --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts
 
 For the raw model speed independent of the server configuration, see ``llama_cpp_bench_container.py``.
 
@@ -36,8 +41,10 @@ import os
 import platform
 import shutil
 import socket
+import statistics
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 import urllib.error
@@ -52,6 +59,23 @@ PARAGRAPH = (
     "waves source a stochastic background of gravitational waves whose spectrum depends on the transition strength, "
     "the wall speed, the mean bubble separation and the equation of state of the plasma. "
 )
+
+# Varied, realistic requests for the chat test (code, explanation, translation, maths, scripting, essay).
+CHAT_PROMPTS = [
+    "Write a Python function that parses an ISO 8601 duration string like 'P3DT4H5M' into a timedelta, with docstring and tests.",
+    "Explain how a transformer's attention mechanism works to an undergraduate physics student, with an analogy.",
+    "Translate into Finnish and then explain any tricky grammar: 'The committee postponed its decision until the budget had been reviewed.'",
+    "A train leaves at 14:05 going 80 km/h; another leaves the same station at 14:35 going 110 km/h on a parallel track. When and where does the second catch up? Show the steps.",
+    "Write a bash script that finds the ten largest files under a directory, excluding .git, and prints human-readable sizes.",
+    "Summarise the pros and cons of ROCm versus Vulkan for running local LLMs on older AMD GPUs, as a short essay.",
+]
+
+# Questions asked about a long code context in the depth test; each uses a differently ordered context.
+DEPTH_QUESTIONS = [
+    "Review this code: list the five most serious potential bugs with explanations and fixes.",
+    "Write a detailed architecture overview of these modules for a new contributor.",
+    "Propose a refactoring plan for the largest module above, with example code.",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +127,17 @@ class Server:
         }
         return self.request("/completion", payload)
 
+    def chat(self, model: str, content: str, max_tokens: int) -> dict[str, Any]:
+        """Chat completion with the chat template and the server's sampling settings; returns the server's timings."""
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
+            "seed": 42,
+            "cache_prompt": False,
+        }
+        return self.request("/v1/chat/completions", payload)
+
     def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
         return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float"})
 
@@ -117,41 +152,78 @@ def build_prompt(server: Server, model: str, n_tokens: int, salt: str = "") -> t
     return prompt, len(server.tokenize(model, prompt))
 
 
+def build_code_context(server: Server, model: str, n_tokens: int, rotate: int = 0) -> str:
+    """About n_tokens tokens of real Python source (the asyncio and email packages of the client's Python)."""
+    stdlib = Path(sysconfig.get_paths()["stdlib"])
+    files = sorted((stdlib / "asyncio").glob("*.py")) + sorted((stdlib / "email").glob("*.py"))
+    files = files[rotate:] + files[:rotate]
+    text = "".join(f"\n### {f}\n" + f.read_text(encoding="utf-8") for f in files)
+    tokens = server.tokenize(model, text)
+    if len(tokens) < n_tokens:
+        raise SystemExit(f"Could not build a {n_tokens}-token code context (got {len(tokens)})")
+    return server.detokenize(model, tokens[:n_tokens])
+
+
 # ---------------------------------------------------------------------------
 # GPU memory sampling
 # ---------------------------------------------------------------------------
 
 class GpuSampler:
-    """Samples GPU memory use with nvidia-smi in a background thread; records the peak per GPU."""
+    """Samples GPU memory use with nvidia-smi and amd-smi in a background thread; records the peak per GPU.
+
+    GPUs of both vendors are listed if both tools are installed. amd-smi takes about a second per query, so its
+    peaks are coarser.
+    """
 
     def __init__(self, interval: float = 0.5) -> None:
-        self.available = shutil.which("nvidia-smi") is not None
+        self.tools = [t for t in ("nvidia-smi", "amd-smi") if shutil.which(t)]
+        self.available = bool(self.tools)
         self.interval = interval
         self.peak: list[int] = []
         self.names: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def _query(self) -> list[int]:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, check=False,
-        ).stdout
+    @staticmethod
+    def _run(cmd: list[str]) -> str:
+        return subprocess.run(cmd, capture_output=True, text=True, check=False).stdout
+
+    def _query_tool(self, tool: str) -> list[int]:
+        if tool == "amd-smi":
+            try:
+                return [int(g["mem_usage"]["used_vram"]["value"]) for g in json.loads(self._run(["amd-smi", "metric", "-m", "--json"]))]
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                return []
+        out = self._run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"])
         return [int(x) for x in out.split()]
+
+    def _names_tool(self, tool: str) -> list[str]:
+        if tool == "amd-smi":
+            try:
+                gpus = json.loads(self._run(["amd-smi", "static", "-a", "-v", "--json"]))
+                return [f"{g['asic']['market_name']}, {g['vram']['size']['value']} MiB" for g in gpus]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                return []
+        out = self._run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"])
+        return [line.strip() for line in out.splitlines() if line.strip()]
+
+    def _query(self) -> list[int]:
+        return [m for tool in self.tools for m in self._query_tool(tool)]
 
     def __enter__(self) -> Self:
         if not self.available:
             return self
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
-            capture_output=True, text=True, check=False,
-        ).stdout
-        self.names = [line.strip() for line in out.splitlines() if line.strip()]
+        for tool in self.tools:
+            n = len(self._query_tool(tool))
+            names = self._names_tool(tool)
+            self.names += names if len(names) == n else [f"{tool} GPU {i}" for i in range(n)]
         self.peak = self._query()
 
         def loop() -> None:
             while not self._stop.is_set():
-                self.peak = [max(a, b) for a, b in zip(self.peak, self._query(), strict=False)]
+                now = self._query()
+                if len(now) == len(self.peak):  # skip samples where a tool failed
+                    self.peak = [max(a, b) for a, b in zip(self.peak, now, strict=True)]
                 time.sleep(self.interval)
 
         self._thread = threading.Thread(target=loop, daemon=True)
@@ -192,6 +264,46 @@ def test_prompt_processing(server: Server, model: str, prompt_tokens: int, repea
     runs = [timings_summary(server.completion(model, prompt, 16)["timings"]) for _ in range(repeat)]
     best = max(runs, key=lambda r: r["prompt_tps"])
     return {**best, "prompt_tokens": n, "runs": len(runs), "prompt_tps_all": [r["prompt_tps"] for r in runs]}
+
+
+def test_chat(server: Server, model: str, max_tokens: int, repeat: int) -> dict[str, Any]:
+    """Generation speed over the chat prompts, each run ``repeat`` times; mean, median and range over all requests."""
+    runs = [timings_summary(server.chat(model, p, max_tokens)["timings"]) for p in CHAT_PROMPTS * repeat]
+    tps = [r["generation_tps"] for r in runs]
+    out = {
+        "requests": len(runs),
+        "max_tokens": max_tokens,
+        "generation_tps_mean": round(statistics.mean(tps), 1),
+        "generation_tps_median": round(statistics.median(tps), 1),
+        "generation_tps_min": min(tps),
+        "generation_tps_max": max(tps),
+    }
+    acc = [r["draft_acceptance"] for r in runs if "draft_acceptance" in r]
+    if acc:
+        out["draft_acceptance_mean"] = round(statistics.mean(acc), 1)
+    return out
+
+
+def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[str, Any]:
+    """A long code context (about ``depth`` tokens) and a question: prompt processing and generation at that depth."""
+    runs = [
+        timings_summary(server.chat(model, build_code_context(server, model, depth, rotate=7 * i) + "\n\n" + q, max_tokens)["timings"])
+        for i, q in enumerate(DEPTH_QUESTIONS)
+    ]
+    tps = [r["generation_tps"] for r in runs]
+    out = {
+        "depth": depth,
+        "prompt_tokens": runs[0]["prompt_tokens"],
+        "max_tokens": max_tokens,
+        "prompt_tps_mean": round(statistics.mean(r["prompt_tps"] for r in runs), 1),
+        "generation_tps_mean": round(statistics.mean(tps), 1),
+        "generation_tps_min": min(tps),
+        "generation_tps_max": max(tps),
+    }
+    acc = [r["draft_acceptance"] for r in runs if "draft_acceptance" in r]
+    if acc:
+        out["draft_acceptance_mean"] = round(statistics.mean(acc), 1)
+    return out
 
 
 def test_concurrency(
@@ -309,6 +421,10 @@ def server_args(models: list[dict[str, Any]], model: str) -> list[str] | None:
     return None
 
 
+ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth"]
+DEFAULT_TESTS = ["generation", "prompt", "concurrency", "embedding"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", default="http://localhost:9931", help="llama-server base URL (default %(default)s)")
@@ -317,6 +433,8 @@ def main() -> int:
     parser.add_argument("--model", help="chat model id (default: first loaded non-embedding model)")
     parser.add_argument("--embedding-model", help="embedding model id (default: first loaded model with 'embed' in its id)")
     parser.add_argument("--no-embedding", action="store_true", help="skip the embedding test")
+    parser.add_argument("--tests", nargs="+", choices=ALL_TESTS, default=DEFAULT_TESTS,
+                        help=f"tests to run (default: {' '.join(DEFAULT_TESTS)})")
     parser.add_argument("--n-predict", type=int, default=256, help="tokens to generate per request (default %(default)s)")
     parser.add_argument("--prompt-tokens", type=int, default=4096, help="prompt length for the prompt-processing test")
     parser.add_argument("--concurrency", type=int, nargs="*", help="concurrent request counts (default: 1 and the slot count)")
@@ -325,7 +443,11 @@ def main() -> int:
     parser.add_argument("--embed-tokens", type=int, default=1024, help="tokens per embedded text (default %(default)s)")
     parser.add_argument("--mixed", action="store_true",
                         help="run embedding batches concurrently with the highest concurrency test (PaperQA2-like load)")
-    parser.add_argument("--repeat", type=int, default=3, help="repetitions of the single-request tests; the best is reported")
+    parser.add_argument("--chat-n-predict", type=int, default=512,
+                        help="maximum tokens per request in the chat and depth tests (default %(default)s)")
+    parser.add_argument("--depth", type=int, nargs="+", default=[16000],
+                        help="context lengths in tokens for the depth test (default %(default)s)")
+    parser.add_argument("--repeat", type=int, default=3, help="repetitions of the single-request tests (the best is reported) and of the chat prompts")
     parser.add_argument("--timeout", type=float, default=900.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", default="", help="free-text label stored with the result, e.g. what was changed")
     parser.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<hostname>.jsonl)")
@@ -337,7 +459,7 @@ def main() -> int:
     chat_model, embedding_model = pick_models(models, args.model, args.embedding_model)
     if chat_model is None:
         raise SystemExit("No chat model found; pass --model")
-    if args.no_embedding:
+    if args.no_embedding or "embedding" not in args.tests:
         embedding_model = None
 
     props = server.props(chat_model)
@@ -365,16 +487,26 @@ def main() -> int:
         server.completion(chat_model, "Hello", 8)
         if embedding_model:
             server.embeddings(embedding_model, ["hello"])
-        print(f"generation: {args.n_predict} tokens x{args.repeat}...", file=sys.stderr)
-        result["generation"] = test_generation(server, chat_model, args.n_predict, args.repeat)
-        print(f"prompt processing: {args.prompt_tokens} tokens x{args.repeat}...", file=sys.stderr)
-        result["prompt_processing"] = test_prompt_processing(server, chat_model, args.prompt_tokens, args.repeat)
+        if "generation" in args.tests:
+            print(f"generation: {args.n_predict} tokens x{args.repeat}...", file=sys.stderr)
+            result["generation"] = test_generation(server, chat_model, args.n_predict, args.repeat)
+        if "prompt" in args.tests:
+            print(f"prompt processing: {args.prompt_tokens} tokens x{args.repeat}...", file=sys.stderr)
+            result["prompt_processing"] = test_prompt_processing(server, chat_model, args.prompt_tokens, args.repeat)
+        if "chat" in args.tests:
+            print(f"chat: {len(CHAT_PROMPTS)} prompts x{args.repeat}, up to {args.chat_n_predict} tokens...", file=sys.stderr)
+            result["chat"] = test_chat(server, chat_model, args.chat_n_predict, args.repeat)
+        if "depth" in args.tests:
+            result["depth"] = []
+            for d in args.depth:
+                print(f"depth: {len(DEPTH_QUESTIONS)} x {d}-token code context, up to {args.chat_n_predict} tokens...", file=sys.stderr)
+                result["depth"].append(test_depth(server, chat_model, d, args.chat_n_predict))
         result["concurrency"] = []
         mixed_embedding = None
         if args.mixed and embedding_model:
             texts = [build_prompt(server, embedding_model, args.embed_tokens, salt=f"Chunk {i}. ")[0] for i in range(args.embed_texts)]
             mixed_embedding = (embedding_model, texts, sum(len(server.tokenize(embedding_model, t)) for t in texts))
-        for c in concurrency:
+        for c in concurrency if "concurrency" in args.tests else []:
             mixed = mixed_embedding if c == max(concurrency) else None
             print(f"concurrency {c}: {args.concurrent_prompt_tokens}-token prompts, {args.n_predict} tokens each"
                   f"{' + concurrent embeddings' if mixed else ''}...", file=sys.stderr)
@@ -392,13 +524,22 @@ def main() -> int:
     with output.open("a", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-    g, p = result["generation"], result["prompt_processing"]
     print(f"\n## {result['date']}  {result['host']}  {args.label}".rstrip())
     print(f"Chat model: `{chat_model}` (build {result['build_info']}, {slots} slots)")
     print("\n| Test | Result |\n|---|---|")
-    acc = f", draft acceptance {g['draft_acceptance']} %" if "draft_acceptance" in g else ""
-    print(f"| Generation, 1 request, {g['generated_tokens']} tokens | **{g['generation_tps']} tokens/s**{acc} |")
-    print(f"| Prompt processing, {p['prompt_tokens']} tokens | **{p['prompt_tps']} tokens/s** |")
+    if g := result.get("generation"):
+        acc = f", draft acceptance {g['draft_acceptance']} %" if "draft_acceptance" in g else ""
+        print(f"| Generation, 1 request, {g['generated_tokens']} tokens | **{g['generation_tps']} tokens/s**{acc} |")
+    if p := result.get("prompt_processing"):
+        print(f"| Prompt processing, {p['prompt_tokens']} tokens | **{p['prompt_tps']} tokens/s** |")
+    if ch := result.get("chat"):
+        acc = f", draft acceptance {ch['draft_acceptance_mean']} %" if "draft_acceptance_mean" in ch else ""
+        print(f"| Chat, {ch['requests']} requests, up to {ch['max_tokens']} tokens | **{ch['generation_tps_mean']} tokens/s** "
+              f"(median {ch['generation_tps_median']}, {ch['generation_tps_min']}-{ch['generation_tps_max']}){acc} |")
+    for d in result.get("depth", []):
+        acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
+        print(f"| Code context of {d['prompt_tokens']} tokens, up to {d['max_tokens']} generated | prompt **{d['prompt_tps_mean']} tokens/s**, "
+              f"generation **{d['generation_tps_mean']} tokens/s** ({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
     for c in result["concurrency"]:
         mixed = c.get("concurrent_embedding")
         extra = f" + embeddings at {mixed['tokens_per_s']} tokens/s" if mixed else ""
