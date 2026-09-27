@@ -1,0 +1,39 @@
+# llama.cpp router server for the ThinkPad T480 (Intel Core i7-8550U, UHD Graphics 620, 32 GB RAM, NVIDIA GeForce MX150 2 GB).
+# See README.md for the setup, benchmarks and notes. Model settings are in preset.ini, server-wide settings in config.ini.
+services:
+  llama-cpp:
+    # The MX150 is a Pascal GPU (GP108, compute capability 6.1). CUDA 13 dropped Pascal, and the NVIDIA 580 driver,
+    # the last one that supports it, provides only CUDA 13.0, so the server-cuda13 image cannot be used.
+    # This image uses CUDA 12.8, which the 580 driver runs natively.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-cpp
+    env_file:
+      - path: ./llama-cpp.env
+        required: false
+    environment:
+      # The image has no native kernels for the MX150 (sm_61), so the CUDA driver JIT-compiles them from PTX
+      # on first use. Keep the compiled kernels (~50 MB) in a volume, so that only the first start after an image update is slow.
+      CUDA_CACHE_MAXSIZE: "4294967296"
+    restart: unless-stopped
+    ports:
+      - "9931:9931"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+      - cuda-cache:/root/.nv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cuda-cache:
