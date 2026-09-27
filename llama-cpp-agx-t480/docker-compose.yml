@@ -9,7 +9,7 @@ services:
     container_name: llama-cpp
     env_file:
       - path: ./llama-cpp.env
-        required: false
+        # required: false
     environment:
       # The image has no native kernels for the MX150 (sm_61), so the CUDA driver JIT-compiles them from PTX
       # on first use. Keep the compiled kernels (~50 MB) in a volume, so that only the first start after an image update is slow.
