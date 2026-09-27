@@ -8,7 +8,7 @@ services:
     # Image 2)
     # This provides a newer ROCm version.
     # https://github.com/mixa3607/ML-gfx906
-    image: mixa3607/llama.cpp-gfx906:v0.3.0-rocm-7.14
+    image: mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14
     container_name: llama-cpp-radeon-vii
     entrypoint: ["/app/llama-server"]
     # command: [
