@@ -1,5 +1,6 @@
 # llama.cpp router server for the NVIDIA T550 Laptop GPU (4 GB) under Docker Desktop with WSL 2 on Windows.
-# Models, their settings and the VRAM/context notes are in preset.ini; server-wide settings in config.ini.
+# The model and its settings are in preset.ini, server-wide settings in config.ini,
+# and the VRAM budget, context size probes and speed results in README.md.
 services:
   llama-cpp:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda13
