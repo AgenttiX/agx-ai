@@ -1,9 +1,22 @@
 # llama.cpp on the Radeon VII
 
 llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e, serving Gemma 4 26B-A4B QAT (`UD-Q4_K_XL`)
-with MTP speculative decoding. The image is `mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14` (see
+with MTP speculative decoding and a context of 77824 tokens, the same as [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so
+that the same agentic workloads can be split between the two. The image is `mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14` (see
 [`docker-compose.yml`](docker-compose.yml)), and the settings are in [`preset.ini`](preset.ini). This file has the
 benchmarks behind them. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
+
+## Hardware
+
+| | |
+|---|---|
+| OS | Ubuntu 26.04.1 LTS (kernel 7.0.0-34-generic) |
+| CPU | AMD Ryzen Threadripper 3970X (32 cores, 64 threads) |
+| RAM | 125.6 GiB visible to the OS, DDR4; module size and frequency not yet recorded (`sudo dmidecode -t memory`) |
+| NPU | none |
+| GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)) |
+| GPU architecture | GCN 5.1 (Vega 20, gfx906), 60 CUs, PCIe 3.0 x16 |
+| VRAM | 16 GB HBM2 (16368 MiB) |
 
 ## Context size and ubatch size (2026-09-26)
 
@@ -18,7 +31,7 @@ prompt = ctx-size - 1500 tokens, peak VRAM from `amd-smi`:
 | ub 1024, ctx 32768 | 126.7 t/s | 1192 t/s (31268) | 109.7 t/s | 15988 MiB |
 | ub 1024, ctx 45000 | 128.6 t/s | 1068 t/s (43500) | 108.4 t/s | 16277 MiB |
 | ub 1024, ctx 49152 | 126.2 t/s | 1032 t/s (47652) | 104.4 t/s | 16353 MiB |
-| **ub 1024, ctx 51200 (current)** | 127.3 t/s | 1011 t/s (49700) | 108.6 t/s | 16356 MiB |
+| ub 1024, ctx 51200 (used until 2026-09-28) | 127.3 t/s | 1011 t/s (49700) | 108.6 t/s | 16356 MiB |
 | ub 1024, ctx 53248 / 56000 | - | OOM crash | - | - |
 
 ctx 51200 was also stress-tested with 3 full-context prompts and 2 concurrent 24000-token prompts (peak 16357 MiB).
@@ -59,7 +72,7 @@ by a question, 512 generated tokens (the `depth` test). Generation / prompt proc
 
 ## Image update to v0.5.0 (2026-09-27)
 
-Both images with the current preset, measured back to back with the same `llama_cpp_bench_http.py` run (commands
+Both images with the preset of that time (ctx 51200, ub 1024, no CPU offload), measured back to back with the same `llama_cpp_bench_http.py` run (commands
 below). Generation in t/s, prompt processing in parentheses; draft acceptance is given for the chat test:
 
 | Test | `v0.3.0-rocm-7.14` | **`v0.5.0-rocm-7.14` (current)** |
@@ -80,25 +93,65 @@ v0.5.0 generates 4-6 % faster with MTP at every depth, and its prompt processing
 is larger than in `llama bench` (+1-2 %), which has no speculative decoding. v0.5.0 handles the full-context prompt,
 but it uses ~70-90 MiB more VRAM, which leaves only 44 MiB free at the peak; if it runs out of memory, lower `ctx-size`.
 
+## Context size 77824 (2026-09-28)
+
+`ctx-size = 77824` needs ~620 MiB more VRAM than 51200 (the KV cache grows by ~240 MiB per 10240 tokens) and does not
+load with the previous settings ("failed to create MTP context"). The variants below free memory by quantizing the KV
+cache (`cache-type-k`/`cache-type-v = q8_0`), by moving the experts of the first N layers to the CPU (`n-cpu-moe`), or
+with a smaller `ubatch-size` (smaller compute buffers). Each was loaded with `llama_cpp_test_server.sh`, stress-tested
+with one 76324-token prompt, and then measured with the `chat` and `depth` tests. Generation in t/s, prompt processing
+in parentheses; the first row is the previous configuration at ctx 51200:
+
+| Variant | Chat | Depth 6.4k | Depth 16k | Depth 36.5k | Depth 70k | Peak VRAM |
+|---|---|---|---|---|---|---|
+| ctx 51200, ub 1024 (previous) | 129.8 | 114.9 (1430) | 101.8 (1348) | 90.6 (1115) | - | 16324 MiB |
+| f16 KV, ub 1024 | - | - | - | - | - | does not load |
+| K q8_0, ub 512 | 117.1 | 103.9 (1290) | 93.3 (1214) | 79.8 (1035) | 66.5 (823) | 16225 MiB |
+| K q8_0, ub 768 | 117.6 | 106.3 (1368) | 94.7 (1278) | 81.6 (1080) | 66.9 (850) | 16359 MiB |
+| V q8_0, ub 512 | 121.7 | 106.2 (1282) | 96.2 (1209) | 77.9 (1030) | 68.0 (818) | 16257 MiB |
+| K+V q8_0, ub 512 | 112.5 | 98.8 (1268) | 89.3 (1186) | 77.3 (1011) | 65.0 (806) | 16085 MiB |
+| K+V q8_0, ub 1024 | crashed during the tests | | | | | 16331 MiB |
+| n-cpu-moe 2, ub 1024 | 106.5 | 96.3 (1296) | 90.7 (1236) | 80.1 (1037) | 66.8 (801) | 16135 MiB |
+| n-cpu-moe 1, K q8_0, ub 1024 | 110.2 | 95.4 (1364) | 86.2 (1283) | 79.2 (1072) | 62.4 (835) | 16322 MiB |
+| **n-cpu-moe 1, ub 512 (current)** | 120.6 | 108.6 (1159) | 97.6 (1101) | 85.0 (953) | 72.2 (768) | 16118 MiB |
+| n-cpu-moe 1, ub 512, 16 threads | 116.8 | 108.0 (1158) | 95.8 (1100) | 84.6 (953) | 72.0 (768) | 16125 MiB |
+
+- One layer's experts on the CPU with an f16 KV cache generates fastest at every depth from 6.4k on, and it has the
+  most headroom of the variants that fit. A q8_0 KV cache costs more the longer the context is (77-80 vs 85 t/s at
+  36.5k), as the quantized cache is slower to read in flash attention. The price is ~10 % slower prompt processing
+  than with a q8_0 cache at the same ub 512, probably because the CPU layer's expert weights are copied to the GPU for
+  every ubatch.
+- Compared with ctx 51200, the extra context costs ~4-8 % in generation at the same depths and ~15-20 % in prompt
+  processing (ub 512 and the CPU offload).
+- Offloading more layers (n-cpu-moe 2) slows short-context generation by ~12 %; halving the CPU threads (default 32)
+  does not help.
+- Variants with a peak within ~50 MiB of the 16368 MiB total are too close to crashing (K+V q8_0 with ub 1024 did).
+- `load-mode = dio` works with `n-cpu-moe` (no mmap warning, unlike mmap on agx-ai).
+
+The production container with this configuration (image v0.5.0), measured with the full command below: generation
+(256 tokens) 121.4 t/s, two 76324-token prompts at 784 t/s, chat 117.0 t/s, depth 6.4k/16k/36.5k/70k
+105.9/95.6/85.2/70.9 t/s (prompt 1157/1103/953/768 t/s), peak 16122 MiB, no errors in the log. The chat test
+varies by ~±3 % between runs.
+
 ## Commands
 
 ```sh
 cd ../benchmark
-# Serving speed: generation, full-context prompt, chat, depth, 2 concurrent long prompts
+# Serving speed: generation, two full-context prompts (ctx-size - 1500), chat, depth
 ./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
-    --tests generation prompt concurrency chat depth --prompt-tokens 49700 --concurrency 2 \
-    --concurrent-prompt-tokens 24000 --repeat 2 --depth 6400 16000 36500 --label "..."
+    --tests generation prompt chat depth --prompt-tokens 76324 --repeat 2 --depth 6400 16000 36500 70000 --label "..."
 # Raw model speed in the running container
 ./llama_cpp_bench_container.py --container llama-cpp-radeon-vii --url http://localhost:9932 \
-    --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." -- -ngl 999 -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384 -r 3
+    --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384 -r 3
 # Raw model speed with another image or backend
 ./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
-    --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "..." -- -ngl 999 -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
+    --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384
 # Serving speed with another image or a preset variant (stop the production container first)
 docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
+# (for a preset variant, edit a copy of preset.ini and pass it instead)
 ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset.ini \
     ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
-    --tests chat depth --repeat 2 --depth 6400 16000 36500 --label "..."
+    --tests chat depth --repeat 2 --depth 6400 16000 36500 70000 --label "..."
 docker rm -f llama-test && docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start
 ```
