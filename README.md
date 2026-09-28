@@ -1,5 +1,7 @@
 # AgenttiX AI server configs
 
+[Structure of the setup](structure/README.md) as an SVG figure
+
 ## Software stack
 - [GPT Researcher](https://docs.gptr.dev/)
 - [LiteLLM](https://www.litellm.ai/)
