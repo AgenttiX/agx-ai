@@ -9,6 +9,7 @@ import base64
 import pathlib
 import re
 import struct
+from dataclasses import dataclass
 from xml.sax.saxutils import escape
 
 DIR = pathlib.Path(__file__).resolve().parent
@@ -30,6 +31,10 @@ CLOUD_STROKE = "#e0a36f"
 HW_FILL = "#f1f7ee"
 HW_STROKE = "#8fb67f"
 LLAMA = "#ff8236"
+MODEL = "#b4531c"
+
+# The text of these logos is small compared to their height, so draw them larger than the others.
+LOGO_SCALE = {"ubuntu.svg": 1.7}
 
 
 def _svg_data(path: pathlib.Path) -> tuple[bytes, float]:
@@ -62,6 +67,18 @@ def load_logo(name: str) -> tuple[str, float]:
         data, aspect = _png_data(path)
         mime = "image/png"
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", aspect
+
+
+@dataclass
+class Machine:
+    kind: str  # laptop, desktop or server
+    cx: float  # Center x coordinate
+    name: str
+    lines: list[str]  # Hardware
+    models: list[str]
+    os: list[str]  # Logos of the operating system and the virtualization
+    hardware: list[str]  # Logos of the hardware vendors
+    runtimes: list[tuple[str, str, str]]  # (logo, title, detail) of what runs on the machine
 
 
 class Figure:
@@ -236,26 +253,35 @@ class Figure:
             )
 
     def vendor_logos(self, cx, y, names, h=18, gap=14):
-        widths = [self.logo_width(n, h) for n in names]
+        """Draw a centered row of logos with the height h, or h * LOGO_SCALE for the logos with small text."""
+        heights = [h * LOGO_SCALE.get(n, 1) for n in names]
+        widths = [self.logo_width(n, lh) for n, lh in zip(names, heights)]
         total = sum(widths) + gap * (len(names) - 1)
         x = cx - total / 2
-        for n, w in zip(names, widths):
-            self.logo(n, x, y, h, w)
+        for n, w, lh in zip(names, widths, heights):
+            self.logo(n, x, y + (h - lh) / 2, lh, w)
             x += w + gap
 
-    def machine(self, kind, cx, top, name, lines, vendors, runtimes):
-        getattr(self, kind)(cx, top)
-        y = top + 144
-        self.text(cx, y, name, size=18, weight="bold", anchor="middle")
-        for line in lines:
-            y += 19
-            self.text(cx, y, line, size=14, color=MUTED, anchor="middle")
-        y += 14
-        self.vendor_logos(cx, y, vendors)
-        y += 34
-        for logo, title, detail in runtimes:
-            self.runtime_tag(cx, y, logo, title, detail)
-            y += 36
+    def machine(self, m: "Machine", top: float, text_lines: int):
+        """Draw a machine. The logo rows and the runtime tags are aligned between the machines,
+        so the text block has room for text_lines lines below the name."""
+        getattr(self, m.kind)(m.cx, top)
+        y = top + 134
+        self.text(m.cx, y, m.name, size=18, weight="bold", anchor="middle")
+        for line in m.lines:
+            y += 18
+            self.text(m.cx, y, line, size=14, color=MUTED, anchor="middle")
+        for model in m.models:
+            y += 18
+            self.text(m.cx, y, model, size=14, weight="bold", color=MODEL, anchor="middle")
+        y = top + 134 + 18 * text_lines + 18
+        self.vendor_logos(m.cx, y, m.os)
+        y += 32
+        self.vendor_logos(m.cx, y, m.hardware)
+        y += 36
+        for logo, title, detail in m.runtimes:
+            self.runtime_tag(m.cx, y, logo, title, detail)
+            y += 35
 
     def render(self) -> str:
         head = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" font-family="{FONT}">
@@ -273,126 +299,135 @@ class Figure:
 
 def build() -> str:
     f = Figure()
-    cw, ch = 230, 68  # Card size
+    cw, ch = 230, 60  # Card size
+    rows = (58, 140, 222, 304)  # Card rows of the top half
 
-    # Regions
-    stack = (196, 12, 904, 412)
-    f.rect(*stack, fill=STACK_FILL, stroke=STACK_STROKE, rx=16, width=2)
-    docker_w = f.logo("docker.svg", stack[0] + 18, stack[1] + 14, 30)
-    f.text(stack[0] + 18 + docker_w + 12, stack[1] + 37, "docker-compose.yml on agx-ai", size=20, weight="bold")
-
-    internet = (1140, 12, 448, 236)
-    f.rect(*internet, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
-    f.text(internet[0] + 18, internet[1] + 37, "Internet", size=20, weight="bold")
-
-    research = (12, 236, 150, 188)
-    f.rect(*research, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
-    f.text(research[0] + 73, research[1] + 26, "Research", size=17, weight="bold", anchor="middle")
-
-    hw_top = 440
-    f.rect(12, hw_top, 1576, HEIGHT - 12 - hw_top, fill=HW_FILL, stroke=HW_STROKE, rx=16, width=2)
-
-    # Users
-    f.person_icon(50, 72, 60)
-    f.text(80, 158, "Users", size=18, weight="bold", anchor="middle")
-    f.text(80, 176, "browser,", size=13, color=MUTED, anchor="middle")
-    f.text(80, 192, "Conduit app", size=13, color=MUTED, anchor="middle")
-
-    # Stack
-    col_a = 222
-    f.card(col_a, 62, cw, ch, f.terminal_icon, "Open Terminal", "shell for the LLMs · :8001")
-    f.card(col_a, 154, cw, ch, "open-webui.png", "Open WebUI", "chat UI · :3000")
-    f.card(col_a, 246, cw, ch, "gptr.png", "GPT Researcher", "web UI · :3001")
-    f.card(col_a, 338, cw, ch, "gptr.png", "GPT Researcher", "research agent · :8000")
-
-    lx, ly, lw, lh = 534, 170, 250, 116
-    f.rect(lx, ly, lw, lh, fill="#ffffff", stroke=STACK_STROKE, width=2.5)
-    f.logo("litellm-icon.png", lx + 14, ly + 26, 68, 68)
-    f.text(lx + 94, ly + 52, "LiteLLM", size=24, weight="bold")
-    f.text(lx + 94, ly + 74, "LLM proxy and router", size=14, color=MUTED)
-    f.text(lx + 94, ly + 92, "OpenAI API · :4000", size=14, color=MUTED)
-
-    col_d = 850
-    f.card(col_d, 62, cw, ch, "claude-symbol.svg", "LiteLLM Claude", "subscription → API", logo_size=40)
-    f.card(col_d, 194, cw, ch, "postgresql.svg", "PostgreSQL", "LiteLLM database")
-    f.card(col_d, 338, cw, ch, f.key_icon, "SSH tunnel", "ssh-big-machine")
-
-    # Internet
-    f.card(1160, 62, 410, ch, "claude-symbol.svg", "Claude", "Anthropic, Pro/Max subscription", logo_size=40,
-           stroke=CLOUD_STROKE)
-    f.card(1160, 154, 410, ch, f.key_icon, "SSH jump host", "to the network of the Big Machine", stroke=CLOUD_STROKE)
-
-    # Services used by GPT Researcher
-    for i, logo in enumerate(("tavily.svg", "arxiv.svg", "gemini-icon.svg")):
-        y = research[1] + 38 + i * 48
-        f.rect(research[0] + 12, y, 126, 42, fill="#ffffff", stroke=CLOUD_STROKE, rx=8)
-        if logo == "arxiv.svg":
-            f.logo(logo, research[0] + 26, y + 8, 26, 98)
-        else:
-            f.logo(logo, research[0] + 22, y + 8, 26, 26)
-            f.text(research[0] + 58, y + 27, "Tavily" if logo == "tavily.svg" else "Gemini", size=17, weight="bold")
-
-    # Arrows in the top half
     def mid(y):
         return y + ch / 2
 
+    # Regions
+    stack = (196, 12, 904, rows[-1] + ch + 16 - 12)
+    f.rect(*stack, fill=STACK_FILL, stroke=STACK_STROKE, rx=16, width=2)
+    docker_w = f.logo("docker.svg", stack[0] + 18, stack[1] + 12, 28)
+    f.text(stack[0] + 18 + docker_w + 12, stack[1] + 34, "docker-compose.yml on agx-ai", size=20, weight="bold")
+
+    internet = (1140, 12, 448, rows[1] + ch + 16 - 12)
+    f.rect(*internet, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
+    f.text(internet[0] + 18, internet[1] + 34, "Internet", size=20, weight="bold")
+
+    research = (12, 204, 150, stack[1] + stack[3] - 204)
+    f.rect(*research, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
+    f.text(research[0] + 75, research[1] + 25, "Research", size=17, weight="bold", anchor="middle")
+
+    hw_top = stack[1] + stack[3] + 12
+    f.rect(12, hw_top, 1576, HEIGHT - 12 - hw_top, fill=HW_FILL, stroke=HW_STROKE, rx=16, width=2)
+
+    # Users
+    f.person_icon(50, 56, 56)
+    f.text(78, 136, "Users", size=18, weight="bold", anchor="middle")
+    f.text(78, 154, "browser,", size=13, color=MUTED, anchor="middle")
+    f.text(78, 170, "Conduit app", size=13, color=MUTED, anchor="middle")
+
+    # Stack
+    col_a = 222
+    f.card(col_a, rows[0], cw, ch, f.terminal_icon, "Open Terminal", "shell for the LLMs · :8001", logo_size=40)
+    f.card(col_a, rows[1], cw, ch, "open-webui.png", "Open WebUI", "chat UI · :3000", logo_size=40)
+    f.card(col_a, rows[2], cw, ch, "gptr.png", "GPT Researcher", "web UI · :3001", logo_size=40)
+    f.card(col_a, rows[3], cw, ch, "gptr.png", "GPT Researcher", "research agent · :8000", logo_size=40)
+
+    lx, ly, lw, lh = 534, 146, 250, 110
+    f.rect(lx, ly, lw, lh, fill="#ffffff", stroke=STACK_STROKE, width=2.5)
+    f.logo("litellm-icon.png", lx + 14, ly + 21, 68, 68)
+    f.text(lx + 94, ly + 48, "LiteLLM", size=24, weight="bold")
+    f.text(lx + 94, ly + 70, "LLM proxy and router", size=14, color=MUTED)
+    f.text(lx + 94, ly + 88, "OpenAI API · :4000", size=14, color=MUTED)
+
+    col_d = 850
+    pg_y = (rows[1] + rows[2]) / 2
+    f.card(col_d, rows[0], cw, ch, "claude-symbol.svg", "LiteLLM Claude", "subscription → API", logo_size=36)
+    f.card(col_d, pg_y, cw, ch, "postgresql.svg", "PostgreSQL", "LiteLLM database", logo_size=40)
+    f.card(col_d, rows[3], cw, ch, f.key_icon, "SSH tunnel", "ssh-big-machine", logo_size=40)
+
+    # Internet
+    f.card(1160, rows[0], 410, ch, "claude-symbol.svg", "Claude", "Anthropic, Pro/Max subscription", logo_size=36,
+           stroke=CLOUD_STROKE)
+    f.card(1160, rows[1], 410, ch, f.key_icon, "SSH jump host", "to the network of the Big Machine", logo_size=40,
+           stroke=CLOUD_STROKE)
+
+    # Services used by GPT Researcher
+    for i, logo in enumerate(("tavily.svg", "arxiv.svg", "gemini-icon.svg")):
+        y = research[1] + 36 + i * 42
+        f.rect(research[0] + 12, y, 126, 36, fill="#ffffff", stroke=CLOUD_STROKE, rx=8)
+        if logo == "arxiv.svg":
+            f.logo(logo, research[0] + 26, y + 6, 24, 98)
+        else:
+            f.logo(logo, research[0] + 22, y + 6, 24, 24)
+            f.text(research[0] + 56, y + 24, "Tavily" if logo == "tavily.svg" else "Gemini", size=17, weight="bold")
+
+    # Arrows in the top half
     users_x = 180
-    f.arrow([(110, 110), (users_x, 110), (users_x, mid(154)), (col_a, mid(154))])
-    f.arrow([(users_x, mid(154)), (users_x, mid(246)), (col_a, mid(246))])
-    f.arrow([(col_a + cw / 2, 154), (col_a + cw / 2, 62 + ch)])
-    f.text(col_a + cw / 2 + 8, 147, "tools", size=13, color=MUTED, style="italic")
-    f.arrow([(col_a + cw / 2, 246 + ch), (col_a + cw / 2, 338)])
-    f.arrow([(col_a, mid(338)), (research[0] + research[2], mid(338))])
-    f.arrow([(col_a + cw, mid(154)), (lx, mid(154))])
-    f.arrow([(col_a + cw, mid(338)), (lx - 40, mid(338)), (lx - 40, ly + lh - 20), (lx, ly + lh - 20)])
-    f.arrow([(lx + lw - 60, ly), (lx + lw - 60, mid(62)), (col_d, mid(62))])
-    f.arrow([(lx + lw, mid(194)), (col_d, mid(194))])
-    f.arrow([(lx + lw, ly + lh - 20), (col_d - 30, ly + lh - 20), (col_d - 30, mid(338)), (col_d, mid(338))])
-    f.arrow([(col_d + cw, mid(62)), (1160, mid(62))])
-    f.arrow([(col_d + cw, mid(338)), (1120, mid(338)), (1120, mid(154)), (1160, mid(154))])
+    f.arrow([(106, 90), (users_x, 90), (users_x, mid(rows[1])), (col_a, mid(rows[1]))])
+    f.arrow([(users_x, mid(rows[1])), (users_x, mid(rows[2])), (col_a, mid(rows[2]))])
+    f.arrow([(col_a + cw / 2, rows[1]), (col_a + cw / 2, rows[0] + ch)])
+    f.text(col_a + cw / 2 + 8, rows[1] - 7, "tools", size=13, color=MUTED, style="italic")
+    f.arrow([(col_a + cw / 2, rows[2] + ch), (col_a + cw / 2, rows[3])])
+    f.arrow([(col_a, mid(rows[3])), (research[0] + research[2], mid(rows[3]))])
+    f.arrow([(col_a + cw, mid(rows[1])), (lx, mid(rows[1]))])
+    f.arrow([(col_a + cw, mid(rows[3])), (lx - 40, mid(rows[3])), (lx - 40, ly + lh - 20), (lx, ly + lh - 20)])
+    f.arrow([(lx + lw - 60, ly), (lx + lw - 60, mid(rows[0])), (col_d, mid(rows[0]))])
+    f.arrow([(lx + lw, mid(pg_y)), (col_d, mid(pg_y))])
+    f.arrow([(lx + lw, ly + lh - 20), (col_d - 30, ly + lh - 20), (col_d - 30, mid(rows[3])), (col_d, mid(rows[3]))])
+    f.arrow([(col_d + cw, mid(rows[0])), (1160, mid(rows[0]))])
+    f.arrow([(col_d + cw, mid(rows[3])), (1120, mid(rows[3])), (1120, mid(rows[1])), (1160, mid(rows[1]))])
 
     # llama.cpp backends
-    f.text(34, hw_top + 32, "llama.cpp backends", size=20, weight="bold")
-    f.text(240, hw_top + 32, "OpenAI-compatible API in the LAN, port 9931", size=14, color=MUTED, style="italic")
+    f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
+    f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN, port 9931", size=14, color=MUTED, style="italic")
 
-    group_top = hw_top + 60
+    group_top = hw_top + 56
     for name, gx, gw in (("Laptops", 26, 752), ("Desktops", 790, 270), ("Servers", 1072, 504)):
-        f.rect(gx, group_top, gw, HEIGHT - 24 - group_top, fill="#ffffff", stroke=HW_STROKE, rx=12, width=1.5, extra=' fill-opacity="0.6"')
+        f.rect(gx, group_top, gw, HEIGHT - 24 - group_top, fill="#ffffff", stroke=HW_STROKE, rx=12, width=1.5,
+               extra=' fill-opacity="0.6"')
         f.text(gx + 14, group_top + 24, name, size=16, weight="bold", color="#3d7a2c")
 
-    top = group_top + 44
+    top = group_top + 36
     llama = "llama-cpp.svg"
+    gemma_moe = "Gemma 4 26B A4B QAT"
     machines = [
-        ("laptop", 150, "agx-l14", ["ThinkPad L14 Gen 5", "Core Ultra 5 125U, 32 GB"], ["intel.svg"],
-         [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
-        ("laptop", 402, "agx-t480", ["ThinkPad T480", "Core i7-8550U + MX150"], ["intel.svg", "nvidia.svg"],
-         [(llama, "llama.cpp", "CPU + CUDA")]),
-        ("laptop", 654, "Windows laptop", ["Docker Desktop, WSL 2", "T550 Laptop GPU, 4 GB"],
-         ["windows.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA")]),
-        ("desktop", 925, "agx-z2e", ["Threadripper 3970X", "RTX 3090 + Radeon VII"], ["amd.svg", "nvidia.svg"],
-         [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
-        ("server", 1198, "agx-ai", ["Proxmox LXC, EPYC 7302", "RTX 3070, 128 GB"], ["proxmox.svg", "nvidia.svg"],
-         [(llama, "llama.cpp", "CUDA + CPU")]),
-        ("server", 1452, "Big Machine", ["2 × RTX A4000, 16 GB", "for PaperQA2 RAG"], ["nvidia.svg"],
-         [(llama, "llama.cpp", "CUDA")]),
+        Machine("laptop", 150, "agx-l14", ["ThinkPad L14 Gen 5", "Core Ultra 5 125U, 32 GB RAM"], [gemma_moe],
+                ["kubuntu.svg"], ["intel.svg"],
+                [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
+        Machine("laptop", 402, "agx-t480", ["ThinkPad T480", "Core i7-8550U, 32 GB RAM", "GeForce MX150 (2 GB)"],
+                [gemma_moe], ["kubuntu.svg"], ["intel.svg", "nvidia.svg"], [(llama, "llama.cpp", "CPU + CUDA")]),
+        Machine("laptop", 654, "Windows laptop", ["Docker Desktop, WSL 2", "Core i7-1260P, 32 GB RAM",
+                                                  "T550 Laptop GPU (4 GB)"],
+                [gemma_moe], ["windows.svg"], ["intel.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA")]),
+        Machine("desktop", 925, "agx-z2e", ["Threadripper 3970X, 128 GB RAM", "RTX 3090 (24 GB)", "Radeon VII (16 GB)"],
+                ["Gemma 4 31B QAT", gemma_moe], ["kubuntu.svg"], ["amd.svg", "nvidia.svg"],
+                [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
+        Machine("server", 1198, "agx-ai (agx-h12)", ["EPYC 7302, 256 GB RAM", "RTX 3070 (8 GB)"], [gemma_moe],
+                ["ubuntu.svg", "proxmox.svg"], ["amd.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+        Machine("server", 1452, "Big Machine", ["Threadripper PRO 3975WX", "192 GB RAM", "2 × RTX A4000 (16 GB)"],
+                ["PaperQA2 RAG"], ["ubuntu.svg"], ["amd.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA")]),
     ]
-    for kind, cx, name, lines, vendors, runtimes in machines:
-        f.machine(kind, cx, top, name, lines, vendors, runtimes)
+    text_lines = max(len(m.lines) + len(m.models) for m in machines)
+    for m in machines:
+        f.machine(m, top, text_lines)
 
     # LiteLLM to the backends in the LAN
-    bus_y = hw_top + 45
+    bus_y = hw_top + 43
     litellm_x = lx + 60
     f.add(f'<path d="M{litellm_x},{ly + lh} L{litellm_x},{bus_y} M150,{bus_y} L1198,{bus_y}" '
           f'stroke="{LINE}" stroke-width="2" fill="none"/>')
     f.add(f'<circle cx="{litellm_x}" cy="{bus_y}" r="4" fill="{LINE}"/>')
-    for cx in (150, 402, 654, 925, 1198):
-        f.arrow([(cx, bus_y), (cx, top - 4)])
+    for m in machines[:-1]:
+        f.arrow([(m.cx, bus_y), (m.cx, top - 4)])
     # The Big Machine is in another network behind the SSH jump host.
-    f.arrow([(1452, 154 + ch), (1452, top - 4)], dashed=True)
-    f.text(1462, 330, "SSH tunnel", size=13, color=MUTED, style="italic")
+    big = machines[-1]
+    f.arrow([(big.cx, rows[1] + ch), (big.cx, top - 4)], dashed=True)
+    f.text(big.cx + 10, (rows[1] + ch + hw_top) / 2 + 5, "SSH tunnel", size=13, color=MUTED, style="italic")
 
     return f.render()
-
 
 if __name__ == "__main__":
     OUT.write_text(build(), encoding="utf-8")

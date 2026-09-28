@@ -30,11 +30,13 @@ The logos are trademarks of their owners.
 | `docker.svg` | [File:Docker (container engine) logo.svg](https://commons.wikimedia.org/wiki/File:Docker_(container_engine)_logo.svg) | Apache License 2.0 |
 | `gemini-icon.svg` | [File:Google Gemini icon 2025.svg](https://commons.wikimedia.org/wiki/File:Google_Gemini_icon_2025.svg) | Public domain |
 | `intel.svg` | [File:Intel logo 2023.svg](https://commons.wikimedia.org/wiki/File:Intel_logo_2023.svg) | Public domain |
+| `kubuntu.svg` | [File:Kubuntu 2024 Logo.svg](https://commons.wikimedia.org/wiki/File:Kubuntu_2024_Logo.svg) | CC0 |
 | `nvidia.svg` | [File:NVIDIA logo.svg](https://commons.wikimedia.org/wiki/File:NVIDIA_logo.svg) | Apache License 2.0 |
 | `open-webui.png` | [File:Open WebUI logo.png](https://commons.wikimedia.org/wiki/File:Open_WebUI_logo.png), trimmed and scaled to 256 px | Public domain |
 | `openvino.svg` | [File:OpenVINO logo.svg](https://commons.wikimedia.org/wiki/File:OpenVINO_logo.svg) | Apache License 2.0 |
 | `postgresql.svg` | [File:Postgresql elephant.svg](https://commons.wikimedia.org/wiki/File:Postgresql_elephant.svg) | BSD |
 | `proxmox.svg` | [File:Logo Proxmox.svg](https://commons.wikimedia.org/wiki/File:Logo_Proxmox.svg) | Public domain |
+| `ubuntu.svg` | [File:Ubuntu-logo-2022.svg](https://commons.wikimedia.org/wiki/File:Ubuntu-logo-2022.svg) | Public domain |
 | `windows.svg` | [File:Windows logo - 2021.svg](https://commons.wikimedia.org/wiki/File:Windows_logo_-_2021.svg) | Public domain |
 | `gptr.png` | [gpt-researcher: docs/static/img/gptr-logo.png](https://github.com/assafelovic/gpt-researcher/blob/main/docs/static/img/gptr-logo.png), trimmed, scaled to 256 px and quantized | Apache License 2.0 (repository) |
 | `litellm-icon.png` | [litellm: litellm/proxy/logo.jpg](https://github.com/BerriAI/litellm/blob/main/litellm/proxy/logo.jpg), the icon cropped to a circle | See the [repository license](https://github.com/BerriAI/litellm/blob/main/LICENSE) |
