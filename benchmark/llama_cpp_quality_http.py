@@ -130,8 +130,13 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
     out = {"content": msg.get("content") or "", "reasoning": msg.get("reasoning_content") or "", "timings": r.get("timings", {})}
     if logprobs:
         # Per generated token: the token and the top alternatives' log-probabilities (empty for drafted tokens).
-        out["tokens"] = [{"t": t["token"], "top": {x["token"]: round(x["logprob"], 5) for x in t.get("top_logprobs") or []}}
-                         for t in (choice.get("logprobs") or {}).get("content") or []]
+        # Several special tokens render as "", so only the first (most likely) entry of a text is kept.
+        out["tokens"] = []
+        for t in (choice.get("logprobs") or {}).get("content") or []:
+            top: dict[str, float] = {}
+            for x in t.get("top_logprobs") or []:
+                top.setdefault(x["token"], round(x["logprob"], 5))
+            out["tokens"].append({"t": t["token"], "top": top})
     return out
 
 
@@ -198,6 +203,8 @@ def compare_logprobs(result: dict[str, Any], ref: dict[str, Any]) -> dict[str, A
             if not b or "tokens" not in a or "tokens" not in b:
                 continue
             for i, (x, y) in enumerate(zip(a["tokens"], b["tokens"], strict=False)):
+                if x["t"] == "" and y["t"] == "":
+                    break  # end of the answer; special tokens render as "" and cannot be told apart
                 total += 1
                 if not x["top"] or not y["top"]:
                     continue
