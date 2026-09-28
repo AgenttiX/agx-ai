@@ -13,7 +13,7 @@ so each is tuned for running alone.
 | Model | Runs on | Chat generation | Prompt processing |
 |---|---|---|---|
 | `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 122880 | GPU, with the experts of 28 of 30 layers on the CPU, core clock locked to 1600 MHz | ~55 t/s, 45-49 t/s at 36-70k tokens of context | ~1490 t/s for a 70k-token prompt, ~1220 t/s for 119k |
-| [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 75000 | CPU only | 17-24 t/s | ~74 t/s |
+| [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 131072 | CPU only | 17-24 t/s | ~74 t/s |
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
 processed, see [Prompt cache](#prompt-cache).
@@ -340,7 +340,10 @@ changes.
 
 **Flash attention** `flash-attn = on` is slightly faster than off (`llama bench`: tg64 17.1 vs 16.4 t/s,
 pp512 80 vs 75 t/s; at a depth of 8192 tokens tg 13.2 vs 12.5 t/s and pp 63 vs 59 t/s).
-ctx 75000 has no speed cost, as there is plenty of RAM.
+ctx 75000 has no speed cost, as there is plenty of RAM. On 2026-09-28, it was increased to 131072: only 5 of the 30
+layers use global attention (2 KV heads of 512 dimensions each, the others use a 1024-token sliding window), so the
+f16 KV cache takes 20 KiB per token, i.e. 2.5 GiB when full, and chat tg stayed at 18-25 t/s. A full prompt would
+take ~30 min at ~74 t/s, though.
 
 **In the same container as the GPU model**, `device = none` keeps the model and its MTP drafter completely off the GPU:
 `nvidia-smi` shows only the GPU model's process (7618 MiB), and the GPU model's peak is the same 7719 MiB as without
