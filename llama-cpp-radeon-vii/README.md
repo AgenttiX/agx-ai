@@ -1,7 +1,7 @@
 # llama.cpp on the Radeon VII
 
 llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e, serving Gemma 4 26B-A4B QAT (`UD-Q4_K_XL`)
-with MTP speculative decoding and a context of 77824 tokens, the same as [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so
+entirely on the GPU, with MTP speculative decoding, a q8_0 V cache and a context of 77824 tokens, the same as [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so
 that the same agentic workloads can be split between the two. The image is `mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14` (see
 [`docker-compose.yml`](docker-compose.yml)), and the settings are in [`preset.ini`](preset.ini). This file has the
 benchmarks behind them. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
@@ -108,12 +108,12 @@ in parentheses; the first row is the previous configuration at ctx 51200:
 | f16 KV, ub 1024 | - | - | - | - | - | does not load |
 | K q8_0, ub 512 | 117.1 | 103.9 (1290) | 93.3 (1214) | 79.8 (1035) | 66.5 (823) | 16225 MiB |
 | K q8_0, ub 768 | 117.6 | 106.3 (1368) | 94.7 (1278) | 81.6 (1080) | 66.9 (850) | 16359 MiB |
-| V q8_0, ub 512 | 121.7 | 106.2 (1282) | 96.2 (1209) | 77.9 (1030) | 68.0 (818) | 16257 MiB |
+| **V q8_0, ub 512 (current)** | 121.7 | 106.2 (1282) | 96.2 (1209) | 77.9 (1030) | 68.0 (818) | 16257 MiB |
 | K+V q8_0, ub 512 | 112.5 | 98.8 (1268) | 89.3 (1186) | 77.3 (1011) | 65.0 (806) | 16085 MiB |
 | K+V q8_0, ub 1024 | crashed during the tests | | | | | 16331 MiB |
 | n-cpu-moe 2, ub 1024 | 106.5 | 96.3 (1296) | 90.7 (1236) | 80.1 (1037) | 66.8 (801) | 16135 MiB |
 | n-cpu-moe 1, K q8_0, ub 1024 | 110.2 | 95.4 (1364) | 86.2 (1283) | 79.2 (1072) | 62.4 (835) | 16322 MiB |
-| **n-cpu-moe 1, ub 512 (current)** | 120.6 | 108.6 (1159) | 97.6 (1101) | 85.0 (953) | 72.2 (768) | 16118 MiB |
+| n-cpu-moe 1, ub 512 (used on 2026-09-28 night) | 120.6 | 108.6 (1159) | 97.6 (1101) | 85.0 (953) | 72.2 (768) | 16118 MiB |
 | n-cpu-moe 1, ub 512, 16 threads | 116.8 | 108.0 (1158) | 95.8 (1100) | 84.6 (953) | 72.0 (768) | 16125 MiB |
 
 - One layer's experts on the CPU with an f16 KV cache generates fastest at every depth from 6.4k on, and it has the
@@ -128,10 +128,50 @@ in parentheses; the first row is the previous configuration at ctx 51200:
 - Variants with a peak within ~50 MiB of the 16368 MiB total are too close to crashing (K+V q8_0 with ub 1024 did).
 - `load-mode = dio` works with `n-cpu-moe` (no mmap warning, unlike mmap on agx-ai).
 
-The production container with this configuration (image v0.5.0), measured with the full command below: generation
+The production container with n-cpu-moe 1 and ub 512 (image v0.5.0), measured with the full command below: generation
 (256 tokens) 121.4 t/s, two 76324-token prompts at 784 t/s, chat 117.0 t/s, depth 6.4k/16k/36.5k/70k
 105.9/95.6/85.2/70.9 t/s (prompt 1157/1103/953/768 t/s), peak 16122 MiB, no errors in the log. The chat test
 varies by ~±3 % between runs.
+
+## Entirely on the GPU with a q8_0 V cache (2026-09-28)
+
+This computer is also the desktop where the code written by the agents runs, so the CPU is often busy. With
+`n-cpu-moe = 1`, the default 32 threads take up to 26 % of the 64 hardware threads during generation (`llama bench`
+tg128 at depth 16384, sampled from `/proc/stat`; 3 % with everything on the GPU). The configuration is therefore the
+fastest one that runs entirely on the GPU at ctx 77824: a q8_0 V cache with ub 512 (see the table above). Mixed K/V
+types run on the GPU too (this build's `FA_QUANTS` lists only equal pairs, but the host CPU stays at ~3 %).
+
+Quality, with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py): each configuration on a
+fresh test server at ctx 77824 (MTP on, as served), 176 greedy retrieval questions at 9k/33k/61k/76k tokens of
+context (32 single lookups and 12 two-step lookups each), compared with the f16 reference:
+
+| Configuration | Correct | Same answer as the reference | Greedy outputs identical (12) | Mean common prefix |
+|---|---|---|---|---|
+| f16, n-cpu-moe 1, ub 512 (reference) | 146/176 | - | - | - |
+| Same, on a new server | 146/176 | 176/176 | 12 | 1.00 |
+| Noise: f16, ub 256 | 143/176 | 160/176 | 6 | 0.56 |
+| Noise: f16, n-cpu-moe 2 | 144/176 | 167/176 | 0 | 0.09 |
+| **V q8_0, all on GPU (current)** | 146/176 | 169/176 | 0 | 0.08 |
+| K q8_0, all on GPU | 144/176 | 167/176 | 0 | 0.08 |
+| K+V q8_0, all on GPU | 146/176 | 166/176 | 0 | 0.06 |
+| K+V q4_0, all on GPU | 145/176 | 163/176 | 0 | 0.08 |
+
+All single lookups were correct in every configuration; the two-step lookups (thinking off) are hard for the model
+(3-6 of 12 per context length) and make up all the differences. None of the quantized caches is worse than the
+noise of settings that are lossless in principle, but neither is q4_0, so this test is not sensitive enough to
+separate them; see the token-probability comparison below. Greedy outputs diverge after any numerical change
+(0 of 12 identical already with n-cpu-moe 2), so they do not measure quality either.
+
+`llama-perplexity`'s KL divergence ([`../benchmark/llama_cpp_kld.py`](../benchmark/llama_cpp_kld.py)) is not usable
+for this model: on raw text (Python source, also wrapped in the chat template) its perplexity is ~290-370, and a
+different ubatch size or flash attention off changes 30 % of the top tokens (mean KLD 0.36), the same as a q8_0 cache.
+The same happens with the upstream Vulkan build, so it is the model, not the gfx906 build.
+
+The production container with this configuration, measured with the full command below: generation (256 tokens)
+144.1 t/s, two 76324-token prompts at 821 t/s, chat 122.8 t/s, depth 6.4k/16k/36.5k/70k 107.7/96.4/78.3/68.1 t/s
+(prompt 1282/1208/1029/818 t/s), peak 16266 MiB, no errors in the log. Compared with n-cpu-moe 1 and an f16
+cache, generation is about the same up to 16k tokens and 4-8 % slower at 36-70k, and prompt processing is 7-11 %
+faster.
 
 ## Commands
 
@@ -140,6 +180,9 @@ cd ../benchmark
 # Serving speed: generation, two full-context prompts (ctx-size - 1500), chat, depth
 ./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 76324 --repeat 2 --depth 6400 16000 36500 70000 --label "..."
+# Output quality compared with a reference run (on a test server; see ../benchmark/README.md)
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." \
+    --reference "Radeon VII ctx 77824 f16 KV, n-cpu-moe 1, ub 512 (reference)"
 # Raw model speed in the running container
 ./llama_cpp_bench_container.py --container llama-cpp-radeon-vii --url http://localhost:9932 \
     --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384 -r 3

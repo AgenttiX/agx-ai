@@ -87,6 +87,42 @@ editing the production files. Stop the production container first if the GPU mem
 docker rm -f llama-test
 ```
 
+## `llama_cpp_quality_http.py`: output quality of a serving setting
+
+Checks whether a setting that saves memory or time, such as a quantized KV cache (`cache-type-k`/`cache-type-v`),
+degrades the output, by comparing a run with a reference run of the same server and model. Both tests use greedy
+decoding (temperature 0), so runs are repeatable:
+
+| Test | Metric |
+|---|---|
+| Retrieval (`retrieval`): real Python source of `--depth` tokens with facts hidden as code comments, then questions about them: single lookups among many similarly named services, and two-step lookups (service -> database -> region) with the two facts far apart. Thinking off. | exact-match accuracy per context length |
+| Agreement (`agreement`): the chat prompts and long-context code questions of `llama_cpp_bench_http.py`, greedy | with `--reference`: identical outputs and the mean common prefix compared with the reference run |
+
+```sh
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "f16 KV"
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+    --label "V q8_0" --reference "f16 KV"
+```
+
+Results, including every answer and output, go to `results/<hostname>-quality.jsonl`. Greedy outputs diverge after any
+change in the floating-point operations, so the agreement numbers only mean something next to a noise floor: a run
+with a setting that is lossless in principle (another `ubatch-size`, or `n-cpu-moe`). The agreement test does not use
+the prompt cache, as a cache hit changes the batching and thus the output; the same configuration then reproduces
+its outputs exactly. The retrieval test reuses the cached haystack for all questions of a context length.
+
+## `llama_cpp_kld.py`: KL divergence with llama-perplexity
+
+The standard llama.cpp method for the same question: `llama-perplexity` saves the full token distributions of a base
+run and reports the KL divergence, top-token agreement and perplexity ratio of each variant against them. It runs in a
+new container from an image (stop the server first), and the base logits need `n_vocab * 2` bytes per scored token
+on disk (`--work-dir`, not a RAM-backed /tmp).
+
+It does not work for Gemma 4 26B-A4B (tested with the gfx906 ROCm and upstream Vulkan builds, 2026-09-28): on raw
+text the model has a perplexity of ~300 and is chaotic, so that settings that are lossless in principle (another
+`ubatch-size`, flash attention off) already give a mean KLD of ~0.36 and change 30 % of the top tokens, the same as
+a q8_0 KV cache. Use `llama_cpp_quality_http.py` for such models; check the noise floor (e.g. `--variant "noise=-ub 256"`)
+before trusting KLD numbers for others.
+
 ## Before benchmarking: turn off the LiteLLM health check
 
 LiteLLM runs on Mika's personal agx-ai server, not on the machine being benchmarked, and routes to the llama.cpp
