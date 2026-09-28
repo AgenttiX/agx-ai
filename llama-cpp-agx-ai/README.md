@@ -12,7 +12,7 @@ so each is tuned for running alone.
 
 | Model | Runs on | Chat generation | Prompt processing |
 |---|---|---|---|
-| `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 77824 | GPU, with the experts of 25 of 30 layers on the CPU, core clock locked to 1600 MHz | 46-72 t/s | ~1510 t/s for a 75k-token prompt |
+| `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 122880 | GPU, with the experts of 28 of 30 layers on the CPU, core clock locked to 1600 MHz | ~55 t/s, 45-49 t/s at 36-70k tokens of context | ~1490 t/s for a 70k-token prompt, ~1220 t/s for 119k |
 | [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 75000 | CPU only | 17-24 t/s | ~74 t/s |
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
@@ -253,7 +253,67 @@ each):
 Each layer costs ~5 % of chat speed (pp also drops, partly due to the longer prompts). `n-cpu-moe = 25` with
 ctx 77824 was chosen for ~19 % more context than before at ~5 % of the speed, with a lower peak than
 the previously tested setting: 10 consecutive 75k-token prompts passed at pp 1589-1617 t/s with a peak of 7649 MiB
-(7577 MiB after loading).
+(7577 MiB after loading). This was later replaced by `n-cpu-moe = 28` and ctx 122880, see below.
+
+**KV cache quantization and a larger context (2026-09-28).** With the 1600 MHz clock lock, the goal was to increase
+the context without a significant loss of quality or speed. The tests used the upstream `chat` and `depth` tests of
+[`llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (results in `benchmark/results/agx-ai.jsonl`).
+
+*Quality* was measured with `llama perplexity` on WikiText-2 (4 chunks of 32768 tokens, i.e. 65k scored tokens at
+long distances), as the KL divergence from the f16 KV cache and the share of tokens with the same top prediction.
+The instruction-tuned model predicts raw WikiText badly (PPL ~1780 with any settings, also with 512-token chunks),
+but the relative differences are still meaningful. Changing only `ubatch-size` from 2048 to 512 with the f16 cache,
+which should not change the quality, calibrates the numerical noise of this MoE model (small numerical differences
+change which experts are selected):
+
+| KV cache (K / V) | PPL | Mean KLD | Median KLD | 99.9 % KLD | Same top token |
+|---|---|---|---|---|---|
+| f16 / f16 (repeated run) | 1780.3 | 0.000 | 0.000 | 0.00005 | 100.0 % |
+| f16 / f16 with `ubatch-size = 512` (noise floor) | 1777.8 | 0.099 | 0.035 | 2.40 | 84.7 % |
+| q8_0 / q8_0 | 1762.8 | 0.109 | 0.038 | 2.52 | 83.9 % |
+| q8_0 / f16 | 1763.5 | 0.107 | 0.037 | 2.57 | 84.1 % |
+| f16 / q8_0 | 1766.5 | 0.109 | 0.038 | 2.57 | 84.1 % |
+| q4_0 / q4_0 | 1788.5 | 0.275 | 0.135 | 4.25 | 73.6 % |
+
+So q8_0 only adds ~0.01 of KLD to the noise floor, which is not a measurable loss of quality, but q4_0 is clearly
+worse. In a retrieval test (8 facts hidden at 5-95 % depth of ~66k tokens of WikiText, 3 different texts,
+`benchmark/scratch/needle_test.py`), the f16 cache found 21/24 and q8_0/q8_0 23/24.
+
+*Speed* at ctx 77824 and `n-cpu-moe = 25`:
+
+| KV cache (K / V) | VRAM after loading | Chat tg | tg at 36k tokens | tg at 70k tokens | pp at 70k tokens |
+|---|---|---|---|---|---|
+| f16 / f16 | 7577 MiB | 56.9 t/s | 52.5 t/s | 49.7 t/s | 1381 t/s |
+| q8_0 / f16 | 7267 MiB | 56.8 t/s | 48.7 t/s (-7 %) | 43.6 t/s (-12 %) | 1366 t/s |
+| f16 / q8_0 | 7331 MiB | 58.4 t/s | 46.1 t/s (-12 %) | 41.9 t/s (-16 %) | 1370 t/s |
+| q8_0 / q8_0 | 6907 MiB | 56.9 t/s | 46.4 t/s (-12 %) | 40.7 t/s (-18 %) | 1359 t/s |
+
+The quantized cache slows down token generation at long contexts, as the attention has to dequantize it
+(`llama bench` showed the slowdown for both 1-token steps and the 3-token steps of MTP). It also does not halve
+the cost of context: for batches of more than one token, the CUDA flash attention converts the quantized cache to
+f16 in a temporary buffer that grows with the context, so each additional token still costs ~22 KiB of VRAM, and q8_0
+only saves a fixed ~670 MiB. With q8_0/q8_0 at `n-cpu-moe = 25`, ctx 106496 loads with 7541 MiB and peaks at
+7627 MiB, 114688 loads with 7745 MiB (too tight), and 122880 does not load. At ctx 106496, tg was 46.0 t/s at 36k,
+39.5 t/s at 70k and 34.2 t/s at 100k tokens.
+
+Putting more experts on the CPU gives the same context at a much smaller cost. Each layer makes room for ~16k tokens
+(f16 KV cache, `ubatch-size = 2048`, `prompt chat depth` tests with a 70k-token prompt):
+
+| `n-cpu-moe` | ctx | VRAM after loading / peak | pp at 70k tokens | Chat tg | tg at 36k tokens | tg at 70k tokens |
+|---|---|---|---|---|---|---|
+| 25 | 77824 | 7577 / 7659 MiB | 1534 t/s | 56.9 t/s | 52.5 t/s | 49.7 t/s |
+| 27 | 106496 | 7543 / 7627 MiB | (1321 t/s at 102k) | 56.6 t/s | 49.2 t/s | 48.5 t/s (44.1 at 100k) |
+| **28 (chosen)** | **122880** | 7583 / 7667 MiB | 1488 t/s | 54.8 t/s | 48.8 t/s | 44.9 t/s |
+| 29 | 139264 | 7625 / 7709 MiB | 1472 t/s | 53.2 t/s | 48.6 t/s | 44.1 t/s |
+| 30 (all experts) | 155648 | 7667 / 7751 MiB (too tight) | 1460 t/s | 53.1 t/s | 48.4 t/s | 41.9 t/s |
+| 27, `ubatch-size = 1024` | 139264 | 7457 / 7513 MiB | 1224 t/s | 48.5 t/s | 43.8 t/s | 43.1 t/s |
+
+`ubatch-size = 1024` makes room for ~30k tokens, but costs 20 % of pp and also slows down generation, so 2048 is kept.
+`n-cpu-moe = 28` with ctx 122880 gives 58 % more context than 77824 for 3-4 % slower pp and chat and up to 10 % slower
+generation at long contexts, which is less than what q8_0 costs for a smaller gain. 20 consecutive 119k-token
+prompts passed at pp 1219-1232 t/s with a peak of 7655 MiB (111 W mean, max 118 W, 66 °C mean, max 68 °C), as did
+two concurrent 59k-token prompts (peak 7655 MiB). In the retrieval test, the model found 23/24 facts at ~57k tokens
+and 20/24 at ~112k tokens, so the recall of the model itself decreases somewhat at the longest contexts.
 
 ### CPU model
 
