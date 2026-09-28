@@ -26,7 +26,8 @@ For the raw model speed independent of the server configuration, see ``llama_cpp
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
 so that runs with different models, settings or hardware can be compared afterwards.
-With ``--hash-hostname``, the hostname is replaced by its SHA-256 hash in the result and the file name.
+``--hostname NAME`` (or the environment variable ``LLAMA_BENCH_HOSTNAME``) stores NAME instead of the hostname, and
+``--hash-hostname`` replaces the hostname by its SHA-256 hash, in the result and the file name.
 
 Note: LiteLLM on the personal agx-ai server (``../litellm/config.yaml``, ``health_check_interval: 60``) sends a health
 check request to every model once a minute over the network, which adds noise to the measurements and reloads
@@ -398,9 +399,12 @@ def read_env_key(path: Path, name: str = "LLAMA_API_KEY") -> str | None:
     return None
 
 
-def host_name(hashed: bool = False) -> str:
-    """The hostname, or its SHA-256 hex digest, e.g. to keep the name of a work computer out of a public repository."""
-    name = socket.gethostname()
+def host_name(hashed: bool = False, name: str | None = None) -> str:
+    """The hostname (``name`` if given, e.g. from ``--hostname``), or its SHA-256 hex digest.
+
+    Both keep the real name of e.g. a work computer out of a public repository.
+    """
+    name = name or socket.gethostname()
     return hashlib.sha256(name.encode()).hexdigest() if hashed else name
 
 
@@ -461,6 +465,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<hostname>.jsonl)")
     parser.add_argument("--hash-hostname", action="store_true",
                         help="store the hostname as its SHA-256 hash in the result and the default output file name")
+    parser.add_argument("--hostname", default=os.environ.get("LLAMA_BENCH_HOSTNAME"),
+                        help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
 
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
@@ -480,7 +486,7 @@ def main() -> int:
 
     result: dict[str, Any] = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": host_name(args.hash_hostname),
+        "host": host_name(args.hash_hostname, args.hostname),
         "client_platform": platform.platform(),
         "label": args.label,
         "url": server.url,

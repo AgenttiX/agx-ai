@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shlex
 import shutil
@@ -121,6 +122,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="JSON lines file (default results/<hostname>-kld.jsonl)")
     parser.add_argument("--hash-hostname", action="store_true",
                         help="store the hostname as its SHA-256 hash in the result and the default output file name")
+    parser.add_argument("--hostname", default=os.environ.get("LLAMA_BENCH_HOSTNAME"),
+                        help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
 
     variants = [v.split("=", 1) for v in args.variant]
@@ -139,10 +142,10 @@ def main() -> int:
     base = shlex.split(args.base_args)
     base_file = args.work_dir / "base.kld"
 
-    output_file = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname).split('.')[0]}-kld.jsonl"
+    output_file = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-kld.jsonl"
     common = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": host_name(args.hash_hostname),
+        "host": host_name(args.hash_hostname, args.hostname),
         "label": args.label,
         "image": args.image,
         "model": args.model,

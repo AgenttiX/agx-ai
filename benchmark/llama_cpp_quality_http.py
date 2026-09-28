@@ -282,6 +282,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="JSON lines file (default results/<hostname>-quality.jsonl)")
     parser.add_argument("--hash-hostname", action="store_true",
                         help="store the hostname as its SHA-256 hash in the result and the default output file name")
+    parser.add_argument("--hostname", default=os.environ.get("LLAMA_BENCH_HOSTNAME"),
+                        help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
 
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
@@ -291,7 +293,7 @@ def main() -> int:
     if model is None:
         raise SystemExit("No chat model found; pass --model")
     props = server.props(model)
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname).split('.')[0]}-quality.jsonl"
+    output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-quality.jsonl"
     ref = None
     if args.reference:
         runs = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()] if output.exists() else []
@@ -301,7 +303,7 @@ def main() -> int:
 
     result: dict[str, Any] = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": host_name(args.hash_hostname),
+        "host": host_name(args.hash_hostname, args.hostname),
         "label": args.label,
         "url": server.url,
         "build_info": props.get("build_info"),

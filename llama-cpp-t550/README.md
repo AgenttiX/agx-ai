@@ -10,7 +10,7 @@ flash attention, `ctx-size = 65536`, a single slot and the vision/audio encoder 
 ## Results
 
 Measured with [`benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) (results in
-`benchmark/results/vxl-ws027.jsonl` on the T550 machine, not committed), llama.cpp build b11151.
+`benchmark/results/t550.jsonl`), llama.cpp build b11151.
 tg = token generation, pp = prompt processing, acc = accepted MTP draft tokens.
 
 ### Gemma 4 E4B QAT UD-Q4_K_XL, ctx 65536, MTP `spec-draft-n-max = 2` (2026-09-27)
