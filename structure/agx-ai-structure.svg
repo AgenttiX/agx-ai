@@ -42,24 +42,24 @@
 <path d="M241.2,80.8 L249.2,88 L241.2,95.2" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M252,96 L265.2,96" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
 <text x="286" y="85" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Open Terminal</text>
-<text x="286" y="104" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">shell for the LLMs · :8001</text>
+<text x="286" y="104" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">shell for the LLMs</text>
 <rect x="222" y="140" width="230" height="60" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <use href="#logo-open-webui" x="234" y="150" width="40" height="40"/>
 <text x="286" y="167" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Open WebUI</text>
-<text x="286" y="186" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">chat UI · :3000</text>
+<text x="286" y="186" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">chat UI</text>
 <rect x="222" y="222" width="230" height="60" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <use href="#logo-gptr" x="234" y="232" width="40" height="40"/>
 <text x="286" y="249" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
-<text x="286" y="268" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">web UI · :3001</text>
+<text x="286" y="268" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">web UI</text>
 <rect x="222" y="304" width="230" height="60" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <use href="#logo-gptr" x="234" y="314" width="40" height="40"/>
 <text x="286" y="331" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
-<text x="286" y="350" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">research agent · :8000</text>
+<text x="286" y="350" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">research agent</text>
 <rect x="534" y="146" width="250" height="110" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="2.5"/>
 <use href="#logo-litellm-icon" x="548" y="167" width="68" height="68"/>
 <text x="628" y="194" font-size="24" font-weight="bold" fill="#1f2933" text-anchor="start">LiteLLM</text>
 <text x="628" y="216" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">LLM proxy and router</text>
-<text x="628" y="234" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">OpenAI API · :4000</text>
+<text x="628" y="234" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">OpenAI API</text>
 <rect x="850" y="58" width="230" height="60" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <use href="#logo-claude-symbol" x="862" y="70" width="36" height="36"/>
 <text x="910" y="85" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">LiteLLM Claude</text>
@@ -104,7 +104,7 @@
 <path d="M1080,88 L1160,88" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M1080,334 L1120,334 L1120,170 L1160,170" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <text x="34" y="422" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">llama.cpp backends</text>
-<text x="240" y="422" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">OpenAI-compatible API in the LAN, port 9931</text>
+<text x="240" y="422" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">OpenAI-compatible API in the LAN</text>
 <rect x="26" y="448" width="752" height="428" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
 <text x="40" y="472" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Laptops</text>
 <rect x="790" y="448" width="270" height="428" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>

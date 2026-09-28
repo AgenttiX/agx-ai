@@ -330,17 +330,17 @@ def build() -> str:
 
     # Stack
     col_a = 222
-    f.card(col_a, rows[0], cw, ch, f.terminal_icon, "Open Terminal", "shell for the LLMs · :8001", logo_size=40)
-    f.card(col_a, rows[1], cw, ch, "open-webui.png", "Open WebUI", "chat UI · :3000", logo_size=40)
-    f.card(col_a, rows[2], cw, ch, "gptr.png", "GPT Researcher", "web UI · :3001", logo_size=40)
-    f.card(col_a, rows[3], cw, ch, "gptr.png", "GPT Researcher", "research agent · :8000", logo_size=40)
+    f.card(col_a, rows[0], cw, ch, f.terminal_icon, "Open Terminal", "shell for the LLMs", logo_size=40)
+    f.card(col_a, rows[1], cw, ch, "open-webui.png", "Open WebUI", "chat UI", logo_size=40)
+    f.card(col_a, rows[2], cw, ch, "gptr.png", "GPT Researcher", "web UI", logo_size=40)
+    f.card(col_a, rows[3], cw, ch, "gptr.png", "GPT Researcher", "research agent", logo_size=40)
 
     lx, ly, lw, lh = 534, 146, 250, 110
     f.rect(lx, ly, lw, lh, fill="#ffffff", stroke=STACK_STROKE, width=2.5)
     f.logo("litellm-icon.png", lx + 14, ly + 21, 68, 68)
     f.text(lx + 94, ly + 48, "LiteLLM", size=24, weight="bold")
     f.text(lx + 94, ly + 70, "LLM proxy and router", size=14, color=MUTED)
-    f.text(lx + 94, ly + 88, "OpenAI API · :4000", size=14, color=MUTED)
+    f.text(lx + 94, ly + 88, "OpenAI API", size=14, color=MUTED)
 
     col_d = 850
     pg_y = (rows[1] + rows[2]) / 2
@@ -382,7 +382,7 @@ def build() -> str:
 
     # llama.cpp backends
     f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
-    f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN, port 9931", size=14, color=MUTED, style="italic")
+    f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN", size=14, color=MUTED, style="italic")
 
     group_top = hw_top + 56
     for name, gx, gw in (("Laptops", 26, 752), ("Desktops", 790, 270), ("Servers", 1072, 504)):
