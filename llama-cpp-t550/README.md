@@ -3,15 +3,43 @@
 Configuration for the NVIDIA T550 Laptop GPU (4 GB, Turing TU117, 30 W) under Docker Desktop with WSL 2 on Windows.
 The model and its settings are in [`preset.ini`](preset.ini), server-wide settings in [`config.ini`](config.ini)
 and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
+The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
+[`../benchmark`](../benchmark/README.md)).
 
 Model: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`) with its MTP drafter,
-flash attention, `ctx-size = 65536`, a single slot and the vision/audio encoder (mmproj) on the CPU.
+flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot and the vision/audio encoder (mmproj) on the CPU.
+
+## Hardware and software
+
+| | |
+|---|---|
+| OS | Windows 11 25H2 (build 26200), Docker Desktop 4.88.1 with the WSL 2 backend (kernel 6.18) |
+| CPU | Intel Core i7-1260P (Alder Lake, 4 performance + 8 efficiency cores, 16 threads) |
+| RAM | 32 GB DDR4-3200 (2 x 16 GB SO-DIMM, dual channel); the WSL 2 VM gets 15.5 GiB of it (WSL's default of half the RAM) and 4 GiB of swap |
+| iGPU | Intel Iris Xe Graphics (96 EU, shares the system RAM), drives the display |
+| dGPU | NVIDIA T550 Laptop GPU: Turing TU117 (sm_75, no tensor cores), 4 GB GDDR6 (64-bit), PCIe link x4 (nvidia-smi: gen 4, max width x16), driver 596.52 (CUDA 13.2) |
+| dGPU power limit | 30 W (default and maximum). On 2026-09-27 and -28 the platform capped it at 20 W ("Current Power Limit" in `nvidia-smi -q -d POWER`, while "Requested Power Limit" was 30 W), which made the GPU ~35 % slower (see the results of 2026-09-27 below). |
+| llama.cpp | `ghcr.io/ggml-org/llama.cpp:server-cuda13`, build b11151 |
 
 ## Results
 
 Measured with [`benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) (results in
 `benchmark/results/t550.jsonl`), llama.cpp build b11151.
 tg = token generation, pp = prompt processing, acc = accepted MTP draft tokens.
+
+### Gemma 4 E4B QAT UD-Q4_K_XL, ctx 69632, f16 KV cache, MTP `spec-draft-n-max = 2` (current, 2026-09-28)
+
+GPU power limit 20 W (see above). "Chat" = 12 chat prompts of up to 512 tokens,
+"16k/64k context" = questions about 16k/64k tokens of Python code, up to 512 generated tokens.
+
+| Test | Result |
+|---|---|
+| Generation, 1 request, 256 tokens | 36.3 t/s, acc 66 % |
+| Prompt processing, 4096 tokens | 141 t/s |
+| Chat | 30.1 t/s (27.3-37.2), acc 54 % |
+| 16k context | pp 120 t/s, tg 25.3 t/s, acc 62 % |
+| 64k context | pp 81 t/s, tg 16.7 t/s, acc 60 % |
+| Peak GPU memory | 3875 MiB |
 
 ### Gemma 4 E4B QAT UD-Q4_K_XL, ctx 65536, MTP `spec-draft-n-max = 2` (2026-09-27)
 
@@ -77,13 +105,64 @@ to find, followed by a generated summary. Peak = dedicated GPU memory.
 |---|---|---|---|---|---|
 | QAT | 32768 | short | 3243 MiB | | loads |
 | QAT | 61440 | 58.1k tokens | 3719 MiB | 3733 MiB | stable |
-| QAT | **65536** | 62.1k tokens | 3787 MiB | 3801 MiB | stable; two unload/reload cycles through the router API |
+| QAT | 65536 | 62.1k tokens | 3787 MiB | 3801 MiB | stable; two unload/reload cycles through the router API |
+| QAT | **69632** | 67.0k tokens | 3855 MiB | 3869 MiB | stable (pp 73 t/s, tg 13.2 t/s, found the word); the largest context that stays below the limit |
 | non-QAT | 10000 | 8.8k tokens | | 3565 MiB | stable |
 | non-QAT | 24576 | 22.9k tokens | 3677 MiB | 3815 MiB | stable; two unload/reload cycles through the router API |
 | non-QAT | 32768 | 29.8k tokens | 3813 MiB | 3941 MiB | works, but at the ~3940 MiB limit, leaving no margin for other programs that use the GPU |
 
-For the QAT model, 65536 keeps the same ~140 MiB margin below the limit as ctx 24576 did for the non-QAT model.
-Each further 4096 tokens would cost 64 MiB.
+Each 4096 tokens cost 64 MiB. The next step, 73728, would peak at ~3930 MiB, i.e. at the limit. 69632 leaves ~70 MiB.
+
+## KV cache quantization (2026-09-28)
+
+Tested with the QAT model at ctx 65536: a q8_0 K and V cache (`cache-type-k`/`cache-type-v = q8_0`) is about as good
+as f16, but on this GPU it saves no VRAM when MTP is on, and it is slower at long contexts. The KV cache therefore
+stays at f16.
+
+**VRAM** after loading (ctx 65536, `ubatch-size = 256`, the rest as in [`preset.ini`](preset.ini)):
+
+| KV cache | KV buffers | Compute buffers (model + MTP drafter) | Total with MTP | Total without MTP |
+|---|---|---|---|---|
+| f16 | 1054 MiB | 83 + 42 MiB | 3787 MiB | 3699 MiB |
+| V q8_0 | 807 MiB | 193 + 167 MiB | 3775 MiB | |
+| K q8_0 | 807 MiB | 194 + 169 MiB | 3779 MiB | |
+| K+V q8_0 | 560 MiB | 324 + 297 MiB | 3789 MiB | 3447 MiB |
+
+The compute buffers grow with the context size, most likely because the CUDA flash attention converts a quantized
+cache back to f16 for prompt processing (the T550 has no tensor cores), in a temporary buffer of about one layer's
+cache over the whole context. Both the model and the MTP drafter reserve such a buffer, so together they eat the whole
+saving, at any context size (at ctx 32768: 3229 MiB with K+V q8_0,
+3243 MiB with f16). A smaller `ubatch-size` hardly changes it (ub 128: 3735 MiB). Without MTP, only the model's
+buffer remains, and K+V q8_0 costs ~12 KiB per token instead of 16 KiB, which would allow a context of ~95k tokens.
+
+**Quality** with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py): 132 greedy
+retrieval questions (single and two-step lookups in Python source) at 9k, 31k and 61k tokens of context, MTP off
+(needed for the token probabilities), each compared with the f16 run. The noise floor is a setting that is lossless in
+principle (another `ubatch-size`). KLD is the KL divergence of the answer-token distributions from the reference.
+
+| KV cache | Correct | Same answer as f16 | Mean KLD | 99 % KLD | Top token changed |
+|---|---|---|---|---|---|
+| f16 (reference) | 128/132 | | | | |
+| Noise: f16, ub 128 | 128/132 | 131/132 | 0.00056 | 0.015 | 1/852 |
+| K+V q8_0 | 129/132 | 129/132 | 0.00073 | 0.028 | 3/842 |
+| K+V q4_0 (to show that the test detects a lossy cache) | 126/132 | 127/132 | 0.0046 | 0.147 | 5/826 |
+
+All single lookups were right in every run (96/96); the differences are in the two-step lookups. K+V q8_0 is
+slightly above the noise floor (1.3 times the mean KLD) and far below q4_0, i.e. its effect on quality is negligible.
+
+**Speed** with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) at ctx 65536, GPU power limit 20 W
+(t/s; "chat" = 12 chat prompts of up to 512 tokens, "30k context" = questions about 30k tokens of code):
+
+| KV cache | MTP | Generation | Prompt, 4096 tokens | Chat | 30k context: prompt / generation | Peak VRAM |
+|---|---|---|---|---|---|---|
+| f16 | yes | 30.5 | 140 | 24.2 | 104 / **18.7** | 3807 MiB |
+| K+V q8_0 | yes | 30.6 | 139 | 28.7 | 103 / 17.0 | 3811 MiB |
+| f16 | no | 23.3 | 145 | 21.3 | 108 / 16.3 | 3717 MiB |
+| K+V q8_0 | no | 21.7 | 137 | 20.6 | 102 / 12.4 | 3469 MiB |
+
+With MTP, the q8_0 cache is 9 % slower at 30k tokens of context and not faster otherwise (the chat numbers vary with
+the draft acceptance). The only way to use its saving, turning MTP off for a ~95k context, would make generation
+at 30k tokens of context a third slower (12.4 vs 18.7 t/s).
 
 ## Other findings
 
@@ -94,9 +173,9 @@ Each further 4096 tokens would cost 64 MiB.
   (`ggml_cuda_pool_vmm::alloc`). `ubatch-size = 256` fixes this. `flash-attn = off` also works, but needs ~230 MiB
   more VRAM (the V cache is padded to 1024 due to the different head sizes) and processed an 8.8k-token prompt at
   52 t/s instead of 84 t/s (both measured with a cold CUDA JIT cache).
-- A q8_0 KV cache (`cache-type-k/v = q8_0`) does not help: with flash attention, the quantized cache needs f16
-  conversion buffers, so it saves much less than half of the KV cache. The non-QAT model at ctx 45056 already used
-  3927 MiB after loading, memory was moved to shared memory, and prompt processing ran at 47 t/s.
+- A q8_0 KV cache does not help on this GPU, see [KV cache quantization](#kv-cache-quantization-2026-09-28).
+  With the non-QAT model at ctx 45056, it already used 3927 MiB after loading, memory was moved to shared memory,
+  and prompt processing ran at 47 t/s.
 - Without `tensor-split = 1`, the MTP drafter fails to load on WSL 2
   (`vector::_M_range_check: __n (which is 1) >= this->size() (which is 1)`), see
   [ggml-org/llama.cpp#29044](https://github.com/ggml-org/llama.cpp/issues/29044).
