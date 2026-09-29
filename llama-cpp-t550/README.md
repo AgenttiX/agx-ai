@@ -6,8 +6,15 @@ and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
 The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
 [`../benchmark`](../benchmark/README.md)).
 
-Model: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`) with its MTP drafter,
-flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot and the vision/audio encoder (mmproj) on the CPU.
+Two models, one loaded at a time (`models-max = 1` in [`config.ini`](config.ini); requesting the other model unloads
+the loaded one):
+
+- `google/gemma-4-e4b-qat`, loaded at startup: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
+  entirely on the GPU, with its MTP drafter, flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot
+  and the vision/audio encoder (mmproj) on the CPU.
+- `google/gemma-4-26b-a4b-qat`, loaded on request: Gemma 4 26B-A4B QAT (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`),
+  with the MoE experts in RAM and everything else on the GPU, MTP, q8_0 K and V caches, `ctx-size = 73728`, a single
+  slot and no vision encoder (see [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
 
 ## Hardware and software
 
@@ -21,7 +28,7 @@ flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot and the visi
 | dGPU power limit | 30 W (default and maximum). On 2026-09-27 and -28 the platform capped it at 20 W ("Current Power Limit" in `nvidia-smi -q -d POWER`, while "Requested Power Limit" was 30 W), which made the GPU ~35 % slower (see the results of 2026-09-27 below). |
 | llama.cpp | `ghcr.io/ggml-org/llama.cpp:server-cuda13`, build b11151 |
 
-## Results
+## Gemma 4 E4B QAT: results
 
 Measured with [`benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) (results in
 `benchmark/results/t550.jsonl`), llama.cpp build b11151.
@@ -77,7 +84,7 @@ GPU power limit 30 W.
 | `spec-draft-n-max = 1` / `3` | tg 36.6 t/s (acc 77 %) / 32.5 t/s (acc 40 %) |
 | `llama bench`, no MTP (`-fa 1`) | pp512 162 t/s, pp4096 151 t/s, tg128 25 t/s, i.e. MTP gave ~50 % faster generation |
 
-## VRAM budget
+## Gemma 4 E4B QAT: VRAM budget
 
 Measured with the Windows "GPU Adapter Memory" performance counters, as nvidia-smi does not show the shared memory.
 
@@ -96,7 +103,7 @@ Measured with the Windows "GPU Adapter Memory" performance counters, as nvidia-s
 - The global-attention KV cache costs 16 KiB per token (512 MiB at ctx 32768), and the sliding-window cache ~30 MiB.
 - Prompt processing needs ~15-130 MiB on top of the memory used after loading.
 
-## Context size
+## Gemma 4 E4B QAT: context size
 
 Probes with a prompt that nearly fills the context, containing a "secret word" in the middle that the model has
 to find, followed by a generated summary. Peak = dedicated GPU memory.
@@ -113,7 +120,7 @@ to find, followed by a generated summary. Peak = dedicated GPU memory.
 
 Each 4096 tokens cost 64 MiB. The next step, 73728, would peak at ~3930 MiB, i.e. at the limit. 69632 leaves ~70 MiB.
 
-## KV cache quantization (2026-09-28)
+## Gemma 4 E4B QAT: KV cache quantization (2026-09-28)
 
 Tested with the QAT model at ctx 65536: a q8_0 K and V cache (`cache-type-k`/`cache-type-v = q8_0`) is about as good
 as f16, but on this GPU it saves no VRAM when MTP is on, and it is slower at long contexts. The KV cache therefore
@@ -164,6 +171,122 @@ With MTP, the q8_0 cache is 9 % slower at 30k tokens of context and not faster o
 the draft acceptance). The only way to use its saving, turning MTP off for a ~95k context, would make generation
 at 30k tokens of context a third slower (12.4 vs 18.7 t/s).
 
+## Gemma 4 26B-A4B QAT
+
+Measured on 2026-09-28 and -29 with the GPU power limit at 20 W, build b11151. "Chat" = the chat prompts of
+[`../benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) with up to 512 generated tokens (the realistic
+generation speed), "generation" = its raw-completion test, which repeats one paragraph and is therefore much faster
+for a mixture-of-experts model (consecutive tokens use the same experts) and flatters MTP (88 % draft acceptance).
+
+### How the hardware is used
+
+The UD-Q4_K_XL GGUF is 13.3 GiB: 12.0 GiB of MoE experts (408 MiB in each of the 30 layers) and 1.3 GiB of everything
+else (attention, shared FFN, router, embeddings/output). The MTP drafter is 225 MiB, the vision encoder 1.1 GiB.
+
+- **VRAM (3.8 GiB):** everything but the experts (`n-gpu-layers = all`, `n-cpu-moe = 30`), the KV cache and the MTP
+  drafter. At ctx 50176 with an f16 KV cache and ub 1024: weights 1323 MiB, KV cache 980 MiB (global attention)
+  + 400 MiB (sliding window, grows with `ubatch-size`), drafter 225 MiB, compute buffers 570 + 220 MiB.
+  There is no room for expert layers on the GPU at a useful context (408 MiB each).
+- **RAM:** the experts stay memory-mapped from the GGUF file (llama.cpp's `CPU_Mapped` buffer), i.e. in the page cache
+  of the WSL 2 VM. The CPU runs them for generation. For prompts, llama.cpp copies them to the GPU for every ubatch
+  ("op offload"), so a larger `ubatch-size` makes prompts faster.
+- **The WSL 2 VM has 15.5 GiB** (see [Hardware](#hardware-and-software)), and the model needs ~14 GiB of it: the page
+  cache holds the whole 13.6 GiB file, plus ~0.8 GiB for the process. Anything more pushes experts out of the page
+  cache, and they are re-read from the Windows file system through the slow 9P file share while generating:
+  - The vision encoder on the CPU (`no-mmproj-offload = 1`, 1.1 GiB): generation 9.3 t/s instead of 19.7 t/s
+    (ub 1024). The model therefore runs without it (`no-mmproj = true`); use the E4B for images and audio, or give the
+    VM more memory (below).
+  - llama-server's prompt cache in RAM (`cache-ram`, 8 GiB by default): after a few chat requests it had grown to
+    1.2 GiB and evicted experts. With `cache-ram = 0`, the single slot still reuses its own KV cache for the next turn of
+    the same conversation.
+
+  Windows itself keeps only ~2.5-3.5 GB free while the model is loaded (the VM uses 15.4 GB, the rest ~13 GB).
+
+### Settings
+
+Each variant on a fresh server, the others as in [`preset.ini`](preset.ini) (ctx 50000, f16 KV cache, no mmproj):
+
+| Setting | Chat tg | Generation | Prompt, 4096 tokens | Notes |
+|---|---|---|---|---|
+| `threads` 4 / 6 / **8** / 12 / 16 | 7.2 / 7.4 / **7.7** / 7.0 / 4.0 | 18.6 / 18.7 / 19.6 / 20.3 / 12.8 | 94 / 87 / 88 / 87 / 88 | 12 threads: 70 t/s for prompts in a rerun with `cache-ram = 0`; 16 threads use the efficiency cores and are much slower |
+| MTP off / `spec-draft-n-max` 1 / **2** / 3 | 5.9 / 7.3 / **7.7** / 7.7 | | | draft acceptance in chat 79 / 72 / 63 %; MTP takes 450 MiB of VRAM |
+| `no-host = true` (repacked experts), `threads-batch = 12` | 8.9 | | 28 | the GPU cannot use the repacked layout, so prompts run on the CPU; the repacked copy is regular memory (12.5 GiB), which pushed 2 GiB into swap |
+| `ubatch-size` 512 / **1024** / 2048 (8192-token prompt) | | | 71 / ~90 / 93 | ub 2048 needs 3897 MiB of VRAM already at ctx 32768 |
+
+The repacked layout (`no-host`) would generate 16 % faster, but prompts are usually much longer than answers
+(system prompts, tool definitions, documents), so op offload with 3x faster prompts is the better trade.
+
+### KV cache quantization
+
+Unlike for the E4B, q8_0 K and V caches save VRAM here: at ctx 50176, 3323 MiB instead of 3801 MiB after loading
+(the KV cache shrinks from 1380 to 733 MiB, only the MTP drafter's compute buffer grows, by 165 MiB).
+Quality with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py), 88 greedy retrieval
+questions at 9k and 41k tokens of context, MTP off, compared with f16 (see the E4B section for the method):
+
+| KV cache | Correct | Same answer as f16 | Mean KLD | 99 % KLD | Top token changed |
+|---|---|---|---|---|---|
+| f16 (reference) | 67/88 | | | | |
+| Noise: f16, ub 512 | 69/88 | 81/88 | 0.0043 | 0.094 | 7/484 |
+| K+V q8_0 | 72/88 | 80/88 | 0.0049 | 0.190 | 8/477 |
+
+q8_0 is within the noise of this model (whose noise floor is ~8 times that of the E4B). All single lookups were right
+in all runs but one; the two-step lookups (service -> database -> region, thinking off) are hard for this model at any
+setting. Speed at ctx 50000 with MTP: chat 7.8 t/s with both, 16k-token code context pp 71 / 72 t/s and tg 7.1 / 6.9 t/s
+(f16 / q8_0). The q8_0 caches are therefore used, and the saved VRAM goes to the context.
+
+### Context size
+
+With q8_0 caches, each token costs ~21 KiB of VRAM, as the compute buffers of both the model and the drafter grow with
+the context:
+
+| ctx-size | After loading | Peak | Result |
+|---|---|---|---|
+| 50176 | 3323 MiB | 3361 MiB | |
+| **73728** | 3799 MiB | 3873 MiB | 71k-token retrieval test: 32/32 single and 7/12 two-step lookups; a 70.9k-token prompt: pp 52 t/s, tg 8.3 t/s |
+| 90112 | 3926 MiB | | at the limit, and 390 MiB more shared memory: memory moved to shared memory |
+
+### Results
+
+The configuration in [`preset.ini`](preset.ini) (ctx 73728, q8_0 K and V caches, MTP `spec-draft-n-max = 2`,
+ub 1024, 8 threads, no vision encoder), through the production server, GPU power limit 20 W, 2026-09-29
+(results in `benchmark/results/t550.jsonl`):
+
+| Test | Result |
+|---|---|
+| Chat | 7.2 t/s (6.3-9.1), acc 72 % |
+| 16k context | pp 74 t/s, tg 7.2 t/s, acc 70 % |
+| 64k context | pp 51 t/s, tg 7.0 t/s, acc 75 % |
+| Prompt processing, 4096 tokens | 93 t/s |
+| Generation, 256 tokens (repeated paragraph) | 8.4-18.4 t/s in four runs, acc 84 % |
+| Peak GPU memory | 3837 MiB (3873 MiB in the 71k-token retrieval test) |
+| Switching models (request to the unloaded model until its answer) | E4B -> 26B-A4B 155 s, 26B-A4B -> E4B 93 s |
+
+The chat and long-context generation speeds were stable at 7-8 t/s over two days, but the repeated-paragraph generation
+test varied between 8.4 and 18.4 t/s with these settings (8.4 at 03:50, 18.4 at 04:05), probably due to
+background activity on the CPU, which runs the experts. Compared with the E4B, the 26B-A4B generates 4 times slower in chat
+(7.2 vs 30.1 t/s) and processes prompts ~1.5 times slower (93 vs 141 t/s for 4096 tokens).
+
+### Using the vision encoder: more memory for the WSL 2 VM
+
+To run the 26B-A4B with its vision encoder, the VM needs about 17-18 GiB (not tested). WSL 2 gives it half of the
+RAM by default; `%USERPROFILE%\.wslconfig` sets another limit:
+
+```ini
+[wsl2]
+memory=18GB
+```
+
+Then shut down WSL (this stops Docker Desktop and all WSL distributions) and start Docker Desktop again:
+
+```powershell
+wsl --shutdown
+```
+
+Windows then has ~13.7 GB left, about what it uses now with the usual background apps, so close those before loading
+the 26B-A4B: [`free-ram.ps1`](free-ram.ps1) shows them and their memory use (Slack, Teams, OneDrive, PowerToys,
+SyncTrayzor, ...; 2.8 GB on 2026-09-28), and `.\free-ram.ps1 -Stop` closes them. It also prints the command for
+stopping the PostgreSQL services. Then replace `no-mmproj = true` with `no-mmproj-offload = 1` in [`preset.ini`](preset.ini).
+
 ## Other findings
 
 - Gemma 4 E4B was chosen over E2B, as it fits with a large context. E2B UD-Q4_K_XL takes only 1482 MiB of VRAM for
@@ -173,7 +296,7 @@ at 30k tokens of context a third slower (12.4 vs 18.7 t/s).
   (`ggml_cuda_pool_vmm::alloc`). `ubatch-size = 256` fixes this. `flash-attn = off` also works, but needs ~230 MiB
   more VRAM (the V cache is padded to 1024 due to the different head sizes) and processed an 8.8k-token prompt at
   52 t/s instead of 84 t/s (both measured with a cold CUDA JIT cache).
-- A q8_0 KV cache does not help on this GPU, see [KV cache quantization](#kv-cache-quantization-2026-09-28).
+- For the E4B, a q8_0 KV cache does not help on this GPU (for the 26B-A4B it does), see [KV cache quantization](#gemma-4-e4b-qat-kv-cache-quantization-2026-09-28).
   With the non-QAT model at ctx 45056, it already used 3927 MiB after loading, memory was moved to shared memory,
   and prompt processing ran at 47 t/s.
 - Without `tensor-split = 1`, the MTP drafter fails to load on WSL 2
