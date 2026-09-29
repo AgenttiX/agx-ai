@@ -2,19 +2,24 @@
 """Generate agx-ai-structure.svg, a figure of the local AI server setup of ../docker-compose.yml.
 
 The logos in ./logos are embedded as data URIs, so that the figure is a single self-contained file
-that works also in an <img> tag (e.g. in reveal.js). Run with: python3 generate.py
+that works also in an <img> tag (e.g. in reveal.js). The figure is also rendered to agx-ai-structure.png
+with headless Chrome or Chromium. Run with: python3 generate.py
 """
 
 import base64
 import pathlib
 import re
+import shutil
 import struct
+import subprocess
 from dataclasses import dataclass
 from xml.sax.saxutils import escape
 
 DIR = pathlib.Path(__file__).resolve().parent
 LOGOS = DIR / "logos"
 OUT = DIR / "agx-ai-structure.svg"
+OUT_PNG = OUT.with_suffix(".png")
+PNG_SCALE = 2  # Device scale factor of the PNG
 
 WIDTH = 1600
 HEIGHT = 900
@@ -429,6 +434,31 @@ def build() -> str:
 
     return f.render()
 
+
+def render_png(svg: pathlib.Path, png: pathlib.Path):
+    """Render the SVG to PNG with headless Chrome.
+
+    Inkscape would drop the space between the <tspan> elements of the runtime tags.
+    """
+    chrome = next(
+        (shutil.which(name) for name in ("google-chrome", "chromium", "chromium-browser") if shutil.which(name)),
+        None,
+    )
+    if chrome is None:
+        raise RuntimeError("Chrome or Chromium is required for the PNG output")
+    subprocess.run(
+        [
+            chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
+            f"--window-size={WIDTH},{HEIGHT}", f"--force-device-scale-factor={PNG_SCALE}",
+            f"--screenshot={png}", svg.as_uri(),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
 if __name__ == "__main__":
     OUT.write_text(build(), encoding="utf-8")
     print(f"Wrote {OUT} ({OUT.stat().st_size / 1024:.0f} KiB)")
+    render_png(OUT, OUT_PNG)
+    print(f"Wrote {OUT_PNG} ({OUT_PNG.stat().st_size / 1024:.0f} KiB)")

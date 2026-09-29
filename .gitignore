@@ -1,5 +1,7 @@
 *.env
 *.pdf
+*.png
+!structure/logos/*.png
 __pycache__
 .idea
 gpt-researcher/gpt-researcher.env
