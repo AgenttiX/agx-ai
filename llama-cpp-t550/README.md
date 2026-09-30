@@ -306,6 +306,7 @@ as Docker. This removes the 15.5 GiB memory limit of the WSL 2 VM and the slow f
 docker compose stop                                   # in this directory: the GPU and port 9931 are needed
 ..\llama-cpp-windows\install-llama-cpp.ps1 -Backend cuda-12.4
 .\windows\start.ps1                                    # runs in the foreground, Ctrl+C stops it
+..\llama-cpp-windows\stop-llama-server.ps1           # or stop it from another window
 ```
 
 - The CUDA 13.4 build of b11262 (the CUDA version of the Docker image) starts with the driver 596.52 (CUDA 13.2) and

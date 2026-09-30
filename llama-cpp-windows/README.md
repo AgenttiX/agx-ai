@@ -9,6 +9,8 @@ its own directory, e.g. [`../llama-cpp-t550/windows`](../llama-cpp-t550/windows)
   publishes, and installs it to `%LOCALAPPDATA%\llama.cpp\<build>-<backend>`. The previous versions are kept, and
   `%LOCALAPPDATA%\llama.cpp\current.txt` names the one to run.
 - [`start-llama-server.ps1`](start-llama-server.ps1): starts the router with a configuration directory.
+- [`stop-llama-server.ps1`](stop-llama-server.ps1): stops the router and its model instances, and the scheduled task
+  if the server runs from it.
 - [`register-autostart.ps1`](register-autostart.ps1): a scheduled task that starts a computer's server at logon.
 
 No administrator rights are needed. CUDA builds need only the NVIDIA driver: the release includes the CUDA runtime
@@ -21,6 +23,7 @@ and cuBLAS DLLs (the separate `cudart-llama-bin-win-cuda-*.zip`), so the CUDA to
 .\install-llama-cpp.ps1 -Backend cuda-12.4        # for drivers older than CUDA 13.4 (see below)
 .\install-llama-cpp.ps1 -Build b11262 -Backend vulkan
 ..\llama-cpp-t550\windows\start.ps1               # a computer's start script, runs in the foreground
+.\stop-llama-server.ps1                           # stop it (e.g. from another window, or when it runs as a task)
 .\register-autostart.ps1 -StartScript ..\llama-cpp-t550\windows\start.ps1
 ```
 

@@ -11,7 +11,7 @@ file. The task is a per-user task, so this needs no administrator rights.
 .\register-autostart.ps1 -StartScript ..\llama-cpp-t550\windows\start.ps1
 .\register-autostart.ps1 -Unregister
 Start-ScheduledTask -TaskName "llama.cpp server"      # start it now
-Stop-ScheduledTask -TaskName "llama.cpp server"       # stop the server
+.\stop-llama-server.ps1                               # stop the server (ends the task first)
 #>
 param(
     [string]$StartScript = "",
