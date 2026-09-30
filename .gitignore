@@ -1,9 +1,11 @@
 *.env
 *.pdf
 *.png
+*.rmp
 !structure/logos/*.png
 __pycache__
 .idea
+dev
 gpt-researcher/gpt-researcher.env
 gpt-researcher/logs
 gpt-researcher/outputs
