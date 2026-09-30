@@ -9,12 +9,18 @@ The benchmark results of this computer are saved with the hostname `t550` (`--ho
 Two models, one loaded at a time (`models-max = 1` in [`config.ini`](config.ini); requesting the other model unloads
 the loaded one):
 
-- `google/gemma-4-e4b-qat`, loaded at startup: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
+- `google/gemma-4-e4b-qat`, loaded on request: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
   entirely on the GPU, with its MTP drafter, flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot
   and the vision/audio encoder (mmproj) on the CPU.
-- `google/gemma-4-26b-a4b-qat`, loaded on request: Gemma 4 26B-A4B QAT (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`),
-  with the MoE experts in RAM and everything else on the GPU, MTP, q8_0 K and V caches, `ctx-size = 73728`, a single
-  slot and no vision encoder (see [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
+- `google/gemma-4-26b-a4b-qat`, the default model, loaded at startup: Gemma 4 26B-A4B QAT
+  (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`), with the MoE experts in RAM and everything else on the GPU, MTP,
+  q8_0 K and V caches, `ctx-size = 73728`, a single slot and the vision encoder on the CPU (see
+  [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
+
+[`preset.ini`](preset.ini) is set up for running llama.cpp [natively on Windows](#natively-on-windows-2026-09-30),
+which is faster and has room for the 26B-A4B's vision encoder. Where Docker/WSL 2 needs different settings, the
+Docker/WSL 2 settings are kept in the preset as comments, marked "Docker/WSL 2"; uncomment them (and comment out the
+native ones next to them) to use the preset with Docker.
 
 ## Hardware and software
 
@@ -194,8 +200,9 @@ else (attention, shared FFN, router, embeddings/output). The MTP drafter is 225 
   cache holds the whole 13.6 GiB file, plus ~0.8 GiB for the process. Anything more pushes experts out of the page
   cache, and they are re-read from the Windows file system through the slow 9P file share while generating:
   - The vision encoder on the CPU (`no-mmproj-offload = 1`, 1.1 GiB): generation 9.3 t/s instead of 19.7 t/s
-    (ub 1024). The model therefore runs without it (`no-mmproj = true`); use the E4B for images and audio, or give the
-    VM more memory (below).
+    (ub 1024). In Docker, the model therefore runs without it (`no-mmproj = true`, commented out in the preset); use
+    the E4B for images and audio, give the VM more memory (below), or run llama.cpp
+    [natively on Windows](#natively-on-windows-2026-09-30), where it fits.
   - llama-server's prompt cache in RAM (`cache-ram`, 8 GiB by default): after a few chat requests it had grown to
     1.2 GiB and evicted experts. With `cache-ram = 0`, the single slot still reuses its own KV cache for the next turn of
     the same conversation.
@@ -287,6 +294,70 @@ the 26B-A4B: [`free-ram.ps1`](free-ram.ps1) shows them and their memory use (Sla
 SyncTrayzor, ...; 2.8 GB on 2026-09-28), and `.\free-ram.ps1 -Stop` closes them. It also prints the command for
 stopping the PostgreSQL services. Then replace `no-mmproj = true` with `no-mmproj-offload = 1` in [`preset.ini`](preset.ini).
 
+## Natively on Windows (2026-09-30)
+
+llama.cpp can also run without Docker and WSL 2, with the generic scripts in [`../llama-cpp-windows`](../llama-cpp-windows)
+and this computer's configuration in [`windows/`](windows): [`windows/config.ini`](windows/config.ini) (as
+[`config.ini`](config.ini), but with `host = 127.0.0.1`) and the same [`preset.ini`](preset.ini) and `llama-cpp.env`
+as Docker. This removes the 15.5 GiB memory limit of the WSL 2 VM and the slow file share (see
+[Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)).
+
+```powershell
+docker compose stop                                   # in this directory: the GPU and port 9931 are needed
+..\llama-cpp-windows\install-llama-cpp.ps1 -Backend cuda-12.4
+.\windows\start.ps1                                    # runs in the foreground, Ctrl+C stops it
+```
+
+- The CUDA 13.4 build of b11262 (the CUDA version of the Docker image) starts with the driver 596.52 (CUDA 13.2) and
+  finds the GPU, but fails when loading a model: `CUDA error: the provided PTX was compiled with an unsupported
+  toolchain`. The Windows builds have no native Turing kernels, and the driver cannot compile the kernels of a newer
+  CUDA version. The CUDA 12.4 build of the same release works. A driver that supports CUDA 13.4 would allow the
+  CUDA 13.4 build.
+- The `tensor-split = 1` workaround for the MTP drafter ([ggml-org/llama.cpp#29044](https://github.com/ggml-org/llama.cpp/issues/29044))
+  is needed natively too: without it, the E4B's drafter fails to load (`invalid vector subscript`, the MSVC wording of
+  `vector::_M_range_check`). The cause is not WSL but that the driver reports 0 bytes of free VRAM once the model has
+  filled it (the E4B does; the 26B-A4B still leaves some free when its drafter loads, so it loads without the
+  workaround). It makes no difference in speed (26B-A4B, 12 chat requests and a 4096-token prompt: 8.6 t/s and
+  94.9 t/s with it, 8.0/8.5 t/s and 88.6/90.3 t/s in two runs without it; prompt processing varies by this much
+  between runs anyway), so both models keep it.
+- The E4B loaded in ~50 s (Docker: 80-120 s). First speed check (build b11262 with CUDA 12.4, ctx 69632, GPU power
+  limit 20 W): generation 30.8 t/s, chat 27.2 t/s, prompt processing 143.5 t/s for 4096 tokens, 3851 MiB of VRAM after
+  loading and 3861 MiB peak, i.e. about the same as in Docker (36.3 / 30.1 / 141 t/s, 3855 MiB, build b11151), within
+  the variation between runs seen so far.
+
+### Gemma 4 26B-A4B QAT natively vs. Docker (2026-09-30)
+
+The same preset as in Docker, except that the vision encoder runs on the CPU natively (`no-mmproj-offload = 1`)
+and is left out in Docker (`no-mmproj = true`, see [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). GPU power limit 20 W
+in both. Native: build b11262 with CUDA 12.4; Docker: build b11151 with CUDA 13.4 (2026-09-29).
+
+| Test | Native, with the vision encoder | Docker, without it |
+|---|---|---|
+| Chat | **7.9 t/s** (6.2-10.0), acc 71 % | 7.2 t/s (6.3-9.1), acc 72 % |
+| 16k context | pp 75.5 t/s, tg **8.0 t/s** | pp 74 t/s, tg 7.2 t/s |
+| 64k context | pp 51.7 t/s, tg **7.3 t/s** | pp 51 t/s, tg 7.0 t/s |
+| Prompt processing, 4096 tokens | 91.8 t/s | 92.5 t/s |
+| Peak GPU memory | 3833 MiB | 3837 MiB |
+| Loading (after the download) | 28-45 s, 15 s when the file is still in Windows' file cache | ~3 min |
+
+Natively, generation is 4-11 % faster, prompts are as fast (they are limited by copying the experts to the GPU), the
+model loads 4-6 times faster, and the vision encoder fits in RAM: image input works (a 113-token prompt with a small
+image took 40 s). The generation test with the repeated paragraph (7.7 t/s) ran while the model was still being read
+from the disk and is not comparable.
+
+RAM: the llama-server process uses ~15.7 GB (working set), and Windows had only ~1 GB free and ~0.8 GB of standby
+cache left with the usual background apps and Docker Desktop's idle VM (1.4 GB) running, but the page reads stayed at
+~0/s, i.e. nothing that the model needs was paged out. Closing the background apps ([`free-ram.ps1`](free-ram.ps1))
+and Docker Desktop gives it ~4 GB more headroom, e.g. for PyCharm.
+
+Other settings, natively (chat with 6 requests, prompt processing with 4096 tokens):
+
+| Setting | Chat | Prompt | Notes |
+|---|---|---|---|
+| **`threads = 8`, memory-mapped weights** (the preset) | 7.9 t/s | 92 t/s | |
+| `threads = 12` / `16` | 7.7 / 7.2 t/s | 90 / 82 t/s | as in WSL 2, 8 threads are the best |
+| `load-mode = none` | 8.6 t/s | 95 t/s | the experts are copied to pinned host memory (13.2 GiB of "shared GPU memory"), which Windows cannot page out and which counts against the commit limit: 41.2 of 42.3 GB were committed (the page file had to grow). Too close to the limit for other programs, so not used. |
+
 ## Other findings
 
 - Gemma 4 E4B was chosen over E2B, as it fits with a large context. E2B UD-Q4_K_XL takes only 1482 MiB of VRAM for
@@ -299,7 +370,7 @@ stopping the PostgreSQL services. Then replace `no-mmproj = true` with `no-mmpro
 - For the E4B, a q8_0 KV cache does not help on this GPU (for the 26B-A4B it does), see [KV cache quantization](#gemma-4-e4b-qat-kv-cache-quantization-2026-09-28).
   With the non-QAT model at ctx 45056, it already used 3927 MiB after loading, memory was moved to shared memory,
   and prompt processing ran at 47 t/s.
-- Without `tensor-split = 1`, the MTP drafter fails to load on WSL 2
+- Without `tensor-split = 1`, the MTP drafter fails to load on WSL 2 (and natively, see above)
   (`vector::_M_range_check: __n (which is 1) >= this->size() (which is 1)`), see
   [ggml-org/llama.cpp#29044](https://github.com/ggml-org/llama.cpp/issues/29044).
 - The image requires CUDA >= 13.4, but the driver 596.52 provides CUDA 13.2. `NVIDIA_DISABLE_REQUIRE=1` and loading
