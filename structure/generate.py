@@ -84,7 +84,7 @@ class Machine:
     cx: float  # Center x coordinate
     name: tuple[str, bool]  # (title, public), the hostname is shown only in the specs version
     lines: list[tuple[str, bool]]  # (text, public) of the hardware and software, see spec() and pub()
-    models: list[str]
+    models: list[tuple[str, str]]  # (model, generation speed), the speed may be empty
     screen: list[str]  # Logos of the operating system and the virtualization, shown on the screen of the device
     runtimes: list[tuple[str, str, str]]  # (logo, title, detail) of what runs on the machine
 
@@ -299,9 +299,13 @@ class Figure:
         for line, _ in m.lines:
             y += 18
             self.text(m.cx, y, line, size=14, color=MUTED, anchor="middle")
-        for model in m.models:
+        for model, speed in m.models:
             y += 18
-            self.text(m.cx, y, model, size=14, weight="bold", color=MODEL, anchor="middle")
+            speed_span = f'<tspan font-weight="normal"> ({escape(speed)})</tspan>' if speed else ""
+            self.add(
+                f'<text x="{m.cx:g}" y="{y:g}" font-size="14" font-weight="bold" fill="{MODEL}" '
+                f'text-anchor="middle">{escape(model)}{speed_span}</text>'
+            )
         y = top + 116 + 18 * text_lines + 20
         for logo, title, detail in m.runtimes:
             self.runtime_tag(m.cx, y, logo, title, detail)
@@ -331,25 +335,35 @@ def build(specs: bool) -> str:
     f = Figure()
     llama = "llama-cpp.svg"
     gemma_moe = "Gemma 4 26B A4B QAT"
+    # Generation speeds of single requests with the current configurations, from the READMEs and presets of the
+    # backends: the generation test of benchmark/llama_cpp_bench_http.py (256 tokens) where it is valid, otherwise chat.
     machines = [
         Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
-                [gemma_moe, "Gemma 4 E4B"], ["kubuntu.svg"],
+                # llama-cpp-agx-l14/README.md: 26B-A4B without MTP and checkpoints;
+                # openvino-agx-l14-npu-e4b/README.md: E4B on the NPU
+                [(gemma_moe, "8.9 t/s"), ("Gemma 4 E4B", "8.1–8.6 t/s")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
         Machine("laptop", 402, pub("ThinkPad T480"), [spec("Core i7-8550U, 32 GB RAM"), pub("GeForce MX150 (2 GB)")],
-                [gemma_moe], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+                # llama-cpp-agx-t480/README.md
+                [(gemma_moe, "6.7 t/s")], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("laptop", 654, spec("Windows laptop"),
                 [spec("Core i7-1260P, 32 GB RAM"), pub("T550 Laptop GPU (4 GB)")],
-                [gemma_moe, "Gemma 4 E4B"], ["windows.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+                # llama-cpp-t550/README.md, natively on Windows: 26B-A4B chat (the generation test was not valid), E4B
+                [(gemma_moe, "7.9 t/s"), ("Gemma 4 E4B", "31 t/s")], ["windows.svg"],
+                [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
-                ["Gemma 4 31B QAT", gemma_moe], ["kubuntu.svg"],
+                # llama-cpp-agx-z2e/preset-gemma-4-31b-qat.ini, llama-cpp-radeon-vii/README.md
+                [("Gemma 4 31B QAT", "62 t/s"), (gemma_moe, "125 t/s")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
         Machine("server", 1198, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
-                [gemma_moe], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+                # llama-cpp-agx-ai/README.md
+                [(gemma_moe, "55 t/s")], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("server", 1452, spec("Big Machine"),
-                [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)"),
-                 pub("PaperQA2 RAG")],
-                ["Qwen3.8-27B", "Qwen3-Embedding-8B"], ["ubuntu.svg"], [(llama, "llama.cpp", "CUDA")]),
+                [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
+                # llama-cpp-big-machine/preset.ini
+                [("PaperQA2 RAG", ""), ("Qwen3.8-27B", "50–67 t/s"), ("Qwen3-Embedding-8B", "")], ["ubuntu.svg"],
+                [(llama, "llama.cpp", "CUDA")]),
     ]
     if not specs:
         machines = [m.public() for m in machines]
@@ -450,6 +464,8 @@ def build(specs: bool) -> str:
     # llama.cpp backends
     f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
     f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN", size=14, color=MUTED, style="italic")
+    # Right of the line from LiteLLM to the backends
+    f.text(lx + 76, hw_top + 30, "t/s: generation speed of a single request with a short prompt", size=14, color=MUTED, style="italic")
 
     group_top = hw_top + hw_header
     for name, gx, gw in (("Laptops", 26, 752), ("Desktops", 790, 270), ("Servers", 1072, 504)):
