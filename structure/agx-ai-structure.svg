@@ -102,7 +102,7 @@
 <path d="M1080,395 L1120,395 L1120,195 L1160,195" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <text x="34" y="486" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">llama.cpp backends</text>
 <text x="240" y="486" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">OpenAI-compatible API in the LAN</text>
-<text x="610" y="486" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">t/s: generation speed of a single request with a short prompt</text>
+<text x="610" y="486" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">t/s of a single request: (generation with a short prompt | prompt processing of a 0.7–37k-token prompt)</text>
 <rect x="26" y="512" width="752" height="364" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
 <text x="40" y="536" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Laptops</text>
 <rect x="790" y="512" width="270" height="364" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
@@ -115,8 +115,8 @@
 <rect x="134" y="672.5" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
 <use href="#logo-kubuntu" x="122" y="597.5" width="56" height="56"/>
 <text x="150" y="709.5" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad L14 Gen 5</text>
-<text x="150" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 t/s)</tspan></text>
-<text x="150" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 t/s)</tspan></text>
+<text x="150" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
+<text x="150" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
 <rect x="40.3" y="783.5" width="219.4" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="46.3" y="787.5" width="22" height="22"/>
 <text x="74.3" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">Vulkan, iGPU</tspan></text>
@@ -130,7 +130,7 @@
 <use href="#logo-kubuntu" x="374" y="597.5" width="56" height="56"/>
 <text x="402" y="709.5" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad T480</text>
 <text x="402" y="727.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">GeForce MX150 (2 GB)</text>
-<text x="402" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (6.7 t/s)</tspan></text>
+<text x="402" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (6.7 | 80)</tspan></text>
 <rect x="300" y="783.5" width="204" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="306" y="787.5" width="22" height="22"/>
 <text x="334" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
@@ -140,8 +140,8 @@
 <rect x="638" y="672.5" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
 <use href="#logo-windows" x="626" y="597.5" width="56" height="56"/>
 <text x="654" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">T550 Laptop GPU (4 GB)</text>
-<text x="654" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 t/s)</tspan></text>
-<text x="654" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 t/s)</tspan></text>
+<text x="654" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 | 92)</tspan></text>
+<text x="654" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 | 144)</tspan></text>
 <rect x="552" y="783.5" width="204" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="558" y="787.5" width="22" height="22"/>
 <text x="586" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
@@ -157,8 +157,8 @@
 <circle cx="1000" cy="665.5" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
 <text x="925" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
 <text x="925" y="727.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (62 t/s)</tspan></text>
-<text x="925" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (125 t/s)</tspan></text>
+<text x="925" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (62 | 971)</tspan></text>
+<text x="925" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (125 | 1265)</tspan></text>
 <rect x="807.6" y="783.5" width="234.8" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="813.6" y="787.5" width="22" height="22"/>
 <text x="841.6" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>
@@ -194,7 +194,7 @@
 <use href="#logo-proxmox" x="1195" y="587" width="40" height="40"/>
 <use href="#logo-ubuntu" x="1195" y="635" width="40" height="40"/>
 <text x="1198" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
-<text x="1198" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 t/s)</tspan></text>
+<text x="1198" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
 <rect x="1096" y="783.5" width="204" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="1102" y="787.5" width="22" height="22"/>
 <text x="1130" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
@@ -227,7 +227,7 @@
 <use href="#logo-ubuntu" x="1446" y="608" width="46" height="46"/>
 <text x="1452" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
 <text x="1452" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
-<text x="1452" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (50–67 t/s)</tspan></text>
+<text x="1452" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (50–67)</tspan></text>
 <text x="1452" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-8B</text>
 <rect x="1373.1" y="783.5" width="157.8" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="1379.1" y="787.5" width="22" height="22"/>
