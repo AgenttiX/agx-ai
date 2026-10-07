@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Generate agx-ai-structure.svg, a figure of the local AI server setup of ../docker-compose.yml.
+"""Generate figures of the local AI server setup of ../docker-compose.yml.
 
-The logos in ./logos are embedded as data URIs, so that the figure is a single self-contained file
-that works also in an <img> tag (e.g. in reveal.js). The figure is also rendered to agx-ai-structure.png
+- agx-ai-structure-specs.svg: with the hostnames and the hardware specifications of the computers
+- agx-ai-structure.svg: without the hostnames and the hardware specifications, except for the GPUs
+
+The logos in ./logos are embedded as data URIs, so that each figure is a single self-contained file
+that works also in an <img> tag (e.g. in reveal.js). The figures are also rendered to PNG
 with headless Chrome or Chromium. Run with: python3 generate.py
 """
 
@@ -12,14 +15,18 @@ import re
 import shutil
 import struct
 import subprocess
+import zlib
 from dataclasses import dataclass
 from xml.sax.saxutils import escape
 
 DIR = pathlib.Path(__file__).resolve().parent
 LOGOS = DIR / "logos"
 OUT = DIR / "agx-ai-structure.svg"
-OUT_PNG = OUT.with_suffix(".png")
+OUT_SPECS = DIR / "agx-ai-structure-specs.svg"
 PNG_SCALE = 2  # Device scale factor of the PNG
+# Headless Chrome may reserve part of the window height for the browser UI (87 px in Chrome 130),
+# so the PNG is rendered with a taller window and then cropped to the height of the figure.
+PNG_EXTRA_HEIGHT = 200
 
 WIDTH = 1600
 HEIGHT = 900
@@ -37,9 +44,6 @@ HW_FILL = "#f1f7ee"
 HW_STROKE = "#8fb67f"
 LLAMA = "#ff8236"
 MODEL = "#b4531c"
-
-# The text of these logos is small compared to their height, so draw them larger than the others.
-LOGO_SCALE = {"ubuntu.svg": 1.7}
 
 
 def _svg_data(path: pathlib.Path) -> tuple[bytes, float]:
@@ -78,12 +82,31 @@ def load_logo(name: str) -> tuple[str, float]:
 class Machine:
     kind: str  # laptop, desktop or server
     cx: float  # Center x coordinate
-    name: str
-    lines: list[str]  # Hardware
+    name: tuple[str, bool]  # (title, public), the hostname is shown only in the specs version
+    lines: list[tuple[str, bool]]  # (text, public) of the hardware and software, see spec() and pub()
     models: list[str]
-    os: list[str]  # Logos of the operating system and the virtualization
-    hardware: list[str]  # Logos of the hardware vendors
+    screen: list[str]  # Logos of the operating system and the virtualization, shown on the screen of the device
     runtimes: list[tuple[str, str, str]]  # (logo, title, detail) of what runs on the machine
+
+    def public(self) -> "Machine":
+        """Return the machine without the hostname and the hardware specifications, except for the GPUs."""
+        return Machine(
+            self.kind, self.cx, self.name if self.name[1] else ("", True), [line for line in self.lines if line[1]],
+            self.models, self.screen, self.runtimes,
+        )
+
+    def text_lines(self) -> int:
+        return (1 if self.name[0] else 0) + len(self.lines) + len(self.models)
+
+
+def spec(item: str) -> tuple[str, bool]:
+    """A title or line shown only in the specs version, e.g. a hostname, the CPU or the RAM."""
+    return item, False
+
+
+def pub(item: str) -> tuple[str, bool]:
+    """A title or line shown in both versions, e.g. a laptop model or a GPU."""
+    return item, True
 
 
 class Figure:
@@ -193,8 +216,16 @@ class Figure:
         )
 
     # Devices. (cx, top) is the top center of the drawing, which is 150 px wide and 110 px tall.
+    # The screen shows the logos of the operating system and the virtualization.
 
-    def laptop(self, cx, top):
+    def screen_logos(self, cx, cy, logos, size, gap=8):
+        """Draw the logos centered at (cx, cy), stacked vertically."""
+        y = cy - (size * len(logos) + gap * (len(logos) - 1)) / 2
+        for logo in logos:
+            self.logo(logo, cx - size / 2, y, size, size)
+            y += size + gap
+
+    def laptop(self, cx, top, screen):
         self.rect(cx - 68, top + 6, 136, 88, fill="#3e4c59", stroke="#1f2933", rx=7, width=2)
         self.rect(cx - 60, top + 13, 120, 74, fill="#dbe7f3", stroke="none", rx=2, width=0)
         self.add(
@@ -202,9 +233,9 @@ class Figure:
             f'L{cx - 76:g},{top + 108:g} Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>'
         )
         self.rect(cx - 16, top + 97, 32, 4, fill="#7b8794", stroke="none", rx=2, width=0)
-        self.logo("llama-cpp.svg", cx - 34, top + 16, 68, 68)
+        self.screen_logos(cx, top + 50, screen, 56)
 
-    def desktop(self, cx, top):
+    def desktop(self, cx, top, screen):
         # Monitor
         mx = cx - 40
         self.rect(mx - 72, top, 144, 94, fill="#3e4c59", stroke="#1f2933", rx=7, width=2)
@@ -214,7 +245,7 @@ class Figure:
             f'L{mx - 14:g},{top + 108:g} Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>'
         )
         self.rect(mx - 36, top + 106, 72, 5, fill="#9aa5b1", stroke="#1f2933", rx=2, width=2)
-        self.logo("llama-cpp.svg", mx - 34, top + 12, 68, 68)
+        self.screen_logos(mx, top + 46, screen, 58)
         # Tower
         tx = cx + 50
         self.rect(tx, top + 6, 50, 105, fill="#3e4c59", stroke="#1f2933", rx=5, width=2)
@@ -222,8 +253,8 @@ class Figure:
             self.rect(tx + 8, top + 16 + i * 10, 34, 5, fill="#7b8794", stroke="none", rx=1.5, width=0)
         self.add(f'<circle cx="{tx + 25:g}" cy="{top + 90:g}" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>')
 
-    def server(self, cx, top):
-        # A rack with three server units, the middle one with a front display showing llama.cpp.
+    def server(self, cx, top, screen):
+        # A rack with three server units and a front display.
         self.rect(cx - 80, top, 160, 111, fill="#1f2933", stroke="#1f2933", rx=5, width=2)
         for i, y in enumerate((top + 6, top + 40, top + 74)):
             self.rect(cx - 74, y, 148, 31, fill="#3e4c59", stroke="#52606d", rx=3, width=1)
@@ -233,7 +264,7 @@ class Figure:
             self.add(f'<circle cx="{cx + 62:g}" cy="{y + 21:g}" r="3.2" fill="{LLAMA}"/>')
         # Front display
         self.rect(cx - 12, top + 2, 58, 107, fill="#dbe7f3", stroke="#9aa5b1", rx=4, width=1.5)
-        self.logo("llama-cpp.svg", cx - 8, top + 30, 50, 50)
+        self.screen_logos(cx + 17, top + 55.5, screen, 46 if len(screen) == 1 else 40)
 
     def runtime_tag(self, cx, y, logo, title, detail):
         """A pill that shows what runs on a device, e.g. llama.cpp with CUDA.
@@ -257,36 +288,29 @@ class Figure:
                 f'<tspan font-weight="bold">{escape(title)}</tspan> <tspan fill="{MUTED}">{escape(detail)}</tspan></text>'
             )
 
-    def vendor_logos(self, cx, y, names, h=18, gap=14):
-        """Draw a centered row of logos with the height h, or h * LOGO_SCALE for the logos with small text."""
-        heights = [h * LOGO_SCALE.get(n, 1) for n in names]
-        widths = [self.logo_width(n, lh) for n, lh in zip(names, heights)]
-        total = sum(widths) + gap * (len(names) - 1)
-        x = cx - total / 2
-        for n, w, lh in zip(names, widths, heights):
-            self.logo(n, x, y + (h - lh) / 2, lh, w)
-            x += w + gap
-
     def machine(self, m: "Machine", top: float, text_lines: int):
-        """Draw a machine. The logo rows and the runtime tags are aligned between the machines,
-        so the text block has room for text_lines lines below the name."""
-        getattr(self, m.kind)(m.cx, top)
-        y = top + 134
-        self.text(m.cx, y, m.name, size=18, weight="bold", anchor="middle")
-        for line in m.lines:
+        """Draw a machine. The runtime tags are aligned between the machines,
+        so the text block has room for text_lines lines below the device."""
+        getattr(self, m.kind)(m.cx, top, m.screen)
+        y = top + 116
+        if m.name[0]:
+            y += 18
+            self.text(m.cx, y, m.name[0], size=18, weight="bold", anchor="middle")
+        for line, _ in m.lines:
             y += 18
             self.text(m.cx, y, line, size=14, color=MUTED, anchor="middle")
         for model in m.models:
             y += 18
             self.text(m.cx, y, model, size=14, weight="bold", color=MODEL, anchor="middle")
-        y = top + 134 + 18 * text_lines + 18
-        self.vendor_logos(m.cx, y, m.os)
-        y += 32
-        self.vendor_logos(m.cx, y, m.hardware)
-        y += 36
+        y = top + 116 + 18 * text_lines + 20
         for logo, title, detail in m.runtimes:
             self.runtime_tag(m.cx, y, logo, title, detail)
             y += 35
+
+    @staticmethod
+    def machine_height(text_lines: int, runtimes: int) -> float:
+        """Height of a machine drawn by machine(), from the top of the device to the bottom of the last runtime tag."""
+        return 116 + 18 * text_lines + 20 + 35 * runtimes - 5
 
     def render(self) -> str:
         head = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" font-family="{FONT}">
@@ -302,29 +326,65 @@ class Figure:
         return head + "\n".join(self.parts) + "\n</svg>\n"
 
 
-def build() -> str:
+def build(specs: bool) -> str:
+    """Build the figure, with the hostnames and the hardware specifications if specs is True."""
     f = Figure()
-    cw, ch = 230, 60  # Card size
-    rows = (58, 140, 222, 304)  # Card rows of the top half
+    llama = "llama-cpp.svg"
+    gemma_moe = "Gemma 4 26B A4B QAT"
+    machines = [
+        Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
+                [gemma_moe, "Gemma 4 E4B"], ["kubuntu.svg"],
+                [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
+        Machine("laptop", 402, pub("ThinkPad T480"), [spec("Core i7-8550U, 32 GB RAM"), pub("GeForce MX150 (2 GB)")],
+                [gemma_moe], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+        Machine("laptop", 654, spec("Windows laptop"),
+                [spec("Core i7-1260P, 32 GB RAM"), pub("T550 Laptop GPU (4 GB)")],
+                [gemma_moe, "Gemma 4 E4B"], ["windows.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+        Machine("desktop", 925, spec("agx-z2e"),
+                [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
+                ["Gemma 4 31B QAT", gemma_moe], ["kubuntu.svg"],
+                [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
+        Machine("server", 1198, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
+                [gemma_moe], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+        Machine("server", 1452, spec("Big Machine"),
+                [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)"),
+                 pub("PaperQA2 RAG")],
+                ["Qwen3.8-27B", "Qwen3-Embedding-8B"], ["ubuntu.svg"], [(llama, "llama.cpp", "CUDA")]),
+    ]
+    if not specs:
+        machines = [m.public() for m in machines]
+    text_lines = max(m.text_lines() for m in machines)
+    machines_height = Figure.machine_height(text_lines, max(len(m.runtimes) for m in machines))
+
+    # The backends box at the bottom gets the height that the machines need, and the top half gets the rest.
+    cw, ch = 230, 62  # Card size
+    first_row = 64
+    margin = 24  # Between the machines and the bottom of the group boxes
+    group_header = 36  # Between the top of a group box and the top of the devices
+    hw_header = 56  # Between the top of the backends box and the top of the group boxes
+    hw_top = HEIGHT - 24 - margin - machines_height - group_header - hw_header
+    row_spacing = min(100, (hw_top - 12 - 18 - ch - first_row) / 3)
+    rows = tuple(first_row + i * row_spacing for i in range(4))  # Card rows of the top half
 
     def mid(y):
         return y + ch / 2
 
     # Regions
-    stack = (196, 12, 904, rows[-1] + ch + 16 - 12)
+    stack = (196, 12, 904, rows[-1] + ch + 18 - 12)
     f.rect(*stack, fill=STACK_FILL, stroke=STACK_STROKE, rx=16, width=2)
     docker_w = f.logo("docker.svg", stack[0] + 18, stack[1] + 12, 28)
-    f.text(stack[0] + 18 + docker_w + 12, stack[1] + 34, "docker-compose.yml on agx-ai", size=20, weight="bold")
+    stack_title = "docker-compose.yml on agx-ai" if specs else "docker-compose.yml"
+    f.text(stack[0] + 18 + docker_w + 12, stack[1] + 34, stack_title, size=20, weight="bold")
 
     internet = (1140, 12, 448, rows[1] + ch + 16 - 12)
     f.rect(*internet, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
     f.text(internet[0] + 18, internet[1] + 34, "Internet", size=20, weight="bold")
 
-    research = (12, 204, 150, stack[1] + stack[3] - 204)
+    research = (12, stack[1] + stack[3] - 170, 150, 170)
     f.rect(*research, fill=CLOUD_FILL, stroke=CLOUD_STROKE, rx=16, width=2, dash="8 6")
     f.text(research[0] + 75, research[1] + 25, "Research", size=17, weight="bold", anchor="middle")
 
-    hw_top = stack[1] + stack[3] + 12
+    hw_top = stack[1] + stack[3] + 12  # Larger than above if the row spacing was limited
     f.rect(12, hw_top, 1576, HEIGHT - 12 - hw_top, fill=HW_FILL, stroke=HW_STROKE, rx=16, width=2)
 
     # Users
@@ -340,24 +400,26 @@ def build() -> str:
     f.card(col_a, rows[2], cw, ch, "gptr.png", "GPT Researcher", "web UI", logo_size=40)
     f.card(col_a, rows[3], cw, ch, "gptr.png", "GPT Researcher", "research agent", logo_size=40)
 
-    lx, ly, lw, lh = 534, 146, 250, 110
+    lx, lw, lh = 534, 250, 116
+    ly = (mid(rows[1]) + mid(rows[2])) / 2 - lh / 2
     f.rect(lx, ly, lw, lh, fill="#ffffff", stroke=STACK_STROKE, width=2.5)
-    f.logo("litellm-icon.png", lx + 14, ly + 21, 68, 68)
-    f.text(lx + 94, ly + 48, "LiteLLM", size=24, weight="bold")
-    f.text(lx + 94, ly + 70, "LLM proxy and router", size=14, color=MUTED)
-    f.text(lx + 94, ly + 88, "OpenAI API", size=14, color=MUTED)
+    f.logo("litellm-icon.png", lx + 14, ly + lh / 2 - 34, 68, 68)
+    f.text(lx + 94, ly + lh / 2 - 7, "LiteLLM", size=24, weight="bold")
+    f.text(lx + 94, ly + lh / 2 + 15, "LLM proxy and router", size=14, color=MUTED)
+    f.text(lx + 94, ly + lh / 2 + 33, "OpenAI API", size=14, color=MUTED)
 
     col_d = 850
     pg_y = (rows[1] + rows[2]) / 2
     f.card(col_d, rows[0], cw, ch, "claude-symbol.svg", "LiteLLM Claude", "subscription → API", logo_size=36)
     f.card(col_d, pg_y, cw, ch, "postgresql.svg", "PostgreSQL", "LiteLLM database", logo_size=40)
-    f.card(col_d, rows[3], cw, ch, f.key_icon, "SSH tunnel", "ssh-big-machine", logo_size=40)
+    f.card(col_d, rows[3], cw, ch, f.key_icon, "SSH tunnel", "ssh-big-machine" if specs else "to the remote server",
+           logo_size=40)
 
     # Internet
     f.card(1160, rows[0], 410, ch, "claude-symbol.svg", "Claude", "Anthropic, Pro/Max subscription", logo_size=36,
            stroke=CLOUD_STROKE)
-    f.card(1160, rows[1], 410, ch, f.key_icon, "SSH jump host", "to the network of the Big Machine", logo_size=40,
-           stroke=CLOUD_STROKE)
+    f.card(1160, rows[1], 410, ch, f.key_icon, "SSH jump host",
+           f"to the network of the {'Big Machine' if specs else 'remote server'}", logo_size=40, stroke=CLOUD_STROKE)
 
     # Services used by GPT Researcher
     for i, logo in enumerate(("tavily.svg", "arxiv.svg", "gemini-icon.svg")):
@@ -389,33 +451,15 @@ def build() -> str:
     f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
     f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN", size=14, color=MUTED, style="italic")
 
-    group_top = hw_top + 56
+    group_top = hw_top + hw_header
     for name, gx, gw in (("Laptops", 26, 752), ("Desktops", 790, 270), ("Servers", 1072, 504)):
         f.rect(gx, group_top, gw, HEIGHT - 24 - group_top, fill="#ffffff", stroke=HW_STROKE, rx=12, width=1.5,
                extra=' fill-opacity="0.6"')
         f.text(gx + 14, group_top + 24, name, size=16, weight="bold", color="#3d7a2c")
 
-    top = group_top + 36
-    llama = "llama-cpp.svg"
-    gemma_moe = "Gemma 4 26B A4B QAT"
-    machines = [
-        Machine("laptop", 150, "agx-l14", ["ThinkPad L14 Gen 5", "Core Ultra 5 125U, 32 GB RAM"], [gemma_moe],
-                ["kubuntu.svg"], ["intel.svg"],
-                [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
-        Machine("laptop", 402, "agx-t480", ["ThinkPad T480", "Core i7-8550U, 32 GB RAM", "GeForce MX150 (2 GB)"],
-                [gemma_moe], ["kubuntu.svg"], ["intel.svg", "nvidia.svg"], [(llama, "llama.cpp", "CPU + CUDA")]),
-        Machine("laptop", 654, "Windows laptop", ["Docker Desktop, WSL 2", "Core i7-1260P, 32 GB RAM",
-                                                  "T550 Laptop GPU (4 GB)"],
-                [gemma_moe], ["windows.svg"], ["intel.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA")]),
-        Machine("desktop", 925, "agx-z2e", ["Threadripper 3970X, 128 GB RAM", "RTX 3090 (24 GB)", "Radeon VII (16 GB)"],
-                ["Gemma 4 31B QAT", gemma_moe], ["kubuntu.svg"], ["amd.svg", "nvidia.svg"],
-                [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
-        Machine("server", 1198, "agx-ai (agx-h12)", ["EPYC 7302, 256 GB RAM", "RTX 3070 (8 GB)"], [gemma_moe],
-                ["ubuntu.svg", "proxmox.svg"], ["amd.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
-        Machine("server", 1452, "Big Machine", ["Threadripper PRO 3975WX", "192 GB RAM", "2 × RTX A4000 (16 GB)"],
-                ["PaperQA2 RAG"], ["ubuntu.svg"], ["amd.svg", "nvidia.svg"], [(llama, "llama.cpp", "CUDA")]),
-    ]
-    text_lines = max(len(m.lines) + len(m.models) for m in machines)
+    # Center the machines vertically in the group boxes.
+    space = HEIGHT - 24 - group_top - group_header
+    top = group_top + group_header + max(0, (space - machines_height) / 2)
     for m in machines:
         f.machine(m, top, text_lines)
 
@@ -435,6 +479,43 @@ def build() -> str:
     return f.render()
 
 
+def crop_png_height(png: pathlib.Path, height: int):
+    """Crop a non-interlaced PNG to its top height rows.
+
+    Each scanline is filtered only relative to the scanlines above it, so the rows can be cut from the bottom
+    without decoding the filters.
+    """
+    data = png.read_bytes()
+    pos = 8
+    chunks = []
+    while pos < len(data):
+        length, = struct.unpack(">I", data[pos:pos + 4])
+        chunks.append((data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]))
+        pos += 12 + length
+    ihdr = chunks[0][1]
+    width, old_height, bit_depth, color_type, _, _, interlace = struct.unpack(">IIBBBBB", ihdr)
+    if interlace:
+        raise ValueError(f"Interlaced PNGs are not supported: {png}")
+    if height >= old_height:
+        return
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color_type]
+    row_bytes = 1 + (width * channels * bit_depth + 7) // 8
+    pixels = zlib.decompress(b"".join(body for kind, body in chunks if kind == b"IDAT"))[:height * row_bytes]
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    out = [data[:8], chunk(b"IHDR", struct.pack(">II", width, height) + ihdr[8:])]
+    for kind, body in chunks[1:]:
+        if kind == b"IDAT":
+            if pixels is not None:
+                out.append(chunk(b"IDAT", zlib.compress(pixels, 9)))
+                pixels = None
+        else:
+            out.append(chunk(kind, body))
+    png.write_bytes(b"".join(out))
+
+
 def render_png(svg: pathlib.Path, png: pathlib.Path):
     """Render the SVG to PNG with headless Chrome.
 
@@ -449,16 +530,19 @@ def render_png(svg: pathlib.Path, png: pathlib.Path):
     subprocess.run(
         [
             chrome, "--headless", "--disable-gpu", "--hide-scrollbars",
-            f"--window-size={WIDTH},{HEIGHT}", f"--force-device-scale-factor={PNG_SCALE}",
+            f"--window-size={WIDTH},{HEIGHT + PNG_EXTRA_HEIGHT}", f"--force-device-scale-factor={PNG_SCALE}",
             f"--screenshot={png}", svg.as_uri(),
         ],
         check=True,
         capture_output=True,
     )
+    crop_png_height(png, HEIGHT * PNG_SCALE)
 
 
 if __name__ == "__main__":
-    OUT.write_text(build(), encoding="utf-8")
-    print(f"Wrote {OUT} ({OUT.stat().st_size / 1024:.0f} KiB)")
-    render_png(OUT, OUT_PNG)
-    print(f"Wrote {OUT_PNG} ({OUT_PNG.stat().st_size / 1024:.0f} KiB)")
+    for out, specs in ((OUT, False), (OUT_SPECS, True)):
+        out.write_text(build(specs), encoding="utf-8")
+        print(f"Wrote {out} ({out.stat().st_size / 1024:.0f} KiB)")
+        png = out.with_suffix(".png")
+        render_png(out, png)
+        print(f"Wrote {png} ({png.stat().st_size / 1024:.0f} KiB)")
