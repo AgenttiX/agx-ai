@@ -1,18 +1,27 @@
 # llama.cpp on the Radeon VII
 
-llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e, serving Gemma 4 26B-A4B QAT (`UD-Q4_K_XL`)
-entirely on the GPU, with MTP speculative decoding, q8_0 K and V caches and a context of 88064 tokens, more than the
-77824 of [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so that the same agentic workloads can be split between the two. The image is `mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14` (see
-[`docker-compose.yml`](docker-compose.yml)), and the settings are in [`preset.ini`](preset.ini). This file has the
-benchmarks behind them. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
+llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e. The image is
+`mixa3607/llama.cpp-gfx906:v0.6.0-rocm-7.14` (see [`docker-compose.yml`](docker-compose.yml), where the model is
+selected). There are two presets, one model at a time, both entirely on the GPU with MTP speculative decoding and
+q8_0 K and V caches:
+
+| Preset | Model | Context | Chat generation | Prompt processing |
+|---|---|---|---|---|
+| [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 88064 | ~114 t/s, 54-78 t/s at 36-85k tokens of context | ~1180 t/s at 16k, ~740 t/s at 85k |
+| [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` | 47104 | ~30 t/s, ~24 t/s at 30-43k tokens of context | ~240 t/s at 16k, ~210 t/s at 45k |
+
+The Gemma context is larger than the 77824 of [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so that the same agentic
+workloads can be split between the two. Qwen3.8-27B is a dense model, so it is 4 times slower than the
+mixture-of-experts Gemma; see [Qwen3.8-27B](#qwen38-27b-2026-10-09). This file has the benchmarks behind the
+settings. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
 
 ## Hardware
 
 | | |
 |---|---|
-| OS | Ubuntu 26.04.1 LTS (kernel 7.0.0-34-generic) |
+| OS | Ubuntu 26.04.1 LTS (kernel 7.0.0-38-generic) |
 | CPU | AMD Ryzen Threadripper 3970X (32 cores, 64 threads) |
-| RAM | 125.6 GiB visible to the OS, DDR4; module size and frequency not yet recorded (`sudo dmidecode -t memory`) |
+| RAM | 128 GB DDR4-2666 (8 x 16 GB Kingston 9965745-002.A00G unbuffered DIMMs, ECC), 125.6 GiB visible to the OS |
 | NPU | none |
 | GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)) |
 | GPU architecture | GCN 5.1 (Vega 20, gfx906), 60 CUs, PCIe 3.0 x16 |
@@ -242,6 +251,176 @@ Compared with only the V cache at q8_0 and ctx 77824, generation is ~7 % slower 
 slower beyond, and prompt processing 1-2 % slower. If the extra context is not needed, `cache-type-k = f16` with
 `ctx-size = 77824` is the faster choice.
 
+## Image update to v0.6.0 (2026-10-09)
+
+Both images with [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (ctx 88064, K+V q8_0, ub 512),
+on a test server, measured twice each in alternating order (v0.5.0, v0.6.0, v0.5.0, v0.6.0) with the full command
+below. Means of the two runs; generation in t/s, prompt processing in parentheses:
+
+| Test | `v0.5.0-rocm-7.14` | **`v0.6.0-rocm-7.14` (current)** | Change |
+|---|---|---|---|
+| Generation, 256 tokens (repeated text, temperature 0) | 119.0 | 124.2 | +4 % |
+| Prompt processing, 86564 tokens (full context) | (759) | (761) | 0 % |
+| Chat, 12 requests | 110.3, acceptance 68 % | 113.7, acceptance 68 % | +3 % |
+| Code context of 6.4k tokens | 97.4 (1262) | 101.1 (1260) | +4 % |
+| Code context of 16k tokens | 87.3 (1182) | 90.5 (1180) | +4 % |
+| Code context of 36.5k tokens | 75.9 (1006) | 77.9 (1008) | +3 % |
+| Code context of 70k tokens | 65.5 (802) | 66.5 (805) | +2 % |
+| Code context of 85k tokens | 51.9 (731) | 53.7 (737) | +3 % |
+| VRAM after loading / peak (amd-smi) | 16113 / 16298 MiB | 16122 / 16306 MiB | +9 MiB |
+| `llama bench` pp2048 / tg128 (K+V q8_0, ub 512) | 1463 / 90.0 | 1463 / 89.6 | 0 % |
+| `llama bench` pp2048 / tg128 at depth 16384 | 1051 / 75.3 | 1052 / 76.3 | 0 / +1 % |
+
+v0.6.0 generates 2-4 % faster with MTP at every depth (the two v0.6.0 runs agreed within 1 %, the v0.5.0 runs within
+1-3 %), with the same prompt processing and 9 MiB more VRAM. As with v0.5.0, the gain is not visible in `llama bench`,
+which has no speculative decoding. During these tests, a benchmark on the RTX 3090 ran at the same time; it uses
+other hardware but adds some CPU load.
+
+## Qwen3.8-27B (2026-10-09)
+
+[`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini): Qwen3.8-27B (dense, 64 layers, of which 16 have full attention
+with a KV cache and 48 are Gated DeltaNet layers with a fixed-size state; 262144 tokens of trained context), entirely
+on the GPU. Image v0.6.0. Like the Gemma preset, it uses the GPU only, so that the CPU stays free for the desktop and
+the agents' code (see [Entirely on the GPU](#entirely-on-the-gpu-with-a-q8_0-v-cache-2026-09-28)).
+
+### Quantization of the weights
+
+The `UD-Q4_K_M` of [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) is 16.5 GB and does not fit. The candidates are
+unsloth's smaller quants of the same repository. `llama bench`, K+V q8_0, ub 512; VRAM after loading
+the server with K+V q8_0, ub 512, MTP and the vision encoder on the CPU (amd-smi):
+
+| Quant | Size | pp2048 / tg128 | At depth 16384 | VRAM at ctx 16384 / 32768 |
+|---|---|---|---|---|
+| **`UD-IQ4_XS` (current)** | 13.26 GiB | **267 / 25.5** | **225 / 21.9** | 14683 / 15387 MiB |
+| `UD-Q3_K_XL` | 12.23 GiB | 251 / 22.4 | 219 / 19.8 | 13627 / 14331 MiB |
+| `UD-IQ3_S` | 11.20 GiB | 239 / 21.0 | 203 / 18.6 | 12573 / 13277 MiB |
+
+The largest quant is also the fastest on gfx906, so the smaller ones would only buy context (each GiB ~24k tokens)
+at the price of both quality and speed. `UD-IQ4_XS` it is.
+
+### Memory
+
+At ctx 16384 with the settings of the preset (K+V q8_0, ub 512, MTP, vision encoder on the CPU), the server uses
+14683 MiB after loading. Changes from there:
+
+| Change | VRAM |
+|---|---|
+| Context, per 1024 tokens: K+V f16 / q8_0 / q4_0 | +72 / +44 / +28 MiB |
+| K+V f16 / q4_0 instead of q8_0 at ctx 16384 | +452 / -256 MiB |
+| Vision encoder (mmproj, BF16) on the GPU (without `no-mmproj-offload`) | +1138 MiB |
+| No MTP | -813 MiB |
+| ub 256 / 1024 instead of 512 | -116 / +250 MiB |
+
+Prompt processing and generation add ~180 MiB on top of the memory after loading for a full-context prompt, and up to
+~300 MiB in the full benchmark.
+
+### MTP draft length
+
+Chat test (12 requests) and the depth test at 16k tokens, K+V q8_0, ctx 32768. Generation in t/s:
+
+| `spec-draft-n-max` | Chat | Draft acceptance (chat) | Depth 16k |
+|---|---|---|---|
+| no MTP | 25.4 | - | 21.8 |
+| 1 | 29.7 | 65 % | 23.0 |
+| **2 (current)** | **29.9** | 53 % | **27.3** |
+| 3 | 26.2 | 43 % | 24.3 |
+| 4 | 24.5 | 37 % | 21.8 |
+
+MTP with 2 drafted tokens is 18 % faster in chat and 25 % faster at 16k tokens of context than no speculative
+decoding, for 813 MiB (~18k tokens of context).
+
+### KV cache type
+
+`llama bench` at depth 16384, ub 512, t/s:
+
+| K \ V | f16 | q8_0 | q4_0 |
+|---|---|---|---|
+| f16 | 229 / **22.9** | 229 / 21.1 | 229 / 20.6 |
+| q8_0 | 229 / 21.0 | 229 / **22.2** | 229 / 20.1 |
+| q4_0 | 229 / 20.3 | 229 / 20.0 | 229 / **23.1** |
+
+(pp2048 / tg128.) Prompt processing does not depend on the cache type. Equal K and V types generate fastest; mixed
+types are 5-13 % slower, so they are not worth it. On the server (ctx 32768, MTP), generation in t/s, prompt
+processing in parentheses:
+
+| KV cache | Generation, 256 tokens | Chat | Depth 6.4k | Depth 16k | Depth 30k | Peak VRAM |
+|---|---|---|---|---|---|---|
+| f16 | ran out of memory during the benchmark | | | | | |
+| **q8_0 (current)** | 34.6 | 29.5 | 28.2 (248) | 27.4 (239) | 24.6 (225) | 15673 MiB |
+| q4_0 | 31.3 | 30.1 | 28.9 (249) | 26.9 (238) | 25.3 (226) | 15157 MiB |
+
+Quality with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py), as for Gemma above:
+132 greedy retrieval questions at 9k/17k/29k tokens of context with the top-20 token probabilities, on test
+servers without MTP at ctx 30720 (the f16 reference does not fit at a longer one), compared with the f16 cache:
+
+| Configuration | Correct | Same answer | Mean KLD | 99 % KLD | First token KLD | Top token changed | Mean \|Δ log p\| |
+|---|---|---|---|---|---|---|---|
+| f16, ub 512 (reference) | 124/132 | - | - | - | - | - | - |
+| Noise: f16, ub 256 | 124/132 | 132/132 | 0.00016 | 0.005 | 0.0007 | 0/744 | 0.0016 |
+| Noise: f16, ub 1024 | 123/132 | 131/132 | 0.00036 | 0.010 | 0.0015 | 1/740 | 0.0025 |
+| **K+V q8_0 (current)** | 123/132 | 131/132 | 0.00028 | 0.010 | 0.0012 | 1/740 | 0.0019 |
+| K+V q4_0 | 124/132 | 130/132 | 0.00269 | 0.070 | 0.0110 | 2/735 | 0.0081 |
+
+All single lookups were right in every run (96/96). The q8_0 cache is within the noise of a different ubatch size;
+q4_0 is 7-17 times above it (q4_0 is above the noise for this model on the RTX 3090 too, see
+[`../llama-cpp-agx-z2e/README.md`](../llama-cpp-agx-z2e/README.md)), although its retrieval accuracy is unchanged.
+Qwen3.8's distributions are much more stable than Gemma 4 26B-A4B's (noise KLD 0.0002-0.0004 vs ~0.01).
+
+The cache is therefore q8_0: with it, the context can be ~47k tokens, compared with ~28k with f16. q4_0 would allow
+~63k tokens at the same speed, if the small quality loss is acceptable.
+
+### ubatch size
+
+`llama bench` pp2048, K+V q8_0, t/s:
+
+| ub | 128 | 256 | **512 (current)** | 1024 | 2048 |
+|---|---|---|---|---|---|
+| Depth 0 | 209 | 250 | **267** | 279 | 281 |
+| Depth 16384 | 184 | 217 | **229** | 238 | 239 |
+
+1024 is 4 % faster than 512 but needs 250 MiB more, i.e. ~6k tokens less context.
+
+### Vision encoder on the CPU (`no-mmproj-offload`)
+
+The vision encoder takes 1138 MiB on the GPU, i.e. ~26k tokens of context. On the CPU, an image takes a few seconds
+longer to process. The `image` test of [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py)
+(a 1280x960 PNG, 1261 prompt tokens with the image, mean of 3):
+
+| Vision encoder | Prompt processing incl. the image | Whole request (32 generated tokens) |
+|---|---|---|
+| GPU (ctx 16384) | 6.7 s | 8.0 s |
+| **CPU (current)** | 11.0 s | 12.4 s |
+
+So the CPU costs ~4 s per image (with the CPU otherwise idle), which is worth the 26k tokens of context here.
+
+### Context size
+
+Stress test: load, then one prompt of ctx-size - 1500 tokens (MTP on, as served), peak from amd-smi:
+
+| ctx-size | VRAM after loading | Prompt processing | Peak VRAM |
+|---|---|---|---|
+| 45056 | 15915 MiB | 213 t/s | 16095 MiB |
+| **47104 (current)** | 16003 MiB | 211 t/s | 16183 MiB |
+| 49152 | 16091 MiB | 209 t/s | 16272 MiB |
+
+In the full benchmark (below), ctx 49152 peaked at 16346 MiB, only 22 MiB below the total, so the context is
+47104, whose full benchmark peaked at 16298 MiB, the same as the Gemma preset. Both ran without errors.
+
+The production configuration on a test server, measured with the full command below (prompt 45604 tokens, depth up to
+43k):
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens (repeated text, temperature 0) | 34.7 t/s, draft acceptance 71 % |
+| Prompt processing, 45604 tokens (full context) | 211 t/s |
+| Chat, 12 requests | 29.9 t/s (25.5-35.1), draft acceptance 53 % |
+| Code context of 6.4k / 16k / 30k / 43k tokens | 28.1 / 27.3 / 24.3 / 24.5 t/s (prompt 249 / 240 / 225 / 212 t/s) |
+| Image, 1280x960 | 11.2 s prompt processing |
+| Peak VRAM | 16298 MiB |
+
+For comparison, the same model in `UD-Q4_K_M` on the RTX 3090 of [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)
+generates ~49 t/s in the chat test and processes prompts at ~1100 t/s.
+
 ## Commands
 
 ```sh
@@ -249,6 +428,9 @@ cd ../benchmark
 # Serving speed: generation, two full-context prompts (ctx-size - 1500), chat, depth
 ./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 86564 --repeat 2 --depth 6400 16000 36500 70000 85000 --label "..."
+# The same for Qwen3.8 (preset-qwen3.8-27b.ini), with the image test
+./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    --tests generation prompt chat depth image --prompt-tokens 45604 --repeat 2 --depth 6400 16000 30000 43000 --label "..."
 # Output quality compared with a reference run (on a test server; see ../benchmark/README.md)
 ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." \
     --reference "Radeon VII ctx 77824 f16 KV, n-cpu-moe 1, ub 512 (reference)"
@@ -260,8 +442,8 @@ cd ../benchmark
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384
 # Serving speed with another image or a preset variant (stop the production container first)
 docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
-# (for a preset variant, edit a copy of preset.ini and pass it instead)
-./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset.ini \
+# (for a preset variant, edit a copy of the preset and pass it instead)
+./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
     ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --depth 6400 16000 36500 70000 --label "..."

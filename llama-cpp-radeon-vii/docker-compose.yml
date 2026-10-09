@@ -8,7 +8,7 @@ services:
     # Image 2)
     # This provides a newer ROCm version.
     # https://github.com/mixa3607/ML-gfx906
-    image: mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14
+    image: mixa3607/llama.cpp-gfx906:v0.6.0-rocm-7.14
     container_name: llama-cpp-radeon-vii
     entrypoint: ["/app/llama-server"]
     # command: [
@@ -31,7 +31,9 @@ services:
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - ../llama-cpp-agx-ai/config.ini:/etc/llama.cpp/config.ini:ro
-      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+      # Select the LLM model here
+      - ./preset-gemma-4-26b-a4b-qat.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-qwen3.8-27b.ini:/etc/llama.cpp/preset.ini:ro
     restart: unless-stopped
     # security_opt:
     #   - seccomp:unconfined
