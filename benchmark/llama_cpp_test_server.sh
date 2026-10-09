@@ -7,7 +7,8 @@
 #   CONFIG    server config.ini (default ../llama-cpp-agx-ai/config.ini)
 #   ENV_FILE  env file with LLAMA_API_KEY (default: none)
 #   PORT      host port (default 9933)
-# Extra environment for the container: DOCKER_ARGS="-e GGML_VK_VISIBLE_DEVICES=0 ..."
+# Extra environment for the container: DOCKER_ARGS="-e GGML_VK_VISIBLE_DEVICES=0 ..." (for a CUDA image: "--gpus all")
+# Container name: NAME=... (default llama-test), e.g. to run test servers on two GPUs at the same time.
 # Stop the production container first if the GPU memory is needed, and remove this one afterwards:
 #   docker rm -f llama-test
 #
@@ -24,8 +25,9 @@ preset=$(realpath "$2")
 config=$(realpath "${3:-$here/../llama-cpp-agx-ai/config.ini}")
 env_file=${4:-}
 port=${5:-9933}
+name=${NAME:-llama-test}
 
-args=(--name llama-test -p "$port:9931" --device /dev/dri --group-add video
+args=(--name "$name" -p "$port:9931" --device /dev/dri --group-add video
       -v "$HOME/.cache/huggingface/hub:/root/.cache/huggingface/hub"
       -v "$config:/etc/llama.cpp/config.ini:ro" -v "$preset:/etc/llama.cpp/preset.ini:ro")
 [[ -e /dev/kfd ]] && args+=(--device /dev/kfd)  # ROCm
@@ -33,18 +35,22 @@ args=(--name llama-test -p "$port:9931" --device /dev/dri --group-add video
 # shellcheck disable=SC2206
 args+=(${DOCKER_ARGS:-})
 
-docker rm -f llama-test >/dev/null 2>&1 || true
+docker rm -f "$name" >/dev/null 2>&1 || true
 docker run -d "${args[@]}" --entrypoint /app/llama-server "$image" >/dev/null
 for _ in $(seq 1 100); do
     sleep 3
-    if docker logs llama-test 2>&1 | grep -q 'llama_server: model loaded'; then
+    if docker logs "$name" 2>&1 | grep -q 'llama_server: model loaded'; then
         echo "loaded on port $port"
         if command -v amd-smi >/dev/null; then amd-smi metric -m | grep -E '^GPU|USED_VRAM:' | grep -v VISIBLE; fi
-        if command -v nvidia-smi >/dev/null; then nvidia-smi --query-gpu=name,memory.used --format=csv,noheader; fi
+        if command -v nvidia-smi >/dev/null; then
+            nvidia-smi --query-gpu=name,memory.used --format=csv,noheader
+            nvidia-smi --query-compute-apps=process_name,used_memory --format=csv,noheader | grep llama || true
+        fi
         exit 0
     fi
-    docker ps -q -f name=llama-test | grep -q . || break
+    docker ps -q -f "name=^$name\$" | grep -q . || break
+    docker logs "$name" 2>&1 | grep -q 'exited with status' && break  # the router's model instance failed to load
 done
 echo "FAILED to load:" >&2
-docker logs llama-test 2>&1 | grep -iE 'error|fail|out of memory|exception' | tail -5 >&2
+docker logs "$name" 2>&1 | grep -iE 'error|fail|out of memory|exception' | tail -5 >&2
 exit 1

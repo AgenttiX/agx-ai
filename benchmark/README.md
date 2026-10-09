@@ -30,7 +30,8 @@ What it measures (LLM speeds come from the server's own `timings`, so they exclu
 | Embeddings (`--embed-texts` x `--embed-tokens`) | tokens/s over the wall time, single-text latency, dimension |
 | Chat (`--tests chat`): six varied real requests, `--repeat` times each, up to `--chat-n-predict` tokens | mean, median and range of generation tokens/s, mean draft acceptance |
 | Depth (`--tests depth`): about `--depth` tokens of real Python source as context and a question, three times | mean prompt processing and generation tokens/s at that depth, draft acceptance |
-| GPU memory (if `nvidia-smi` or `amd-smi` is available on the client machine) | peak MiB per GPU during the run |
+| Image (`--tests image`): a chat request with a synthetic `--image-size` PNG (default 1280x960), `--repeat` times | prompt processing time including the vision encoder (mmproj), and the wall time of the request; shows the cost of `no-mmproj-offload` |
+| GPU memory (if `nvidia-smi` or `amd-smi` is available on the client machine) | peak MiB per GPU during the run; with `nvidia-smi` also the peak of the llama-server processes alone, which excludes a desktop session on the same GPU |
 
 The chat and embedding models are picked from `/v1/models` (first loaded non-embedding model, first loaded model
 with "embed" in its id) unless given with `--model` and `--embedding-model`. The effective `llama-server`
@@ -79,10 +80,12 @@ model's plain speed.
 Starts a llama-server router named `llama-test` on port 9933 from any image with a given preset and `config.ini`,
 mounted like in the compose files, and waits until the model has loaded. It is for comparing the *serving*
 speed of images, backends or preset variants (e.g. `spec-draft-n-max`) with `llama_cpp_bench_http.py` without
-editing the production files. Stop the production container first if the GPU memory is needed.
+editing the production files. Stop the production container first if the GPU memory is needed. For a CUDA image,
+pass `DOCKER_ARGS="--gpus all"`; to run test servers on two GPUs at the same time, give the second one another
+container name and port (`NAME=llama-test-cuda ... 9934`).
 
 ```sh
-./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset.ini \
+./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
     ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --label "Vulkan"

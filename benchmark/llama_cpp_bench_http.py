@@ -37,6 +37,7 @@ unloaded models. Turn it off there (``background_health_checks: false``) or stop
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -45,6 +46,7 @@ import platform
 import shutil
 import socket
 import statistics
+import struct
 import subprocess
 import sys
 import sysconfig
@@ -52,6 +54,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Self
@@ -141,6 +144,21 @@ class Server:
         }
         return self.request("/v1/chat/completions", payload)
 
+    def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
+        """Chat completion with one PNG image (for models with a vision encoder, mmproj)."""
+        url = "data:image/png;base64," + base64.b64encode(png).decode()
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": url}},
+                {"type": "text", "text": text},
+            ]}],
+            "max_tokens": max_tokens,
+            "seed": 42,
+            "cache_prompt": False,
+        }
+        return self.request("/v1/chat/completions", payload)
+
     def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
         return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float"})
 
@@ -175,7 +193,8 @@ class GpuSampler:
     """Samples GPU memory use with nvidia-smi and amd-smi in a background thread; records the peak per GPU.
 
     GPUs of both vendors are listed if both tools are installed. amd-smi takes about a second per query, so its
-    peaks are coarser.
+    peaks are coarser. With nvidia-smi, the peak of the memory used by llama-server processes alone is recorded too
+    (``process_peak``), which excludes other programs on the GPU, such as a desktop session.
     """
 
     def __init__(self, interval: float = 0.5) -> None:
@@ -183,6 +202,7 @@ class GpuSampler:
         self.available = bool(self.tools)
         self.interval = interval
         self.peak: list[int] = []
+        self.process_peak: int | None = None
         self.names: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -213,6 +233,16 @@ class GpuSampler:
     def _query(self) -> list[int]:
         return [m for tool in self.tools for m in self._query_tool(tool)]
 
+    def _query_processes(self) -> int | None:
+        """MiB used by llama-server processes on all NVIDIA GPUs (None without nvidia-smi or if it fails)."""
+        if "nvidia-smi" not in self.tools:
+            return None
+        out = self._run(["nvidia-smi", "--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"])
+        try:
+            return sum(int(line.rsplit(",", 1)[1]) for line in out.splitlines() if "llama" in line)
+        except (IndexError, ValueError):
+            return None
+
     def __enter__(self) -> Self:
         if not self.available:
             return self
@@ -221,12 +251,16 @@ class GpuSampler:
             names = self._names_tool(tool)
             self.names += names if len(names) == n else [f"{tool} GPU {i}" for i in range(n)]
         self.peak = self._query()
+        self.process_peak = self._query_processes()
 
         def loop() -> None:
             while not self._stop.is_set():
                 now = self._query()
                 if len(now) == len(self.peak):  # skip samples where a tool failed
                     self.peak = [max(a, b) for a, b in zip(self.peak, now, strict=True)]
+                proc = self._query_processes()
+                if proc is not None:
+                    self.process_peak = max(self.process_peak or 0, proc)
                 time.sleep(self.interval)
 
         self._thread = threading.Thread(target=loop, daemon=True)
@@ -307,6 +341,51 @@ def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[
     if acc:
         out["draft_acceptance_mean"] = round(statistics.mean(acc), 1)
     return out
+
+
+def synthetic_png(width: int, height: int, seed: int) -> bytes:
+    """A deterministic RGB test image (colour gradients and a grid of shapes), encoded as PNG with the standard library."""
+    rows = []
+    for y in range(height):
+        row = bytearray([0])  # filter type 0 for each scanline
+        for x in range(width):
+            cell = ((x // 64) + (y // 64) + seed) % 7
+            inside = (x % 64 - 32) ** 2 + (y % 64 - 32) ** 2 < (8 + 3 * cell) ** 2
+            r = (x * 255 // width + 40 * cell) % 256
+            g = (y * 255 // height) if not inside else 255 - 30 * cell
+            b = (128 + 60 * cell) % 256 if inside else (x ^ y) & 0xFF
+            row += bytes((r, g, b))
+        rows.append(bytes(row))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b"")
+
+
+def test_image(server: Server, model: str, size: tuple[int, int], repeat: int) -> dict[str, Any]:
+    """Time to process a prompt with one image (vision encoder + prompt) and the wall time of the whole request.
+
+    Shows the cost of running the vision encoder on the CPU (``no-mmproj-offload``). A different image per request,
+    so that no cache is hit.
+    """
+    runs = []
+    for i in range(repeat):
+        png = synthetic_png(*size, seed=i)
+        start = time.perf_counter()
+        resp = server.chat_image(model, png, "Describe this image in one sentence.", 32)
+        wall = time.perf_counter() - start
+        t = resp["timings"]
+        runs.append({"prompt_tokens": t.get("prompt_n"), "prompt_ms": round(t.get("prompt_ms") or 0),
+                     "wall_s": round(wall, 2)})
+    return {
+        "image_size": f"{size[0]}x{size[1]}",
+        "prompt_tokens": runs[0]["prompt_tokens"],
+        "prompt_ms_mean": round(statistics.mean(r["prompt_ms"] for r in runs)),
+        "wall_s_mean": round(statistics.mean(r["wall_s"] for r in runs), 2),
+        "runs": runs,
+    }
 
 
 def test_concurrency(
@@ -433,7 +512,7 @@ def server_args(models: list[dict[str, Any]], model: str) -> list[str] | None:
     return None
 
 
-ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth"]
+ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth", "image"]
 DEFAULT_TESTS = ["generation", "prompt", "concurrency", "embedding"]
 
 
@@ -459,6 +538,8 @@ def main() -> int:
                         help="maximum tokens per request in the chat and depth tests (default %(default)s)")
     parser.add_argument("--depth", type=int, nargs="+", default=[16000],
                         help="context lengths in tokens for the depth test (default %(default)s)")
+    parser.add_argument("--image-size", default="1280x960",
+                        help="width x height of the test image of the image test (default %(default)s)")
     parser.add_argument("--repeat", type=int, default=3, help="repetitions of the single-request tests (the best is reported) and of the chat prompts")
     parser.add_argument("--timeout", type=float, default=900.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", default="", help="free-text label stored with the result, e.g. what was changed")
@@ -517,6 +598,10 @@ def main() -> int:
             for d in args.depth:
                 print(f"depth: {len(DEPTH_QUESTIONS)} x {d}-token code context, up to {args.chat_n_predict} tokens...", file=sys.stderr)
                 result["depth"].append(test_depth(server, chat_model, d, args.chat_n_predict))
+        if "image" in args.tests:
+            size = tuple(int(v) for v in args.image_size.lower().split("x"))
+            print(f"image: {args.image_size} image x{args.repeat}...", file=sys.stderr)
+            result["image"] = test_image(server, chat_model, size, args.repeat)  # type: ignore[arg-type]
         result["concurrency"] = []
         mixed_embedding = None
         if args.mixed and embedding_model:
@@ -534,6 +619,8 @@ def main() -> int:
             result["embeddings"] = test_embeddings(server, embedding_model, args.embed_texts, args.embed_tokens)
     if gpu.available:
         result["gpu"] = {"names": gpu.names, "peak_memory_used_mib": gpu.peak}
+        if gpu.process_peak is not None:
+            result["gpu"]["peak_llama_server_memory_mib"] = gpu.process_peak
 
     output = args.output or Path(__file__).resolve().parent / "results" / f"{result['host'].split('.')[0]}.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -568,8 +655,13 @@ def main() -> int:
         e = result["embeddings"]
         print(f"| Embeddings `{embedding_model}`, {e['texts']} x {e['tokens_each']} tokens | **{e['tokens_per_s']} tokens/s**, "
               f"{e['dimension']} dims, single text {e['single_text_s']} s |")
+    if im := result.get("image"):
+        print(f"| Image {im['image_size']} ({im['prompt_tokens']} prompt tokens), {len(im['runs'])} requests | "
+              f"prompt **{im['prompt_ms_mean']} ms**, whole request {im['wall_s_mean']} s |")
     if gpu.available:
         print(f"| Peak GPU memory | {', '.join(f'{n}: {m} MiB' for n, m in zip(gpu.names, gpu.peak, strict=False))} |")
+        if gpu.process_peak is not None:
+            print(f"| Peak GPU memory of llama-server (NVIDIA) | {gpu.process_peak} MiB |")
     print(f"\nAppended to `{output}`.")
     return 0
 
