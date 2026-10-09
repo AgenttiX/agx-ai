@@ -157,8 +157,8 @@
 <circle cx="1000" cy="665.5" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
 <text x="925" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
 <text x="925" y="727.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (62 | 971)</tspan></text>
-<text x="925" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (125 | 1265)</tspan></text>
+<text x="925" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
+<text x="925" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>
 <rect x="807.6" y="783.5" width="234.8" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="813.6" y="787.5" width="22" height="22"/>
 <text x="841.6" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>

@@ -163,8 +163,8 @@
 <text x="925" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper 3970X, 128 GB RAM</text>
 <text x="925" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
 <text x="925" y="725" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (62 | 971)</tspan></text>
-<text x="925" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (125 | 1265)</tspan></text>
+<text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
+<text x="925" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>
 <rect x="807.6" y="799" width="234.8" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="813.6" y="803" width="22" height="22"/>
 <text x="841.6" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>

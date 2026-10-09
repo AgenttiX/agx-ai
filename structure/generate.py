@@ -357,9 +357,9 @@ def build(specs: bool) -> str:
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
-                # llama-cpp-agx-z2e/preset-gemma-4-31b-qat.ini: 16k-token prompt (measured with ub 512, now 1024);
-                # llama-cpp-radeon-vii/README.md: 6.4k-token prompt (depth test)
-                [("Gemma 4 31B QAT", "62", "971"), (gemma_moe, "125", "1265")], ["kubuntu.svg"],
+                # llama-cpp-agx-z2e/README.md and llama-cpp-radeon-vii/README.md (image v0.6.0):
+                # 6.4k-token prompt (depth test)
+                [("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
         Machine("server", 1198, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
                 # llama-cpp-agx-ai/README.md; benchmark/results/agx-ai.jsonl: 36.5k-token prompt (depth test)
