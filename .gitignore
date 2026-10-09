@@ -22,3 +22,4 @@ ssh/config/private.conf
 benchmark/scratch
 benchmark/results/dx2-*.jsonl
 benchmark/results/vxl-*.jsonl
+benchmark/results/full

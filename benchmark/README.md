@@ -109,7 +109,11 @@ decoding (temperature 0), so runs are repeatable:
     --label "V q8_0" --reference "f16 KV"
 ```
 
-Results, including every answer and output, go to `results/<hostname>-quality.jsonl`. Greedy outputs diverge after any
+Each run goes to two files: `results/full/<hostname>-quality.jsonl` has everything, including the questions, the
+generated outputs and the top token probabilities of every answer token (several MB per run). It is not in Git
+(`.gitignore`), and `--reference` reads the reference run from it, so comparisons need the full file of the same
+computer. `results/<hostname>-quality.jsonl` (in Git) has the same runs without the questions, outputs and token
+probabilities: the answers, the scores and the comparison with the reference. Greedy outputs diverge after any
 change in the floating-point operations, so the agreement numbers only mean something next to a noise floor: a run
 with a setting that is lossless in principle (another `ubatch-size`, or `n-cpu-moe`). The agreement test does not use
 the prompt cache, as a cache hit changes the batching and thus the output; the same configuration then reproduces

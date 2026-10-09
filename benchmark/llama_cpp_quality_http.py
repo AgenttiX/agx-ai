@@ -34,8 +34,10 @@ Examples:
     ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
         --label "V q8_0" --reference "f16 KV (reference)"
 
-Results, including all answers and outputs, are appended to ``results/<hostname>-quality.jsonl``; ``--reference``
-is the label of an earlier run in that file (the latest with that label is used).
+Each run is appended to two files: ``results/full/<hostname>-quality.jsonl`` with everything, including the
+questions, the generated outputs and the token probabilities (several MB per run, not in Git), and
+``results/<hostname>-quality.jsonl`` with the summaries, the comparison and the answers only. ``--reference`` is the
+label of an earlier run in the full file (the latest with that label is used).
 """
 
 from __future__ import annotations
@@ -259,6 +261,19 @@ def compare(result: dict[str, Any], ref: dict[str, Any]) -> dict[str, Any]:
     return cmp
 
 
+def compact(result: dict[str, Any]) -> dict[str, Any]:
+    """The result without the bulky parts (questions, token probabilities and generated texts), for the file in Git."""
+    out = dict(result)
+    if "retrieval" in out:
+        out["retrieval"] = [
+            {**d, "answers": [{k: a[k] for k in ("kind", "expected", "answer", "correct")} for a in d["answers"]]}
+            for d in out["retrieval"]
+        ]
+    if "agreement" in out:
+        out["agreement"] = [{"id": g["id"], "length": len(g["reasoning"] + "\n" + g["content"])} for g in out["agreement"]]
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", default="http://localhost:9931", help="llama-server base URL (default %(default)s)")
@@ -279,7 +294,9 @@ def main() -> int:
     parser.add_argument("--reference", help="label of an earlier run in the output file to compare with")
     parser.add_argument("--timeout", type=float, default=1800.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", required=True, help="label of this run (used by --reference)")
-    parser.add_argument("--output", type=Path, help="JSON lines file (default results/<hostname>-quality.jsonl)")
+    parser.add_argument("--output", type=Path,
+                        help="JSON lines file for the compact results (default results/<hostname>-quality.jsonl); "
+                             "the full results go to full/ in the same directory")
     parser.add_argument("--hash-hostname", action="store_true",
                         help="store the hostname as its SHA-256 hash in the result and the default output file name")
     parser.add_argument("--hostname", default=os.environ.get("LLAMA_BENCH_HOSTNAME"),
@@ -294,12 +311,13 @@ def main() -> int:
         raise SystemExit("No chat model found; pass --model")
     props = server.props(model)
     output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-quality.jsonl"
+    full_output = output.parent / "full" / output.name
     ref = None
     if args.reference:
-        runs = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()] if output.exists() else []
+        runs = [json.loads(line) for line in full_output.read_text(encoding="utf-8").splitlines()] if full_output.exists() else []
         ref = next((r for r in reversed(runs) if r["label"] == args.reference), None)
         if ref is None:
-            raise SystemExit(f"No run labelled {args.reference!r} in {output}")
+            raise SystemExit(f"No run labelled {args.reference!r} in {full_output}")
 
     result: dict[str, Any] = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -318,9 +336,11 @@ def main() -> int:
         result["agreement"] = test_agreement(server, model, args.agreement_depth, args.agreement_n_predict)
     if ref:
         result["comparison"] = compare(result, ref)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("a", encoding="utf-8") as f:
+    full_output.parent.mkdir(parents=True, exist_ok=True)
+    with full_output.open("a", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
+    with output.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(compact(result), ensure_ascii=False) + "\n")
 
     print(f"\n## {result['date']}  {result['host']}  {args.label}")
     print(f"Model: `{model}` (build {result['build_info']})\n")
@@ -342,7 +362,7 @@ def main() -> int:
                   f"first token {lp['first_token_mean_kld']}; top-token flips {lp['top_token_flips']}; "
                   f"mean |Δ log p| of the reference token {lp['mean_abs_delta_logprob']}; "
                   f"mean KLD per context {lp['mean_kld_per_depth']}")
-    print(f"\nAppended to `{output}`.")
+    print(f"\nAppended to `{output}` and `{full_output}`.")
     return 0
 
 
