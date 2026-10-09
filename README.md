@@ -11,7 +11,8 @@
 - [llama.cpp](https://llama-cpp.com/)
   - For running local models
   - [RTX 3070 (8 GB) + EPYC config of agx-ai, with the GPU power limit and measurements](llama-cpp-agx-ai/README.md)
-  - [Custom container for Radeon VII with ROCm](llama-cpp-radeon-vii/docker-compose.yml)
+  - [RTX 3090 config of agx-z2e, with KV cache, context size and MTP measurements](llama-cpp-agx-z2e/README.md)
+  - [Custom container for Radeon VII with ROCm, with measurements](llama-cpp-radeon-vii/README.md)
   - [Dual RTX A4000 config for PaperQA2 RAG](llama-cpp-big-machine/docker-compose.yml)
   - [NVIDIA T550 Laptop GPU (4 GB) config for Docker Desktop on Windows](llama-cpp-t550/README.md)
   - [Scripts for running llama.cpp natively on Windows](llama-cpp-windows/README.md)
