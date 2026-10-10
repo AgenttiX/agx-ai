@@ -109,12 +109,14 @@ show_missing = true
 [tool.pyrefly]
 project-includes = [
     "benchmark",
+    "hostname.py",
     "open-webui",
     "structure",
     "vllm-radeon-vii"
 ]
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [
+    ".",
     "benchmark",
     "open-webui/export"
 ]

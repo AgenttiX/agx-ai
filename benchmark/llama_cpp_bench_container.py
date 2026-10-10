@@ -183,8 +183,11 @@ def main() -> int:
     ]
     if loaded:
         unload_models(server, loaded)
-    host = host_name(args.hash_hostname, args.hostname).split(".")[0]
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{host}-llama-bench.jsonl"
+    # The hostname is only used in the default output file name.
+    output = args.output or (
+        Path(__file__).resolve().parent / "results"
+        / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-llama-bench.jsonl"
+    )
     try:
         return run_bench(docker_prefix(args), model_path, args.bench_args, args.label, args.image, output)
     finally:
