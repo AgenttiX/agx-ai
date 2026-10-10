@@ -6,6 +6,9 @@ abbreviated as `agx` in the hostnames.
 
 ## General instructions
 - Before starting your work, run `git pull --rebase` to ensure you have the latest changes.
+- Use `./hostname.py` to get the hostname of this computer to be used in the repository.
+  If it returns "censored", don't write the hostname in this repository.
+  Instead, use its hardware model in place of the hostname for e.g. the benchmark files.
 - Committing directly to main is OK in this project.
 
 ## Creating a new LLM backend configuration
