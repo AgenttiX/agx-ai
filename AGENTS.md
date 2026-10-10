@@ -20,6 +20,7 @@ abbreviated as `agx` in the hostnames.
 - Use the scripts in `./benchmark/` for benchmarking. You may update the scripts as needed.
 
 ## Commands
-- Lint: `uv run ruff check`
-- Type checking: `uv run pyrefly check`
-- Type coverage checking: `pyrefly coverage check`
+- Run all lints and type checks: `./lint.sh`
+  - This runs `ruff check`, `pyrefly check` and `pyrefly coverage check`.
+    All checks are run even if some of them fail. The exit code is 0 if all checks pass,
+    the exit code of the failed check if exactly one check fails, and 100 if multiple checks fail.
