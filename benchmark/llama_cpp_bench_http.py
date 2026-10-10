@@ -163,6 +163,123 @@ class Server:
         return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float"})
 
 
+class VllmServer(Server):
+    """The same interface for a vLLM server, which has no ``timings``, ``/props`` or ``cache_prompt``.
+
+    Requests are streamed, and the timings are measured on the client: prompt processing is the prompt length over the
+    time to the first streamed token, and generation is the remaining tokens over the time from the first to the
+    last one (both include the HTTP overhead, which is negligible on localhost). Every request gets its own
+    ``cache_salt``, so that the prefix cache is not hit, like ``cache_prompt: false`` on llama-server. The
+    draft acceptance of speculative decoding comes from the difference of the counters in ``/metrics`` before and
+    after the request, so it is only exact for one request at a time.
+    """
+
+    def text(self, path: str) -> str:
+        req = urllib.request.Request(self.url + path)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            return resp.read().decode()
+
+    def props(self, model: str) -> dict[str, Any]:
+        info = next((m for m in self.models() if m["id"] == model), {})
+        return {
+            "build_info": "vLLM " + json.loads(self.text("/version")).get("version", "?"),
+            "model_path": info.get("root"),
+            "max_model_len": info.get("max_model_len"),
+            "total_slots": 1,
+        }
+
+    def tokenize(self, model: str, text: str) -> list[int]:
+        return self.request("/tokenize", {"model": model, "prompt": text, "add_special_tokens": False})["tokens"]
+
+    def detokenize(self, model: str, tokens: list[int]) -> str:
+        return self.request("/detokenize", {"model": model, "tokens": tokens})["prompt"]
+
+    def spec_counters(self) -> tuple[float, float]:
+        draft = accepted = 0.0
+        for line in self.text("/metrics").splitlines():
+            if line.startswith("vllm:spec_decode_num_draft_tokens_total"):
+                draft += float(line.rsplit(" ", 1)[1])
+            elif line.startswith("vllm:spec_decode_num_accepted_tokens_total"):
+                accepted += float(line.rsplit(" ", 1)[1])
+        return draft, accepted
+
+    def stream(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = {**payload, "stream": True, "stream_options": {"include_usage": True},
+                   "cache_salt": os.urandom(8).hex()}
+        draft0, accepted0 = self.spec_counters()
+        req = urllib.request.Request(self.url + path, data=json.dumps(payload).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        start = time.perf_counter()
+        first = last = None
+        usage: dict[str, Any] = {}
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for raw in resp:
+                    line = raw.decode().strip()
+                    if not line.startswith("data:") or line == "data: [DONE]":
+                        continue
+                    chunk = json.loads(line[5:])
+                    usage = chunk.get("usage") or usage
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta") or {}
+                        if choice.get("text") or delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
+                            last = time.perf_counter()
+                            first = first or last
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f"HTTP {e.code} for {path}: {e.read().decode(errors='replace')[:300]}") from e
+        prompt_n = usage.get("prompt_tokens", 0)
+        predicted_n = usage.get("completion_tokens", 0)
+        first = first or time.perf_counter()
+        last = last or first
+        draft1, accepted1 = self.spec_counters()
+        timings = {
+            "prompt_n": prompt_n,
+            "prompt_ms": 1000 * (first - start),
+            "prompt_per_second": prompt_n / (first - start),
+            "predicted_n": predicted_n,
+            "predicted_per_second": (predicted_n - 1) / (last - first) if predicted_n > 1 and last > first else 0.0,
+        }
+        if draft1 > draft0:
+            timings["draft_n"] = draft1 - draft0
+            timings["draft_n_accepted"] = accepted1 - accepted0
+        return {"timings": timings, "usage": usage}
+
+    def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
+        payload = {"model": model, "prompt": prompt, "max_tokens": n_predict, "temperature": 0.0, "ignore_eos": True}
+        return self.stream("/v1/completions", payload)
+
+    def chat(self, model: str, content: str, max_tokens: int) -> dict[str, Any]:
+        payload = {"model": model, "messages": [{"role": "user", "content": content}], "max_tokens": max_tokens,
+                   "seed": 42}
+        return self.stream("/v1/chat/completions", payload)
+
+    def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
+        url = "data:image/png;base64," + base64.b64encode(png).decode()
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": url}},
+                {"type": "text", "text": text},
+            ]}],
+            "max_tokens": max_tokens,
+            "seed": 42,
+        }
+        return self.stream("/v1/chat/completions", payload)
+
+
+def is_vllm(url: str, timeout: float) -> bool:
+    """vLLM answers ``/version`` with its version; llama-server does not have that endpoint."""
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/version", timeout=timeout) as resp:
+            return "version" in json.loads(resp.read())
+    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+        return False
+
+
 def build_prompt(server: Server, model: str, n_tokens: int, salt: str = "") -> tuple[str, int]:
     """A prompt of about n_tokens tokens (measured with the server's tokenizer), unique per salt."""
     text = salt + PARAGRAPH * (n_tokens // 20 + 1)
@@ -543,6 +660,9 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=3, help="repetitions of the single-request tests (the best is reported) and of the chat prompts")
     parser.add_argument("--timeout", type=float, default=900.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", default="", help="free-text label stored with the result, e.g. what was changed")
+    parser.add_argument("--server-config", type=Path,
+                        help="configuration file of the server to store with the result, as vLLM does not report its "
+                             "arguments (e.g. the YAML file given to vllm serve --config)")
     parser.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<hostname>.jsonl)")
     parser.add_argument("--hash-hostname", action="store_true",
                         help="store the hostname as its SHA-256 hash in the result and the default output file name")
@@ -551,7 +671,7 @@ def main() -> int:
     args = parser.parse_args()
 
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
-    server = Server(args.url, api_key, args.timeout)
+    server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
     models = server.models()
     chat_model, embedding_model = pick_models(models, args.model, args.embedding_model)
     if chat_model is None:
@@ -575,6 +695,8 @@ def main() -> int:
         "chat_model": chat_model,
         "chat_model_path": props.get("model_path"),
         "chat_server_args": server_args(models, chat_model),
+        "chat_server_config": args.server_config.read_text(encoding="utf-8") if args.server_config else None,
+        "max_model_len": props.get("max_model_len"),
         "embedding_model": embedding_model,
         "embedding_server_args": server_args(models, embedding_model) if embedding_model else None,
     }

@@ -1,0 +1,48 @@
+services:
+  vllm-radeon-vii:
+    # aiinfos/vllm-gfx906-mobydick (vLLM v0.30.0 for gfx906 with ROCm 7.14 and custom kernels,
+    # https://github.com/ai-infos/vllm-gfx906-mobydick) with the fixes of vllm-gfx906.patch, see Dockerfile.
+    # Built by ../.github/workflows/deploy-docker-vllm-radeon-vii.yml. Locally: docker build -t vllm-radeon-vii:local .
+    image: ghcr.io/agenttix/agx-ai/vllm-gfx906:latest
+    container_name: vllm-radeon-vii
+    # The API key is the one of the llama.cpp server (LLAMA_API_KEY in llama-cpp.env), so that clients work with both.
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    env_file:
+      - ../llama-cpp-radeon-vii/llama-cpp.env
+    environment:
+      - HF_HUB_OFFLINE=1
+      # Frees ~0.8 GiB of fragmented allocator memory for the KV cache (see README.md).
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # The V2 model runner crashes with KV offloading (memory fault in _gather_block_tables_kernel).
+      - VLLM_USE_V2_MODEL_RUNNER=0
+      # Keep the Triton and Inductor caches, so that a restart takes ~2 min instead of ~6 min.
+      - TRITON_CACHE_DIR=/root/.cache/vllm/triton
+      - TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/inductor
+    group_add:
+      - video
+    ipc: host
+    # The same port as llama-cpp-radeon-vii. Only one of the two fits on the GPU at a time.
+    ports:
+      - "9932:8000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      # Checkpoints built locally by repack_gemma4_qat.py
+      - /home/mika/.cache/vllm-models:/models:ro
+      - vllm-cache:/root/.cache/vllm
+      # Select the LLM model here
+      - ./config-gemma-4-26b-a4b-qat.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-qwen3.8-27b.yaml:/etc/vllm/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start compiles kernels for ~6 min.
+      start_period: 15m
+
+volumes:
+  vllm-cache:

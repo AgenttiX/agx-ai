@@ -1,0 +1,32 @@
+# vllm serve --config for Gemma 4 26B-A4B QAT on the Radeon VII. Benchmarks: README.md
+# Built with repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF (int4, group size 32),
+# embedding and lm_head int4 (round-to-nearest, group size 32).
+model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct
+served-model-name: google/gemma-4-26b-a4b-qat
+# gfx906 has no native bf16.
+dtype: float16
+# Do not load the vision tower (1.1 GiB in fp16), which would leave no room for the KV cache.
+language-model-only: true
+# The maximum with the KV cache below. Peak 16263 MiB of 16368 in the stress test (a 33300-token prompt).
+max-model-len: 34816
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves ~0.8 GiB unused on this GPU.
+kv-cache-memory-bytes: 950000000
+# vLLM uses Triton attention for Gemma 4 (head sizes 256 and 512), which supports quantized KV caches.
+# int8 with a scale per token and head is the format closest to llama.cpp's q8_0. fp16 would halve the context.
+kv-cache-dtype: int8_per_token_head
+# One request at a time, like parallel = 1 of the llama.cpp preset: every additional sequence needs its own
+# sliding-window KV cache (~0.2 GiB).
+max-num-seqs: 1
+# The prefill chunk. Larger chunks need more activation memory.
+max-num-batched-tokens: 512
+# CUDA graphs only for single-token decoding: capturing the default 51 sizes takes several GiB.
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1]}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 8 GiB of pinned RAM, so that a returning conversation needs
+# no new prompt processing (a 15000-token prompt: 0.2 s instead of 27 s). Needs VLLM_USE_V2_MODEL_RUNNER=0.
+kv-offloading-size: 8
+kv-offloading-backend: native
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.

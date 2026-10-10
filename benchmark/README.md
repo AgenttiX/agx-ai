@@ -44,6 +44,31 @@ own sampling settings (fixed seed) and realistic content, and are the ones to us
 and for comparing backends at realistic context lengths. The depth test's code comes from the client's Python
 standard library (`asyncio` and `email`), so compare depth results measured with the same Python version.
 
+### vLLM
+
+The script also benchmarks vLLM servers (detected from vLLM's `/version` endpoint), with the same tests except the
+embedding test. vLLM reports no timings, so the requests are streamed and timed on the client: prompt processing is
+the prompt length over the time to the first token, and generation the remaining tokens over the time from the first
+to the last one. Each request gets its own `cache_salt` instead of `cache_prompt: false`, so that the prefix cache
+is not hit. The draft acceptance comes from the counters of `/metrics` before and after each request. vLLM does not
+report its arguments; `--server-config FILE` stores the YAML file given to `vllm serve --config` with the result.
+`llama_cpp_quality_http.py` works with vLLM in the same way.
+
+## `vllm_test_server.sh`: a temporary vLLM server from another image or configuration
+
+The vLLM counterpart of `llama_cpp_test_server.sh` below: starts a container named `vllm-test` on port 9933 with a
+YAML file for `vllm serve --config`, mounted like in [`../vllm-radeon-vii`](../vllm-radeon-vii), and waits until it
+answers. Extra `vllm serve` arguments go after `--`, extra docker arguments in `DOCKER_ARGS`.
+
+```sh
+DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
+    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
+    ../llama-cpp-radeon-vii/llama-cpp.env -- --max-model-len 16384
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    --tests chat depth --repeat 2 --server-config /tmp/config-variant.yaml --label "..."
+docker rm -f vllm-test
+```
+
 ## `llama_cpp_bench_container.py`: llama.cpp's own `llama bench` in the running container
 
 The server image ships `llama bench` (formerly `llama-bench`), which loads the model itself with the flags you give

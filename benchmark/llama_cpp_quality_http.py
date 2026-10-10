@@ -56,7 +56,8 @@ from pathlib import Path
 from typing import Any
 
 from llama_cpp_bench_http import (
-    CHAT_PROMPTS, DEPTH_QUESTIONS, Server, build_code_context, host_name, pick_models, read_env_key, server_args,
+    CHAT_PROMPTS, DEPTH_QUESTIONS, Server, VllmServer, build_code_context, host_name, is_vllm, pick_models, read_env_key,
+    server_args,
 )
 
 NAMES = ["orion", "vega", "lyra", "altair", "rigel", "sirius", "deneb", "mira", "castor", "pollux", "antares", "spica"]
@@ -122,6 +123,10 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
          logprobs: int = 0) -> dict[str, Any]:
     payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": content}],
                                "max_tokens": max_tokens, "temperature": 0.0, "seed": 42, "cache_prompt": cache}
+    if isinstance(server, VllmServer):
+        del payload["cache_prompt"]
+        if not cache:  # vLLM has no cache_prompt; a unique salt keeps the request from hitting the prefix cache
+            payload["cache_salt"] = os.urandom(8).hex()
     if thinking is not None:
         payload["chat_template_kwargs"] = {"enable_thinking": thinking}
     if logprobs:
@@ -129,7 +134,9 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
     r = server.request("/v1/chat/completions", payload)
     choice = r["choices"][0]
     msg = choice["message"]
-    out = {"content": msg.get("content") or "", "reasoning": msg.get("reasoning_content") or "", "timings": r.get("timings", {})}
+    timings = r.get("timings") or {"prompt_n": (r.get("usage") or {}).get("prompt_tokens", 0)}  # vLLM: no timings
+    out = {"content": msg.get("content") or "", "reasoning": msg.get("reasoning_content") or msg.get("reasoning") or "",
+           "timings": timings}
     if logprobs:
         # Per generated token: the token and the top alternatives' log-probabilities (empty for drafted tokens).
         # Several special tokens render as "", so only the first (most likely) entry of a text is kept.
@@ -304,7 +311,7 @@ def main() -> int:
     args = parser.parse_args()
 
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
-    server = Server(args.url, api_key, args.timeout)
+    server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
     models = server.models()
     model, _ = pick_models(models, args.model, None)
     if model is None:

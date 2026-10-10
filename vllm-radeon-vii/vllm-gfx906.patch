@@ -1,0 +1,140 @@
+diff -ru a/config/vllm.py b/config/vllm.py
+--- a/config/vllm.py	2026-10-10 02:25:09.041739678 +0300
++++ b/config/vllm.py	2026-10-10 02:25:09.173013746 +0300
+@@ -1121,6 +1121,10 @@
+             return
+         if self.model_config is not None and (self.model_config.enable_cumem_allocator):
+             return
++        # agx-ai patch: the native CPU offloading copies the KV cache with device pointers and registers no GPU memory,
++        # and the KV cache is allocated once and never freed, so a VMM remap cannot affect it.
++        if self.kv_transfer_config.kv_connector == "OffloadingConnector":
++            return
+ 
+         raise ValueError(
+             f"KV connector {self.kv_transfer_config.kv_connector} is "
+diff -ru a/model_executor/kernels/linear/mixed_precision/exllama.py b/model_executor/kernels/linear/mixed_precision/exllama.py
+--- a/model_executor/kernels/linear/mixed_precision/exllama.py	2026-10-09 23:51:22.169498520 +0300
++++ b/model_executor/kernels/linear/mixed_precision/exllama.py	2026-10-10 04:45:44.457443864 +0300
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ 
+ import torch
+ 
+@@ -22,6 +23,17 @@
+         return False
+ 
+ 
++# agx-ai patch: ops.gptq_gemm allocates a K x N fp16 scratch buffer on every call, even when it does not use it
++# (fewer than 50 rows). For the lm_head of a large vocabulary that is gigabytes (Qwen3.8: 2.4 GiB, Gemma 4: 1.4 GiB)
++# of peak memory, which the KV cache then lacks. Matrices whose scratch buffer would be larger than this are
++# therefore split into column chunks. Each chunk costs one more kernel launch (~18 us on gfx906) per forward pass,
++# so the chunks are as large as the largest scratch buffer of the other layers, which is needed anyway, but at
++# least _MIN_CHUNK_ELEMS.
++_MAX_SCRATCH_ELEMS = int(os.environ.get("VLLM_EXLLAMA_MAX_SCRATCH_MB", "512")) * 2**20 // 2
++_MIN_CHUNK_ELEMS = 64 * 2**20 // 2
++_max_unchunked_elems = 0  # the largest scratch buffer of the layers processed so far (the lm_head comes last)
++
++
+ class ExllamaLinearKernel(MPLinearKernel):
+     SUPPORTED_QUANT_TYPES = [
+         scalar_types.uint4b8,
+@@ -132,6 +144,30 @@
+         # Repack weights and scales for Machete
+         self._transform_param(layer, self.w_q_name, transform_w_q)
+         self._transform_param(layer, self.w_s_name, transform_w_s)
++        self._split_columns(layer)
++
++    def _split_columns(self, layer: torch.nn.Module) -> None:
++        """agx-ai patch: split a large matrix into column chunks (see _MAX_SCRATCH_ELEMS)."""
++        global _max_unchunked_elems
++        c = self.config
++        k, n = c.partition_weight_shape
++        if k * n <= _MAX_SCRATCH_ELEMS:
++            _max_unchunked_elems = max(_max_unchunked_elems, k * n)
++            return
++        w_q, w_s, w_zp = self._get_weight_params(layer)
++        step = max(128, max(_MIN_CHUNK_ELEMS, _max_unchunked_elems) // k // 128 * 128)
++        pack = 32 // c.weight_type.size_bits  # the zero points are packed along N
++        layer._exllama_chunks = [
++            (
++                w_q[:, a : a + step].contiguous(),
++                w_s[:, a : a + step].contiguous(),
++                w_zp[:, a // pack : (a + step) // pack].contiguous(),
++            )
++            for a in range(0, n, step)
++        ]
++        for name in (self.w_q_name, self.w_s_name, self.w_zp_name):
++            param = getattr(layer, name)
++            param.data = param.data.new_empty(0)
+ 
+     def apply_weights(
+         self,
+@@ -157,15 +193,27 @@
+             else x_2d
+         )
+ 
+-        output = ops.gptq_gemm(
+-            x_2d_fp16,
+-            w_q,
+-            w_zp,
+-            w_s,
+-            True,
+-            use_v2_format,
+-            c.weight_type.size_bits,
+-        )
++        chunks = getattr(layer, "_exllama_chunks", None)
++        if chunks is not None:
++            output = torch.cat(
++                [
++                    ops.gptq_gemm(
++                        x_2d_fp16, q, zp, s, True, use_v2_format, c.weight_type.size_bits
++                    )
++                    for q, s, zp in chunks
++                ],
++                dim=1,
++            )
++        else:
++            output = ops.gptq_gemm(
++                x_2d_fp16,
++                w_q,
++                w_zp,
++                w_s,
++                True,
++                use_v2_format,
++                c.weight_type.size_bits,
++            )
+ 
+         if output.dtype != x.dtype:
+             output = output.to(x.dtype)
+diff -ru a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+--- a/model_executor/models/qwen3_5_mtp.py	2026-10-09 23:51:22.172978884 +0300
++++ b/model_executor/models/qwen3_5_mtp.py	2026-10-09 23:51:22.174613255 +0300
+@@ -139,9 +139,12 @@
+         self.mtp_start_layer_idx = config.num_hidden_layers
+         self.num_mtp_layers = getattr(config, "mtp_num_hidden_layers", 1)
+ 
++        # agx-ai patch: like Qwen3_5Model, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         # CAT-1 (ported from syv-ai/qwen38-27b-rtx3090, patches/
+diff -ru a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
+--- a/v1/attention/backends/triton_attn.py	2026-10-10 00:27:12.593049544 +0300
++++ b/v1/attention/backends/triton_attn.py	2026-10-10 00:27:12.732751185 +0300
+@@ -258,7 +258,8 @@
+             query_start_loc_cpu=common_attn_metadata.query_start_loc_cpu,
+             max_seq_len=max_seq_len,
+             seq_lens=seq_lens,
+-            seq_lens_cpu=common_attn_metadata._seq_lens_cpu,
++            # agx-ai patch: CommonAttentionMetadata no longer has _seq_lens_cpu in this build.
++            seq_lens_cpu=getattr(common_attn_metadata, "_seq_lens_cpu", None),
+             seq_lens_cpu_upper_bound=common_attn_metadata.seq_lens_cpu_upper_bound,
+             is_prefilling=common_attn_metadata.is_prefilling,
+             block_table=block_table_tensor,

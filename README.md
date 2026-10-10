@@ -23,6 +23,9 @@
   - [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
 - [LM Studio](https://lmstudio.ai/)
   - For running local models
+- [vLLM](https://vllm.ai/)
+  - For running local models
+  - [Radeon VII config with a patched gfx906 container and a bit-exact Gemma 4 QAT checkpoint, with a comparison to llama.cpp](vllm-radeon-vii/README.md)
 - [Open Terminal](https://github.com/open-webui/open-terminal)
   - Docker container for LLM terminal access
 - [Open WebUI](https://openwebui.com/)
