@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run llama.cpp's own benchmark (``llama bench``, formerly llama-bench) inside a running llama-server container.
+r"""Run llama.cpp's own benchmark (``llama bench``, formerly llama-bench) inside a running llama-server container.
 
 Unlike ``llama_cpp_bench_http.py``, which measures the server as it serves, this measures the raw model with the
 flags given here, independently of the server configuration. That makes it the tool for comparing quantisations,
@@ -22,31 +22,35 @@ container instead if it has other models on the GPU.
 Examples (arguments after ``--`` go to ``llama bench``; match the server preset's device flags for comparability):
     ./llama_cpp_bench_container.py --env-file ../llama-cpp-big-machine/llama-cpp.env --label "UD-Q4_K_M" \\
         -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
-    ./llama_cpp_bench_container.py --container llama-cpp-gpu --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
+    ./llama_cpp_bench_container.py --container llama-cpp-gpu \\
+        --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
     ./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
         --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 
 The Markdown table is printed and the JSON lines that ``llama bench`` emits are appended, with the label and date,
 to ``results/<hostname>-llama-bench.jsonl`` (``--hostname`` or ``LLAMA_BENCH_HOSTNAME`` overrides the hostname),
-or to ``results/<SHA-256 of the hostname>-llama-bench.jsonl`` with ``--hash-hostname``. Only the Python standard library is needed.
+or to ``results/<SHA-256 of the hostname>-llama-bench.jsonl`` with ``--hash-hostname``.
+Only the Python standard library is needed.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from llama_cpp_bench_http import Server, host_name, read_env_key
 
 
 def pick_chat_model(models: list[dict[str, Any]]) -> str:
+    """Pick the first non-embedding model id, preferring loaded and then sleeping models."""
     rank = {"loaded": 0, "sleeping": 1}
     ordered = sorted(models, key=lambda m: rank.get(m.get("status", {}).get("value"), 2))
     try:
@@ -56,10 +60,12 @@ def pick_chat_model(models: list[dict[str, Any]]) -> str:
 
 
 def model_status(server: Server, model_id: str) -> str:
+    """Return the router status of the model, or an empty string if it is not listed."""
     return next((m.get("status", {}).get("value", "") for m in server.models() if m["id"] == model_id), "")
 
 
 def unload_models(server: Server, model_ids: list[str]) -> None:
+    """Unload the models from the server through the router API to free the GPU memory."""
     for model_id in model_ids:
         print(f"Unloading {model_id} from the server", file=sys.stderr)
         try:
@@ -77,10 +83,8 @@ def reload_models(server: Server, model_ids: list[str]) -> None:
             print(f"{model_id}: {status}", file=sys.stderr)
             continue
         print(f"Reloading {model_id} on the server", file=sys.stderr)
-        try:
+        with contextlib.suppress(SystemExit):
             server.request("/models/load", {"model": model_id})
-        except SystemExit:
-            pass
         print(f"{model_id}: {model_status(server, model_id)}", file=sys.stderr)
 
 
@@ -97,7 +101,9 @@ def docker_prefix(args: argparse.Namespace) -> list[str]:
     return [*cmd, *args.docker_arg, "--entrypoint", "/app/llama", args.image]
 
 
-def run_bench(prefix: list[str], model_path: str, bench_args: list[str], label: str, image: str | None, output: Path) -> int:
+def run_bench(
+    prefix: list[str], model_path: str, bench_args: list[str], label: str, image: str | None, output: Path,
+) -> int:
     """One ``llama bench`` invocation: Markdown to stdout, JSON lines (via stderr) to the results file."""
     exe = [] if image else ["/app/llama"]  # with --image, /app/llama is the entrypoint
     cmd = [*prefix, *exe, "bench", "-m", model_path, "-o", "md", "-oe", "jsonl", *bench_args]
@@ -126,6 +132,7 @@ def run_bench(prefix: list[str], model_path: str, bench_args: list[str], label: 
 
 
 def main() -> int:
+    """Unload the server's models, run ``llama bench`` and reload the models."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--container", default="llama-cpp", help="container name (default %(default)s)")
     parser.add_argument("--url", default="http://localhost:9931", help="llama-server URL (default %(default)s)")
@@ -138,7 +145,8 @@ def main() -> int:
     parser.add_argument("--hf-cache", type=Path, default=Path.home() / ".cache/huggingface/hub",
                         help="Hugging Face cache mounted into the --image container (default %(default)s)")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
-                        help="environment variable for the --image container, e.g. GGML_VK_VISIBLE_DEVICES=0 (repeatable)")
+                        help="environment variable for the --image container, "
+                             "e.g. GGML_VK_VISIBLE_DEVICES=0 (repeatable)")
     parser.add_argument("--docker-arg", action="append", default=[],
                         help="extra argument for docker run with --image, e.g. --docker-arg=--gpus=all (repeatable)")
     parser.add_argument("--keep-loaded", action="store_true",
@@ -152,7 +160,9 @@ def main() -> int:
     parser.add_argument("bench_args", nargs="*", help="arguments for llama bench, after --")
     args = parser.parse_args()
 
-    api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    api_key = (
+        args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    )
     server = Server(args.url, api_key, timeout=60.0)
     try:
         models = server.models()
@@ -173,7 +183,8 @@ def main() -> int:
     ]
     if loaded:
         unload_models(server, loaded)
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-llama-bench.jsonl"
+    host = host_name(args.hash_hostname, args.hostname).split(".")[0]
+    output = args.output or Path(__file__).resolve().parent / "results" / f"{host}-llama-bench.jsonl"
     try:
         return run_bench(docker_prefix(args), model_path, args.bench_args, args.label, args.image, output)
     finally:

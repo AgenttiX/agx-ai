@@ -10,14 +10,15 @@ with headless Chrome or Chromium. Run with: python3 generate.py
 """
 
 import base64
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 import pathlib
 import re
 import shutil
 import struct
 import subprocess
-import zlib
-from dataclasses import dataclass
 from xml.sax.saxutils import escape
+import zlib
 
 DIR = pathlib.Path(__file__).resolve().parent
 LOGOS = DIR / "logos"
@@ -48,14 +49,21 @@ MODEL = "#b4531c"
 
 def _svg_data(path: pathlib.Path) -> tuple[bytes, float]:
     text = path.read_text(encoding="utf-8")
-    root = re.search(r"<svg\b[^>]*>", text, re.S).group(0)
+    root_match = re.search(r"<svg\b[^>]*>", text, re.S)
+    if root_match is None:
+        raise ValueError(f"No <svg> element in {path}")
+    root = root_match.group(0)
     view_box = re.search(r'viewBox="([^"]+)"', root)
     if view_box:
         _, _, w, h = (float(v) for v in view_box.group(1).replace(",", " ").split())
     else:
         # Without a viewBox, an SVG image is not scaled to the size of the <image> element.
-        w = float(re.search(r'\swidth="([\d.]+)', root).group(1))
-        h = float(re.search(r'\sheight="([\d.]+)', root).group(1))
+        width = re.search(r'\swidth="([\d.]+)', root)
+        height = re.search(r'\sheight="([\d.]+)', root)
+        if width is None or height is None:
+            raise ValueError(f"The SVG {path} has neither a viewBox nor a width and height")
+        w = float(width.group(1))
+        h = float(height.group(1))
         text = text.replace(root, root[:-1] + f' viewBox="0 0 {w:g} {h:g}">', 1)
     return text.encode("utf-8"), w / h
 
@@ -80,6 +88,8 @@ def load_logo(name: str) -> tuple[str, float]:
 
 @dataclass
 class Machine:
+    """A device in the figure with its specifications, models and runtimes."""
+
     kind: str  # laptop, desktop or server
     cx: float  # Center x coordinate
     name: tuple[str, bool]  # (title, public), the hostname is shown only in the specs version
@@ -88,7 +98,7 @@ class Machine:
     screen: list[str]  # Logos of the operating system and the virtualization, shown on the screen of the device
     runtimes: list[tuple[str, str, str]]  # (logo, title, detail) of what runs on the machine
 
-    def public(self) -> "Machine":
+    def public(self) -> Machine:
         """Return the machine without the hostname and the hardware specifications, except for the GPUs."""
         return Machine(
             self.kind, self.cx, self.name if self.name[1] else ("", True), [line for line in self.lines if line[1]],
@@ -96,6 +106,7 @@ class Machine:
         )
 
     def text_lines(self) -> int:
+        """Return the number of text lines below the device, excluding the runtime tags."""
         return (1 if self.name[0] else 0) + len(self.lines) + len(self.models)
 
 
@@ -110,25 +121,32 @@ def pub(item: str) -> tuple[str, bool]:
 
 
 class Figure:
-    def __init__(self):
+    """An SVG figure that is built from drawing primitives and collects the used logos."""
+
+    def __init__(self) -> None:
         self.parts: list[str] = []
         self.logos: dict[str, tuple[str, float]] = {}
 
-    def add(self, s: str):
+    def add(self, s: str) -> None:
+        """Append an SVG fragment to the figure."""
         self.parts.append(s)
 
     # Primitives
 
     def _logo_id(self, name: str) -> str:
+        """Return the <symbol> id of a logo file."""
         return "logo-" + name.rsplit(".", 1)[0]
 
     def logo_width(self, name: str, h: float) -> float:
+        """Return the natural width of a logo at the height h, loading the logo if needed."""
         if name not in self.logos:
             self.logos[name] = load_logo(name)
         return h * self.logos[name][1]
 
-    def logo(self, name: str, x: float, y: float, h: float, w: float | None = None):
-        """Draw a logo centered in the box (x, y, w, h) and return w. By default, w is the natural width at the height h.
+    def logo(self, name: str, x: float, y: float, h: float, w: float | None = None) -> float:
+        """Draw a logo centered in the box (x, y, w, h) and return w.
+
+        By default, w is the natural width at the height h.
 
         Each logo is embedded only once as a <symbol>, which is then referenced with <use>.
         """
@@ -140,6 +158,7 @@ class Figure:
         return w
 
     def symbols(self) -> str:
+        """Return the <symbol> definitions of all used logos."""
         out = []
         for name, (uri, aspect) in self.logos.items():
             w = 100 * aspect
@@ -149,27 +168,41 @@ class Figure:
             )
         return "\n".join(out)
 
-    def text(self, x, y, s, size=14, weight="normal", color=INK, anchor="start", style=""):
+    def text(
+        self, x: float, y: float, s: str, size: float = 14, weight: str = "normal", color: str = INK,
+        anchor: str = "start", style: str = "",
+    ) -> None:
+        """Draw a text, optionally with a font style."""
         self.add(
             f'<text x="{x:g}" y="{y:g}" font-size="{size}" font-weight="{weight}" fill="{color}" '
             f'text-anchor="{anchor}"{f" font-style={chr(34)}{style}{chr(34)}" if style else ""}>{escape(s)}</text>'
         )
 
-    def rect(self, x, y, w, h, fill="#ffffff", stroke=LINE, rx=10, width=1.5, dash=None, extra=""):
+    def rect(
+        self, x: float, y: float, w: float, h: float, fill: str = "#ffffff", stroke: str = LINE, rx: float = 10,
+        width: float = 1.5, dash: str | None = None, extra: str = "",
+    ) -> None:
+        """Draw a rectangle."""
         dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
         self.add(
             f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{rx}" fill="{fill}" '
             f'stroke="{stroke}" stroke-width="{width}"{dash_attr}{extra}/>'
         )
 
-    def arrow(self, points, dashed=False):
+    def arrow(self, points: Iterable[tuple[float, float]], dashed: bool = False) -> None:
+        """Draw a polyline with an arrowhead at the end."""
         d = "M" + " L".join(f"{x:g},{y:g}" for x, y in points)
         dash_attr = ' stroke-dasharray="7 5"' if dashed else ""
         self.add(f'<path d="{d}" fill="none" stroke="{LINE}" stroke-width="2"{dash_attr} marker-end="url(#arrow)"/>')
 
     # Components
 
-    def card(self, x, y, w, h, logo, title, subtitle=None, logo_size=44, fill="#ffffff", stroke=STACK_STROKE):
+    def card(
+        self, x: float, y: float, w: float, h: float, logo: str | Callable[[float, float, float], None] | None,
+        title: str, subtitle: str | None = None, logo_size: float = 44, fill: str = "#ffffff",
+        stroke: str = STACK_STROKE,
+    ) -> None:
+        """Draw a box with a logo, a title and an optional subtitle."""
         self.rect(x, y, w, h, fill=fill, stroke=stroke)
         pad = (h - logo_size) / 2
         if callable(logo):
@@ -183,7 +216,7 @@ class Figure:
         else:
             self.text(tx, y + h / 2 + 6, title, size=18, weight="bold")
 
-    def terminal_icon(self, x, y, s):
+    def terminal_icon(self, x: float, y: float, s: float) -> None:
         """Open Terminal has no logo of its own, so draw a generic terminal icon."""
         self.rect(x, y + s * 0.1, s, s * 0.8, fill="#1f2933", stroke="#1f2933", rx=6)
         self.add(
@@ -196,19 +229,21 @@ class Figure:
             f'stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>'
         )
 
-    def key_icon(self, x, y, s):
+    def key_icon(self, x: float, y: float, s: float) -> None:
         """OpenSSH has no official logo, so draw a key."""
         c = "#1f2933"
         r = s * 0.2
         cx, cy = x + s * 0.3, y + s * 0.5
         self.add(f'<circle cx="{cx:g}" cy="{cy:g}" r="{r:g}" fill="none" stroke="{c}" stroke-width="4"/>')
         self.add(
-            f'<path d="M{cx + r:g},{cy:g} L{x + s * 0.92:g},{cy:g} M{x + s * 0.8:g},{cy:g} L{x + s * 0.8:g},{cy + s * 0.17:g} '
+            f'<path d="M{cx + r:g},{cy:g} L{x + s * 0.92:g},{cy:g} '
+            f'M{x + s * 0.8:g},{cy:g} L{x + s * 0.8:g},{cy + s * 0.17:g} '
             f'M{x + s * 0.68:g},{cy:g} L{x + s * 0.68:g},{cy + s * 0.13:g}" fill="none" stroke="{c}" '
             f'stroke-width="4" stroke-linecap="round"/>'
         )
 
-    def person_icon(self, x, y, s, color=MUTED):
+    def person_icon(self, x: float, y: float, s: float, color: str = MUTED) -> None:
+        """Draw a generic person icon."""
         self.add(f'<circle cx="{x + s / 2:g}" cy="{y + s * 0.28:g}" r="{s * 0.2:g}" fill="{color}"/>')
         self.add(
             f'<path d="M{x + s * 0.1:g},{y + s * 0.95:g} C{x + s * 0.1:g},{y + s * 0.55:g} {x + s * 0.9:g},'
@@ -218,14 +253,15 @@ class Figure:
     # Devices. (cx, top) is the top center of the drawing, which is 150 px wide and 110 px tall.
     # The screen shows the logos of the operating system and the virtualization.
 
-    def screen_logos(self, cx, cy, logos, size, gap=8):
+    def screen_logos(self, cx: float, cy: float, logos: list[str], size: float, gap: float = 8) -> None:
         """Draw the logos centered at (cx, cy), stacked vertically."""
         y = cy - (size * len(logos) + gap * (len(logos) - 1)) / 2
         for logo in logos:
             self.logo(logo, cx - size / 2, y, size, size)
             y += size + gap
 
-    def laptop(self, cx, top, screen):
+    def laptop(self, cx: float, top: float, screen: list[str]) -> None:
+        """Draw a laptop showing the screen logos."""
         self.rect(cx - 68, top + 6, 136, 88, fill="#3e4c59", stroke="#1f2933", rx=7, width=2)
         self.rect(cx - 60, top + 13, 120, 74, fill="#dbe7f3", stroke="none", rx=2, width=0)
         self.add(
@@ -235,7 +271,8 @@ class Figure:
         self.rect(cx - 16, top + 97, 32, 4, fill="#7b8794", stroke="none", rx=2, width=0)
         self.screen_logos(cx, top + 50, screen, 56)
 
-    def desktop(self, cx, top, screen):
+    def desktop(self, cx: float, top: float, screen: list[str]) -> None:
+        """Draw a desktop computer showing the screen logos."""
         # Monitor
         mx = cx - 40
         self.rect(mx - 72, top, 144, 94, fill="#3e4c59", stroke="#1f2933", rx=7, width=2)
@@ -253,10 +290,11 @@ class Figure:
             self.rect(tx + 8, top + 16 + i * 10, 34, 5, fill="#7b8794", stroke="none", rx=1.5, width=0)
         self.add(f'<circle cx="{tx + 25:g}" cy="{top + 90:g}" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>')
 
-    def server(self, cx, top, screen):
+    def server(self, cx: float, top: float, screen: list[str]) -> None:
+        """Draw a server rack showing the screen logos."""
         # A rack with three server units and a front display.
         self.rect(cx - 80, top, 160, 111, fill="#1f2933", stroke="#1f2933", rx=5, width=2)
-        for i, y in enumerate((top + 6, top + 40, top + 74)):
+        for y in (top + 6, top + 40, top + 74):
             self.rect(cx - 74, y, 148, 31, fill="#3e4c59", stroke="#52606d", rx=3, width=1)
             for j in range(5):
                 self.rect(cx - 66 + j * 9, y + 7, 4, 17, fill="#616e7c", stroke="none", rx=1, width=0)
@@ -266,7 +304,7 @@ class Figure:
         self.rect(cx - 12, top + 2, 58, 107, fill="#dbe7f3", stroke="#9aa5b1", rx=4, width=1.5)
         self.screen_logos(cx + 17, top + 55.5, screen, 46 if len(screen) == 1 else 40)
 
-    def runtime_tag(self, cx, y, logo, title, detail):
+    def runtime_tag(self, cx: float, y: float, logo: str, title: str, detail: str) -> None:
         """A pill that shows what runs on a device, e.g. llama.cpp with CUDA.
 
         A wordmark logo replaces the title. The text width is estimated for Arial-like fonts,
@@ -277,7 +315,8 @@ class Figure:
         text_w = 0.55 * 14 * (len(detail) + (0 if wordmark else len(title) + 1))
         w = 6 + logo_w + 8 + text_w + 14
         x = cx - w / 2
-        self.rect(x, y, w, 30, fill="#ffffff", stroke=LLAMA if logo == "llama-cpp.svg" else "#6b4fbb", rx=15, width=1.5)
+        stroke = LLAMA if logo == "llama-cpp.svg" else "#6b4fbb"
+        self.rect(x, y, w, 30, fill="#ffffff", stroke=stroke, rx=15, width=1.5)
         if wordmark:
             self.logo(logo, x + 10, y + 6, 18, logo_w)
             self.text(x + 10 + logo_w + 8, y + 20, detail, size=14, color=MUTED)
@@ -285,12 +324,16 @@ class Figure:
             self.logo(logo, x + 6, y + 4, 22, 22)
             self.add(
                 f'<text x="{x + 34:g}" y="{y + 20:g}" font-size="14" fill="{INK}">'
-                f'<tspan font-weight="bold">{escape(title)}</tspan> <tspan fill="{MUTED}">{escape(detail)}</tspan></text>'
+                f'<tspan font-weight="bold">{escape(title)}</tspan> '
+                f'<tspan fill="{MUTED}">{escape(detail)}</tspan></text>'
             )
 
-    def machine(self, m: "Machine", top: float, text_lines: int):
-        """Draw a machine. The runtime tags are aligned between the machines,
-        so the text block has room for text_lines lines below the device."""
+    def machine(self, m: Machine, top: float, text_lines: int) -> None:
+        """Draw a machine.
+
+        The runtime tags are aligned between the machines,
+        so the text block has room for text_lines lines below the device.
+        """
         getattr(self, m.kind)(m.cx, top, m.screen)
         y = top + 116
         if m.name[0]:
@@ -301,8 +344,8 @@ class Figure:
             self.text(m.cx, y, line, size=14, color=MUTED, anchor="middle")
         for model, *speeds in m.models:
             y += 18
-            speeds = " | ".join(speed for speed in speeds if speed)
-            speed_span = f'<tspan font-weight="normal"> ({escape(speeds)})</tspan>' if speeds else ""
+            speed_text = " | ".join(speed for speed in speeds if speed)
+            speed_span = f'<tspan font-weight="normal"> ({escape(speed_text)})</tspan>' if speed_text else ""
             self.add(
                 f'<text x="{m.cx:g}" y="{y:g}" font-size="14" font-weight="bold" fill="{MODEL}" '
                 f'text-anchor="middle">{escape(model)}{speed_span}</text>'
@@ -314,11 +357,16 @@ class Figure:
 
     @staticmethod
     def machine_height(text_lines: int, runtimes: int) -> float:
-        """Height of a machine drawn by machine(), from the top of the device to the bottom of the last runtime tag."""
+        """Return the height of a machine drawn by machine().
+
+        The height is measured from the top of the device to the bottom of the last runtime tag.
+        """
         return 116 + 18 * text_lines + 20 + 35 * runtimes - 5
 
     def render(self) -> str:
-        head = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="{WIDTH}" height="{HEIGHT}" font-family="{FONT}">
+        """Return the complete SVG document."""
+        head = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" \
+width="{WIDTH}" height="{HEIGHT}" font-family="{FONT}">
 <title>Structure of the agx-ai local AI server</title>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -470,7 +518,11 @@ def build(specs: bool) -> str:
     f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
     f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN", size=14, color=MUTED, style="italic")
     # Right of the line from LiteLLM to the backends
-    f.text(lx + 76, hw_top + 30, "t/s of a single request: (generation with a short prompt | prompt processing of a 0.7–37k-token prompt)", size=14, color=MUTED, style="italic")
+    f.text(
+        lx + 76, hw_top + 30,
+        "t/s of a single request: (generation with a short prompt | prompt processing of a 0.7–37k-token prompt)",
+        size=14, color=MUTED, style="italic",
+    )
 
     group_top = hw_top + hw_header
     for name, gx, gw in (("Laptops", 26, 752), ("Desktops", 790, 270), ("Servers", 1072, 504)):
@@ -500,7 +552,7 @@ def build(specs: bool) -> str:
     return f.render()
 
 
-def crop_png_height(png: pathlib.Path, height: int):
+def crop_png_height(png: pathlib.Path, height: int) -> None:
     """Crop a non-interlaced PNG to its top height rows.
 
     Each scanline is filtered only relative to the scanlines above it, so the rows can be cut from the bottom
@@ -537,7 +589,7 @@ def crop_png_height(png: pathlib.Path, height: int):
     png.write_bytes(b"".join(out))
 
 
-def render_png(svg: pathlib.Path, png: pathlib.Path):
+def render_png(svg: pathlib.Path, png: pathlib.Path) -> None:
     """Render the SVG to PNG with headless Chrome.
 
     Inkscape would drop the space between the <tspan> elements of the runtime tags.

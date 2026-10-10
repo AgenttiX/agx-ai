@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check whether a serving setting (e.g. KV cache quantization) degrades the output quality of a running llama-server.
+r"""Check whether a serving setting (e.g. KV cache quantization) degrades the output quality of a running llama-server.
 
 Two tests, both with greedy decoding (temperature 0) so that runs are repeatable:
 
@@ -47,16 +47,24 @@ import datetime as dt
 import json
 import math
 import os
+from pathlib import Path
 import random
 import re
 import sys
 import sysconfig
 import time
-from pathlib import Path
 from typing import Any
 
 from llama_cpp_bench_http import (
-    CHAT_PROMPTS, DEPTH_QUESTIONS, Server, VllmServer, build_code_context, host_name, is_vllm, pick_models, read_env_key,
+    CHAT_PROMPTS,
+    DEPTH_QUESTIONS,
+    Server,
+    VllmServer,
+    build_code_context,
+    host_name,
+    is_vllm,
+    pick_models,
+    read_env_key,
     server_args,
 )
 
@@ -87,17 +95,17 @@ def make_needles(rng: random.Random, n_lookup: int, n_pairs: int
         token = str(rng.randrange(100000, 1000000))
         lines.append(f"# Deployment note: the rollout token of service {name} is {token}.")
         questions.append({"kind": "lookup", "expected": token,
-                          "question": f"The code above contains deployment notes as comments. What is the rollout token of "
-                                      f"service {name}? Reply with only the number."})
+                          "question": f"The code above contains deployment notes as comments. "
+                                      f"What is the rollout token of service {name}? Reply with only the number."})
     pair_lines = []
     for name, db in zip(names[n_lookup:], databases, strict=True):
         region = rng.choice(REGIONS)
         pair_lines.append((f"# Deployment note: service {name} reads its configuration from database {db}.",
                            f"# Infrastructure note: database {db} is hosted in region {region}."))
         questions.append({"kind": "two-step", "expected": region,
-                          "question": f"The code above contains deployment and infrastructure notes as comments. In which "
-                                      f"region is the database hosted that service {name} reads its configuration from? "
-                                      f"Reply with only the region name."})
+                          "question": f"The code above contains deployment and infrastructure notes as comments. "
+                                      f"In which region is the database hosted that service {name} reads its "
+                                      f"configuration from? Reply with only the region name."})
     return lines, questions, pair_lines
 
 
@@ -121,6 +129,7 @@ def build_haystack(server: Server, model: str, depth: int, rng: random.Random, n
 
 def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bool | None, cache: bool,
          logprobs: int = 0) -> dict[str, Any]:
+    """Send one greedy chat request; returns the content, reasoning, timings and optionally token probabilities."""
     payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": content}],
                                "max_tokens": max_tokens, "temperature": 0.0, "seed": 42, "cache_prompt": cache}
     if isinstance(server, VllmServer):
@@ -135,7 +144,8 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
     choice = r["choices"][0]
     msg = choice["message"]
     timings = r.get("timings") or {"prompt_n": (r.get("usage") or {}).get("prompt_tokens", 0)}  # vLLM: no timings
-    out = {"content": msg.get("content") or "", "reasoning": msg.get("reasoning_content") or msg.get("reasoning") or "",
+    out = {"content": msg.get("content") or "",
+           "reasoning": msg.get("reasoning_content") or msg.get("reasoning") or "",
            "timings": timings}
     if logprobs:
         # Per generated token: the token and the top alternatives' log-probabilities (empty for drafted tokens).
@@ -151,27 +161,31 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
 
 def test_retrieval(server: Server, model: str, depths: list[int], seed: int, n_lookup: int, n_pairs: int,
                    logprobs: int) -> list[dict[str, Any]]:
+    """Run the needle retrieval test at each depth; returns the answers and the correct counts per depth."""
     out = []
     for depth in depths:
         rng = random.Random(f"{seed}-{depth}")
         haystack, questions = build_haystack(server, model, depth, rng, n_lookup, n_pairs)
         print(f"retrieval: {depth}-token context, {len(questions)} questions...", file=sys.stderr)
-        answers = []
+        answers: list[dict[str, Any]] = []
         t0 = time.perf_counter()
         for q in questions:
-            r = chat(server, model, haystack + "\n\n" + q["question"], 24, thinking=False, cache=True, logprobs=logprobs)
+            r = chat(server, model, haystack + "\n\n" + q["question"], 24, thinking=False, cache=True,
+                     logprobs=logprobs)
             answer = r["content"].strip()
             answers.append({**q, "answer": answer, "correct": q["expected"] in re.findall(r"[A-Za-z0-9-]+", answer),
                             "prompt_tokens": r["timings"].get("prompt_n", 0) + r["timings"].get("cache_n", 0),
                             **({"tokens": r["tokens"]} if logprobs else {})})
         out.append({"depth": depth, "prompt_tokens": max(a["prompt_tokens"] for a in answers),
                     "seconds": round(time.perf_counter() - t0, 1), "answers": answers,
-                    **{f"{kind}_correct": sum(a["correct"] for a in answers if a["kind"] == kind) for kind in ("lookup", "two-step")},
+                    **{f"{kind}_correct": sum(a["correct"] for a in answers if a["kind"] == kind)
+                       for kind in ("lookup", "two-step")},
                     **{f"{kind}_total": sum(a["kind"] == kind for a in answers) for kind in ("lookup", "two-step")}})
     return out
 
 
 def test_agreement(server: Server, model: str, depths: list[int], max_tokens: int) -> list[dict[str, Any]]:
+    """Generate greedy outputs for the chat and long-context prompts, to be compared with another run's."""
     items = [{"id": f"chat-{i}", "content": p} for i, p in enumerate(CHAT_PROMPTS)]
     for d in depths:
         items += [{"id": f"depth-{d}-{i}", "content": build_code_context(server, model, d, rotate=7 * i) + "\n\n" + q}
@@ -186,6 +200,7 @@ def test_agreement(server: Server, model: str, depths: list[int], max_tokens: in
 
 
 def common_prefix(a: str, b: str) -> int:
+    """Return the length of the common prefix of the two strings."""
     n = min(len(a), len(b))
     for i in range(n):
         if a[i] != b[i]:
@@ -194,8 +209,11 @@ def common_prefix(a: str, b: str) -> int:
 
 
 def token_kld(ref_top: dict[str, float], top: dict[str, float]) -> float:
-    """KL(ref || this) over the reference's top tokens (renormalized); a token missing from this run's top list
-    gets the lowest log-probability of that list, so the value is a slight underestimate for large divergences."""
+    """KL(ref || this) over the reference's top tokens (renormalized).
+
+    A token missing from this run's top list gets the lowest log-probability of that list,
+    so the value is a slight underestimate for large divergences.
+    """
     floor = min(top.values())
     z = sum(math.exp(v) for v in ref_top.values())
     return max(sum(math.exp(lp) / z * (lp - top.get(t, floor)) for t, lp in ref_top.items()), 0.0)
@@ -247,6 +265,7 @@ def compare_logprobs(result: dict[str, Any], ref: dict[str, Any]) -> dict[str, A
 
 
 def compare(result: dict[str, Any], ref: dict[str, Any]) -> dict[str, Any]:
+    """Compare the retrieval answers, token probabilities and greedy outputs of a run with a reference run."""
     cmp: dict[str, Any] = {"reference_label": ref["label"], "reference_date": ref["date"]}
     ra = {(d["depth"], a["question"]): a["answer"] for d in ref.get("retrieval", []) for a in d["answers"]}
     same = [a["answer"] == ra[(d["depth"], a["question"])] for d in result.get("retrieval", []) for a in d["answers"]
@@ -260,10 +279,13 @@ def compare(result: dict[str, Any], ref: dict[str, Any]) -> dict[str, Any]:
     for g in result.get("agreement", []):
         if g["id"] in rg:
             a, b = g["reasoning"] + "\n" + g["content"], rg[g["id"]]
-            rows.append({"id": g["id"], "identical": a == b, "common_prefix_chars": common_prefix(a, b), "length": len(b)})
+            rows.append({"id": g["id"], "identical": a == b, "common_prefix_chars": common_prefix(a, b),
+                         "length": len(b)})
     if rows:
         cmp["agreement_identical"] = f"{sum(r['identical'] for r in rows)}/{len(rows)}"
-        cmp["agreement_mean_common_prefix_fraction"] = round(sum(min(r["common_prefix_chars"] / max(r["length"], 1), 1) for r in rows) / len(rows), 3)
+        cmp["agreement_mean_common_prefix_fraction"] = round(
+            sum(min(r["common_prefix_chars"] / max(r["length"], 1), 1) for r in rows) / len(rows), 3,
+        )
         cmp["agreement"] = rows
     return cmp
 
@@ -277,11 +299,14 @@ def compact(result: dict[str, Any]) -> dict[str, Any]:
             for d in out["retrieval"]
         ]
     if "agreement" in out:
-        out["agreement"] = [{"id": g["id"], "length": len(g["reasoning"] + "\n" + g["content"])} for g in out["agreement"]]
+        out["agreement"] = [
+            {"id": g["id"], "length": len(g["reasoning"] + "\n" + g["content"])} for g in out["agreement"]
+        ]
     return out
 
 
 def main() -> int:
+    """Run the selected quality tests, compare with the reference run and store and print the results."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", default="http://localhost:9931", help="llama-server base URL (default %(default)s)")
     parser.add_argument("--api-key", help="API key, if the server was started with one")
@@ -290,13 +315,17 @@ def main() -> int:
     parser.add_argument("--tests", nargs="+", choices=["retrieval", "agreement"], default=["retrieval", "agreement"])
     parser.add_argument("--depth", type=int, nargs="+", default=[8000, 32000, 60000, 75000],
                         help="context lengths in tokens for the retrieval test (default %(default)s)")
-    parser.add_argument("--lookups", type=int, default=32, help="single-lookup questions per depth (default %(default)s)")
+    parser.add_argument("--lookups", type=int, default=32,
+                        help="single-lookup questions per depth (default %(default)s)")
     parser.add_argument("--pairs", type=int, default=12, help="two-step questions per depth (default %(default)s)")
     parser.add_argument("--agreement-depth", type=int, nargs="+", default=[16000, 60000],
-                        help="context lengths for the long-context prompts of the agreement test (default %(default)s)")
-    parser.add_argument("--agreement-n-predict", type=int, default=512, help="tokens per agreement output (default %(default)s)")
+                        help="context lengths for the long-context prompts of the agreement test "
+                             "(default %(default)s)")
+    parser.add_argument("--agreement-n-predict", type=int, default=512,
+                        help="tokens per agreement output (default %(default)s)")
     parser.add_argument("--logprobs", type=int, default=20,
-                        help="top log-probabilities recorded per retrieval answer token, 0 = none (default %(default)s)")
+                        help="top log-probabilities recorded per retrieval answer token, 0 = none "
+                             "(default %(default)s)")
     parser.add_argument("--seed", type=int, default=1, help="seed for the needles and questions (default %(default)s)")
     parser.add_argument("--reference", help="label of an earlier run in the output file to compare with")
     parser.add_argument("--timeout", type=float, default=1800.0, help="HTTP timeout per request in seconds")
@@ -310,25 +339,31 @@ def main() -> int:
                         help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
 
-    api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    api_key = (
+        args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    )
     server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
     models = server.models()
     model, _ = pick_models(models, args.model, None)
     if model is None:
         raise SystemExit("No chat model found; pass --model")
     props = server.props(model)
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-quality.jsonl"
+    host = host_name(args.hash_hostname, args.hostname)
+    output = args.output or Path(__file__).resolve().parent / "results" / f"{host.split('.')[0]}-quality.jsonl"
     full_output = output.parent / "full" / output.name
     ref = None
     if args.reference:
-        runs = [json.loads(line) for line in full_output.read_text(encoding="utf-8").splitlines()] if full_output.exists() else []
+        runs = (
+            [json.loads(line) for line in full_output.read_text(encoding="utf-8").splitlines()]
+            if full_output.exists() else []
+        )
         ref = next((r for r in reversed(runs) if r["label"] == args.reference), None)
         if ref is None:
             raise SystemExit(f"No run labelled {args.reference!r} in {full_output}")
 
     result: dict[str, Any] = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": host_name(args.hash_hostname, args.hostname),
+        "host": host,
         "label": args.label,
         "url": server.url,
         "build_info": props.get("build_info"),
@@ -338,7 +373,9 @@ def main() -> int:
         "seed": args.seed,
     }
     if "retrieval" in args.tests:
-        result["retrieval"] = test_retrieval(server, model, args.depth, args.seed, args.lookups, args.pairs, args.logprobs)
+        result["retrieval"] = test_retrieval(
+            server, model, args.depth, args.seed, args.lookups, args.pairs, args.logprobs,
+        )
     if "agreement" in args.tests:
         result["agreement"] = test_agreement(server, model, args.agreement_depth, args.agreement_n_predict)
     if ref:

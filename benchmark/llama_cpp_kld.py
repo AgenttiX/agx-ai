@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure how settings that should not change the output (KV cache quantization etc.) change it: KL divergence.
+r"""Measure how settings that should not change the output (KV cache quantization etc.) change it: KL divergence.
 
 Runs llama.cpp's ``llama-perplexity`` in a new container from ``--image``: first a base run that saves the full
 logits of every scored token (``--kl-divergence-base``), then one run per ``--variant`` that compares its logits with
@@ -24,7 +24,7 @@ The GPU memory must be free: stop the llama-server container first. Only the Pyt
 Example (the Radeon VII, V cache q8_0 vs f16 with ub 256 as the noise floor):
     docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
     ./llama_cpp_kld.py --image mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14 \\
-        --model /root/.cache/huggingface/hub/models--unsloth--gemma-4-26B-A4B-it-qat-GGUF/snapshots/.../gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf \\
+        --model /root/.cache/huggingface/hub/.../gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf \\
         --ctx 65536 --work-dir ~/.cache/llama-kld --label "Radeon VII" --base-args "-ngl 999 -fa on -ub 512" \\
         --variant "noise: ub 256=-ub 256" --variant "V q8_0=-ctv q8_0" --variant "K+V q8_0=-ctk q8_0 -ctv q8_0"
     docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start
@@ -38,21 +38,23 @@ import argparse
 import datetime as dt
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import sysconfig
-from pathlib import Path
 from typing import Any
 
 from llama_cpp_bench_http import host_name
 
 # Statistics printed by llama-perplexity --kl-divergence, "Name : value ± error" (the error is optional).
-STAT_RE = re.compile(r"^(Mean PPL\(Q\)|Mean PPL\(base\)|Mean ln\(PPL\(Q\)/PPL\(base\)\)|Mean PPL\(Q\)/PPL\(base\)"
-                     r"|Mean\s+KLD|Maximum KLD|99\.9%\s+KLD|99\.0%\s+KLD|90\.0%\s+KLD|Median\s+KLD|RMS Δp|Same top p)"
-                     r"\s*:\s*([-0-9.e+]+)(?:\s*±\s*([-0-9.e+]+))?")
+STAT_RE: re.Pattern[str] = re.compile(
+    r"^(Mean PPL\(Q\)|Mean PPL\(base\)|Mean ln\(PPL\(Q\)/PPL\(base\)\)|Mean PPL\(Q\)/PPL\(base\)"
+    r"|Mean\s+KLD|Maximum KLD|99\.9%\s+KLD|99\.0%\s+KLD|90\.0%\s+KLD|Median\s+KLD|RMS Δp|Same top p)"
+    r"\s*:\s*([-0-9.e+]+)(?:\s*±\s*([-0-9.e+]+))?"
+)
 
 
 def build_text(path: Path, code_chars: int, prose_chars: int) -> None:
@@ -60,7 +62,10 @@ def build_text(path: Path, code_chars: int, prose_chars: int) -> None:
     stdlib = Path(sysconfig.get_paths()["stdlib"])
     code = []
     for package in ("asyncio", "email", "http", "logging", "json", "concurrent", "importlib", "xml", "unittest"):
-        code += [f"\n### {f.relative_to(stdlib)}\n" + f.read_text(encoding="utf-8") for f in sorted((stdlib / package).rglob("*.py"))]
+        code += [
+            f"\n### {f.relative_to(stdlib)}\n" + f.read_text(encoding="utf-8")
+            for f in sorted((stdlib / package).rglob("*.py"))
+        ]
     code_text = "".join(code)[:code_chars]
     man = subprocess.run("man -P cat bash | col -bx", shell=True, capture_output=True, text=True, check=False,
                          env={"MANWIDTH": "100", "PATH": "/usr/bin:/bin"}).stdout
@@ -88,6 +93,7 @@ def perplexity(args: argparse.Namespace, extra: list[str]) -> str:
 
 
 def parse_stats(output: str) -> dict[str, Any]:
+    """Parse the KL divergence statistics, the chunk count and the context size from llama-perplexity's output."""
     stats: dict[str, Any] = {}
     for line in output.splitlines():
         if m := STAT_RE.match(line.strip()):
@@ -103,6 +109,7 @@ def parse_stats(output: str) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Run the base and the variant KL divergence measurements and print and store the results."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", required=True, help="llama.cpp image with /app/llama-perplexity")
     parser.add_argument("--model", required=True, help="GGUF path inside the container")
@@ -142,10 +149,11 @@ def main() -> int:
     base = shlex.split(args.base_args)
     base_file = args.work_dir / "base.kld"
 
-    output_file = args.output or Path(__file__).resolve().parent / "results" / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-kld.jsonl"
+    host = host_name(args.hash_hostname, args.hostname)
+    output_file = args.output or Path(__file__).resolve().parent / "results" / f"{host.split('.')[0]}-kld.jsonl"
     common = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "host": host_name(args.hash_hostname, args.hostname),
+        "host": host,
         "label": args.label,
         "image": args.image,
         "model": args.model,
@@ -160,10 +168,12 @@ def main() -> int:
             out = perplexity(args, [*base, "--kl-divergence-base", "/work/base.kld"])
             if m := re.search(r"Final estimate: PPL = ([0-9.]+)", out):
                 print(f"base PPL {m.group(1)}", file=sys.stderr)
-        results = []
+        results: list[dict[str, Any]] = []
         for label, extra in variants:
             print(f"variant {label}...", file=sys.stderr)
-            out = perplexity(args, [*base, *shlex.split(extra), "--kl-divergence-base", "/work/base.kld", "--kl-divergence"])
+            out = perplexity(
+                args, [*base, *shlex.split(extra), "--kl-divergence-base", "/work/base.kld", "--kl-divergence"],
+            )
             results.append({**common, "variant": label, "variant_args": extra, "stats": parse_stats(out)})
             output_file.parent.mkdir(parents=True, exist_ok=True)
             with output_file.open("a", encoding="utf-8") as f:

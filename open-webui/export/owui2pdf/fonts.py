@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
+import argparse
 import glob
-import os
+from pathlib import Path
 import shutil
 import struct
 import sys
 
-from . import RESOURCE_DIR, PACKAGE_DIR
+from . import PACKAGE_DIR, RESOURCE_DIR
 from .util import run
 
 EMOJI_FONT_NAMES = ["Noto Color Emoji", "Twemoji Mozilla", "Twemoji", "OpenMoji Color",
                     "Apple Color Emoji", "Segoe UI Emoji", "JoyPixels"]
 EMOJI_FONT_GLOBS = [
     str(PACKAGE_DIR.parent / "fonts" / "*.ttf"),
-    os.path.expanduser("~/.local/share/fonts/**/*.ttf"),
-    os.path.expanduser("~/.fonts/**/*.ttf"),
+    str(Path("~/.local/share/fonts/**/*.ttf").expanduser()),
+    str(Path("~/.fonts/**/*.ttf").expanduser()),
     "/usr/share/fonts/**/*Emoji*.ttf",
     "/usr/local/share/fonts/**/*Emoji*.ttf",
     "/var/lib/flatpak/runtime/*/*/*/active/files/share/fonts/**/NotoColorEmoji.ttf",
-    os.path.expanduser("~/.local/share/flatpak/runtime/*/*/*/active/files/share/fonts/**/NotoColorEmoji.ttf"),
+    str(Path("~/.local/share/flatpak/runtime/*/*/*/active/files/share/fonts/**/NotoColorEmoji.ttf").expanduser()),
     "/var/lib/flatpak/app/*/*/*/active/files/**/TwemojiMozilla.ttf",
     "/var/lib/flatpak/app/*/*/*/active/files/**/Twemoji.Mozilla.ttf",
 ]
@@ -50,7 +51,7 @@ def fc_families() -> set[str]:
 def font_color_format(path: str) -> str | None:
     """Return 'CBDT', 'sbix', 'COLR0', 'COLR1' or None for a TrueType/OpenType file."""
     try:
-        with open(path, "rb") as f:
+        with Path(path).open("rb") as f:
             head = f.read(12)
             if len(head) < 12:
                 return None
@@ -80,9 +81,9 @@ def font_color_format(path: str) -> str | None:
 def find_emoji_font(explicit: str | None) -> str | None:
     """Locate a colour emoji font that LuaLaTeX can render (CBDT/COLRv0/sbix)."""
     if explicit:
-        if not os.path.isfile(explicit):
+        if not Path(explicit).is_file():
             sys.exit(f"error: emoji font not found: {explicit}")
-        return os.path.abspath(explicit)
+        return str(Path(explicit).resolve())
     candidates: list[str] = []
     if shutil.which("fc-list"):
         out = run(["fc-list", ":", "file", "family"]).stdout
@@ -93,9 +94,11 @@ def find_emoji_font(explicit: str | None) -> str | None:
             if any(n.lower() in fams.lower() for n in EMOJI_FONT_NAMES):
                 candidates.append(path.strip())
     for pat in EMOJI_FONT_GLOBS:
-        for p in sorted(glob.glob(pat, recursive=True)):
-            if "emoji" in os.path.basename(p).lower():
-                candidates.append(p)
+        # Path.glob() does not support absolute patterns.
+        candidates.extend(
+            p for p in sorted(glob.glob(pat, recursive=True))  # noqa: PTH207
+            if "emoji" in Path(p).name.lower()
+        )
     # Prefer bitmap/COLRv0 fonts (supported by luaotfload); COLRv1 is not.
     rank = {"CBDT": 0, "COLR0": 1, "sbix": 2}
     best = None
@@ -112,7 +115,7 @@ BIBLATEX_TEX = ("\\usepackage[backend=biber,style=numeric,sorting=none]{biblatex
                 "\\addbibresource{refs.bib}")
 
 
-def build_header(opts, emoji_font: str | None, use_bib: bool = False) -> str:
+def build_header(opts: argparse.Namespace, emoji_font: str | None, use_bib: bool = False) -> str:
     """Fill the placeholders of resources/header.tex.
 
     ``opts`` may carry ``main_font``, ``sans_font``, ``mono_font`` and
@@ -141,9 +144,9 @@ def build_header(opts, emoji_font: str | None, use_bib: bool = False) -> str:
         fallbacks.append('"Latin Modern Roman:mode=harf;"')
 
     if emoji_font:
-        font_dir = os.path.dirname(emoji_font) + "/"
-        font_file = os.path.basename(emoji_font)
-        text_fb = [f'"{main}:mode=harf;"'] + symbol_fonts
+        font_dir = Path(emoji_font).parent.as_posix() + "/"
+        font_file = Path(emoji_font).name
+        text_fb = [f'"{main}:mode=harf;"', *symbol_fonts]
         emoji_family = (
             "\\directlua{luaotfload.add_fallback(\"owuitextfallback\", {" + ", ".join(text_fb) + "})}\n"
             f"\\newfontfamily\\owuiemojifont{{{font_file}}}[Path={font_dir},Renderer=HarfBuzz,"

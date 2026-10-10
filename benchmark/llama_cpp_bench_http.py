@@ -38,10 +38,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import hashlib
 import json
 import os
+from pathlib import Path
 import platform
 import shutil
 import socket
@@ -52,12 +54,11 @@ import sys
 import sysconfig
 import threading
 import time
+from typing import Any, Self
 import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import Any, Self
 
 PARAGRAPH = (
     "A first-order phase transition in the early universe proceeds through the nucleation, expansion and collision "
@@ -68,11 +69,15 @@ PARAGRAPH = (
 
 # Varied, realistic requests for the chat test (code, explanation, translation, maths, scripting, essay).
 CHAT_PROMPTS = [
-    "Write a Python function that parses an ISO 8601 duration string like 'P3DT4H5M' into a timedelta, with docstring and tests.",
+    "Write a Python function that parses an ISO 8601 duration string like 'P3DT4H5M' into a timedelta, "
+    "with docstring and tests.",
     "Explain how a transformer's attention mechanism works to an undergraduate physics student, with an analogy.",
-    "Translate into Finnish and then explain any tricky grammar: 'The committee postponed its decision until the budget had been reviewed.'",
-    "A train leaves at 14:05 going 80 km/h; another leaves the same station at 14:35 going 110 km/h on a parallel track. When and where does the second catch up? Show the steps.",
-    "Write a bash script that finds the ten largest files under a directory, excluding .git, and prints human-readable sizes.",
+    "Translate into Finnish and then explain any tricky grammar: "
+    "'The committee postponed its decision until the budget had been reviewed.'",
+    "A train leaves at 14:05 going 80 km/h; another leaves the same station at 14:35 going 110 km/h on a parallel "
+    "track. When and where does the second catch up? Show the steps.",
+    "Write a bash script that finds the ten largest files under a directory, excluding .git, "
+    "and prints human-readable sizes.",
     "Summarise the pros and cons of ROCm versus Vulkan for running local LLMs on older AMD GPUs, as a short essay.",
 ]
 
@@ -89,12 +94,15 @@ DEPTH_QUESTIONS = [
 # ---------------------------------------------------------------------------
 
 class Server:
+    """A llama-server HTTP client with the endpoints used by the benchmark."""
+
     def __init__(self, url: str, api_key: str | None, timeout: float) -> None:
-        self.url = url.rstrip("/")
-        self.api_key = api_key
-        self.timeout = timeout
+        self.url: str = url.rstrip("/")
+        self.api_key: str | None = api_key
+        self.timeout: float = timeout
 
     def request(self, path: str, payload: dict[str, Any] | None = None) -> Any:
+        """Send a GET (or a POST with a JSON payload) request and return the decoded JSON response."""
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(self.url + path, data=data, method="POST" if data else "GET")
         req.add_header("Content-Type", "application/json")
@@ -110,15 +118,19 @@ class Server:
             raise SystemExit(f"Cannot reach {self.url}{path}: {e.reason}") from e
 
     def models(self) -> list[dict[str, Any]]:
+        """Return the models listed by the server."""
         return self.request("/v1/models").get("data", [])
 
     def props(self, model: str) -> dict[str, Any]:
-        return self.request(f"/props?model={urllib.request.quote(model, safe='')}")
+        """Return the server properties of the model."""
+        return self.request(f"/props?model={urllib.parse.quote(model, safe='')}")
 
     def tokenize(self, model: str, text: str) -> list[int]:
+        """Convert text to token IDs."""
         return self.request("/tokenize", {"model": model, "content": text})["tokens"]
 
     def detokenize(self, model: str, tokens: list[int]) -> str:
+        """Convert token IDs back to text."""
         return self.request("/detokenize", {"model": model, "tokens": tokens})["content"]
 
     def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
@@ -160,6 +172,7 @@ class Server:
         return self.request("/v1/chat/completions", payload)
 
     def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
+        """Embed a batch of texts."""
         return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float"})
 
 
@@ -175,6 +188,7 @@ class VllmServer(Server):
     """
 
     def text(self, path: str) -> str:
+        """Fetch a plain-text (non-JSON) response."""
         req = urllib.request.Request(self.url + path)
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
@@ -182,6 +196,7 @@ class VllmServer(Server):
             return resp.read().decode()
 
     def props(self, model: str) -> dict[str, Any]:
+        """Return llama-server-like properties assembled from the vLLM version and model list."""
         info = next((m for m in self.models() if m["id"] == model), {})
         return {
             "build_info": "vLLM " + json.loads(self.text("/version")).get("version", "?"),
@@ -191,12 +206,15 @@ class VllmServer(Server):
         }
 
     def tokenize(self, model: str, text: str) -> list[int]:
+        """Convert text to token IDs."""
         return self.request("/tokenize", {"model": model, "prompt": text, "add_special_tokens": False})["tokens"]
 
     def detokenize(self, model: str, tokens: list[int]) -> str:
+        """Convert token IDs back to text."""
         return self.request("/detokenize", {"model": model, "tokens": tokens})["prompt"]
 
     def spec_counters(self) -> tuple[float, float]:
+        """Return the cumulative speculative decoding draft and accepted token counts from ``/metrics``."""
         draft = accepted = 0.0
         for line in self.text("/metrics").splitlines():
             if line.startswith("vllm:spec_decode_num_draft_tokens_total"):
@@ -206,6 +224,7 @@ class VllmServer(Server):
         return draft, accepted
 
     def stream(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a streamed request and return client-measured ``timings`` and the ``usage``."""
         payload = {**payload, "stream": True, "stream_options": {"include_usage": True},
                    "cache_salt": os.urandom(8).hex()}
         draft0, accepted0 = self.spec_counters()
@@ -226,7 +245,8 @@ class VllmServer(Server):
                     usage = chunk.get("usage") or usage
                     for choice in chunk.get("choices", []):
                         delta = choice.get("delta") or {}
-                        if choice.get("text") or delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
+                        if (choice.get("text") or delta.get("content")
+                                or delta.get("reasoning_content") or delta.get("reasoning")):
                             last = time.perf_counter()
                             first = first or last
         except urllib.error.HTTPError as e:
@@ -249,15 +269,18 @@ class VllmServer(Server):
         return {"timings": timings, "usage": usage}
 
     def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
+        """Raw completion of exactly ``n_predict`` tokens; returns the client-measured timings."""
         payload = {"model": model, "prompt": prompt, "max_tokens": n_predict, "temperature": 0.0, "ignore_eos": True}
         return self.stream("/v1/completions", payload)
 
     def chat(self, model: str, content: str, max_tokens: int) -> dict[str, Any]:
+        """Chat completion with the chat template; returns the client-measured timings."""
         payload = {"model": model, "messages": [{"role": "user", "content": content}], "max_tokens": max_tokens,
                    "seed": 42}
         return self.stream("/v1/chat/completions", payload)
 
     def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
+        """Chat completion with one PNG image; returns the client-measured timings."""
         url = "data:image/png;base64," + base64.b64encode(png).decode()
         payload = {
             "model": model,
@@ -272,7 +295,7 @@ class VllmServer(Server):
 
 
 def is_vllm(url: str, timeout: float) -> bool:
-    """vLLM answers ``/version`` with its version; llama-server does not have that endpoint."""
+    """VLLM answers ``/version`` with its version; llama-server does not have that endpoint."""
     try:
         with urllib.request.urlopen(url.rstrip("/") + "/version", timeout=timeout) as resp:
             return "version" in json.loads(resp.read())
@@ -315,9 +338,9 @@ class GpuSampler:
     """
 
     def __init__(self, interval: float = 0.5) -> None:
-        self.tools = [t for t in ("nvidia-smi", "amd-smi") if shutil.which(t)]
-        self.available = bool(self.tools)
-        self.interval = interval
+        self.tools: list[str] = [t for t in ("nvidia-smi", "amd-smi") if shutil.which(t)]
+        self.available: bool = bool(self.tools)
+        self.interval: float = interval
         self.peak: list[int] = []
         self.process_peak: int | None = None
         self.names: list[str] = []
@@ -331,7 +354,8 @@ class GpuSampler:
     def _query_tool(self, tool: str) -> list[int]:
         if tool == "amd-smi":
             try:
-                return [int(g["mem_usage"]["used_vram"]["value"]) for g in json.loads(self._run(["amd-smi", "metric", "-m", "--json"]))]
+                metrics = json.loads(self._run(["amd-smi", "metric", "-m", "--json"]))
+                return [int(g["mem_usage"]["used_vram"]["value"]) for g in metrics]
             except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 return []
         out = self._run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"])
@@ -354,7 +378,9 @@ class GpuSampler:
         """MiB used by llama-server processes on all NVIDIA GPUs (None without nvidia-smi or if it fails)."""
         if "nvidia-smi" not in self.tools:
             return None
-        out = self._run(["nvidia-smi", "--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"])
+        out = self._run(
+            ["nvidia-smi", "--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"]
+        )
         try:
             return sum(int(line.rsplit(",", 1)[1]) for line in out.splitlines() if "llama" in line)
         except (IndexError, ValueError):
@@ -395,6 +421,7 @@ class GpuSampler:
 # ---------------------------------------------------------------------------
 
 def timings_summary(t: dict[str, Any]) -> dict[str, Any]:
+    """Reduce the server timings to rounded throughput figures and the draft acceptance rate."""
     out = {
         "prompt_tokens": t.get("prompt_n"),
         "prompt_tps": round(t.get("prompt_per_second") or 0, 1),
@@ -407,6 +434,7 @@ def timings_summary(t: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_generation(server: Server, model: str, n_predict: int, repeat: int) -> dict[str, Any]:
+    """Measure generation speed with a short prompt; reports the best of ``repeat`` runs."""
     prompt, _ = build_prompt(server, model, 64)
     runs = [timings_summary(server.completion(model, prompt, n_predict)["timings"]) for _ in range(repeat)]
     best = max(runs, key=lambda r: r["generation_tps"])
@@ -414,6 +442,7 @@ def test_generation(server: Server, model: str, n_predict: int, repeat: int) -> 
 
 
 def test_prompt_processing(server: Server, model: str, prompt_tokens: int, repeat: int) -> dict[str, Any]:
+    """Measure prompt processing speed with ``prompt_tokens`` tokens; reports the best of ``repeat`` runs."""
     prompt, n = build_prompt(server, model, prompt_tokens)
     runs = [timings_summary(server.completion(model, prompt, 16)["timings"]) for _ in range(repeat)]
     best = max(runs, key=lambda r: r["prompt_tps"])
@@ -441,7 +470,9 @@ def test_chat(server: Server, model: str, max_tokens: int, repeat: int) -> dict[
 def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[str, Any]:
     """A long code context (about ``depth`` tokens) and a question: prompt processing and generation at that depth."""
     runs = [
-        timings_summary(server.chat(model, build_code_context(server, model, depth, rotate=7 * i) + "\n\n" + q, max_tokens)["timings"])
+        timings_summary(server.chat(
+            model, build_code_context(server, model, depth, rotate=7 * i) + "\n\n" + q, max_tokens
+        )["timings"])
         for i, q in enumerate(DEPTH_QUESTIONS)
     ]
     tps = [r["generation_tps"] for r in runs]
@@ -461,7 +492,7 @@ def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[
 
 
 def synthetic_png(width: int, height: int, seed: int) -> bytes:
-    """A deterministic RGB test image (colour gradients and a grid of shapes), encoded as PNG with the standard library."""
+    """A deterministic RGB test image (colour gradients and a grid of shapes), encoded as PNG with the stdlib."""
     rows = []
     for y in range(height):
         row = bytearray([0])  # filter type 0 for each scanline
@@ -478,7 +509,8 @@ def synthetic_png(width: int, height: int, seed: int) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
     header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b"")
+    idat = zlib.compress(b"".join(rows), 6)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
 def test_image(server: Server, model: str, size: tuple[int, int], repeat: int) -> dict[str, Any]:
@@ -545,7 +577,7 @@ def test_concurrency(
     t = [r["timings"] for r in results]
     generated = sum(x["predicted_n"] for x in t)
     prompt_total = sum(x["prompt_n"] for x in t)
-    out = {
+    out: dict[str, Any] = {
         "concurrency": concurrency,
         "prompt_tokens_each": prompt_tokens,
         "generated_tokens_each": n_predict,
@@ -558,12 +590,15 @@ def test_concurrency(
     if embedding:
         out["concurrent_embedding"] = {
             "batches": embed_stats["batches"],
-            "tokens_per_s": round(embed_stats["tokens"] / embed_stats["seconds"], 1) if embed_stats["seconds"] else None,
+            "tokens_per_s": (
+                round(embed_stats["tokens"] / embed_stats["seconds"], 1) if embed_stats["seconds"] else None
+            ),
         }
     return out
 
 
 def test_embeddings(server: Server, model: str, n_texts: int, tokens_each: int) -> dict[str, Any]:
+    """Measure embedding throughput for a batch of ``n_texts`` texts and for a single text."""
     texts = [build_prompt(server, model, tokens_each, salt=f"Chunk {i}. ")[0] for i in range(n_texts)]
     total_tokens = sum(len(server.tokenize(model, t)) for t in texts)
     start = time.perf_counter()
@@ -579,7 +614,9 @@ def test_embeddings(server: Server, model: str, n_texts: int, tokens_each: int) 
         "single_text_s": round(single_s, 2),
         "batch_wall_s": round(wall, 1),
         "tokens_per_s": round(total_tokens / wall, 1),
-        "reported_prompt_tokens": (batch.get("usage") or {}).get("prompt_tokens") or (single.get("usage") or {}).get("prompt_tokens"),
+        "reported_prompt_tokens": (
+            (batch.get("usage") or {}).get("prompt_tokens") or (single.get("usage") or {}).get("prompt_tokens")
+        ),
     }
 
 
@@ -588,6 +625,7 @@ def test_embeddings(server: Server, model: str, n_texts: int, tokens_each: int) 
 # ---------------------------------------------------------------------------
 
 def read_env_key(path: Path, name: str = "LLAMA_API_KEY") -> str | None:
+    """Read the value of ``name`` from a ``NAME=value`` env file (None if it is not set)."""
     for line in path.read_text(encoding="utf-8").splitlines():
         k, sep, v = line.partition("=")
         if sep and k.strip() == name:
@@ -634,30 +672,40 @@ DEFAULT_TESTS = ["generation", "prompt", "concurrency", "embedding"]
 
 
 def main() -> int:
+    """Parse the arguments, run the selected tests and store and print the result."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", default="http://localhost:9931", help="llama-server base URL (default %(default)s)")
     parser.add_argument("--api-key", help="API key, if the server was started with one")
     parser.add_argument("--env-file", type=Path, help="read the key from LLAMA_API_KEY=... in this file")
     parser.add_argument("--model", help="chat model id (default: first loaded non-embedding model)")
-    parser.add_argument("--embedding-model", help="embedding model id (default: first loaded model with 'embed' in its id)")
+    parser.add_argument("--embedding-model",
+                        help="embedding model id (default: first loaded model with 'embed' in its id)")
     parser.add_argument("--no-embedding", action="store_true", help="skip the embedding test")
     parser.add_argument("--tests", nargs="+", choices=ALL_TESTS, default=DEFAULT_TESTS,
                         help=f"tests to run (default: {' '.join(DEFAULT_TESTS)})")
-    parser.add_argument("--n-predict", type=int, default=256, help="tokens to generate per request (default %(default)s)")
-    parser.add_argument("--prompt-tokens", type=int, default=4096, help="prompt length for the prompt-processing test")
-    parser.add_argument("--concurrency", type=int, nargs="*", help="concurrent request counts (default: 1 and the slot count)")
-    parser.add_argument("--concurrent-prompt-tokens", type=int, default=1024, help="prompt length per concurrent request")
-    parser.add_argument("--embed-texts", type=int, default=16, help="texts in the embedding batch (default %(default)s)")
-    parser.add_argument("--embed-tokens", type=int, default=1024, help="tokens per embedded text (default %(default)s)")
+    parser.add_argument("--n-predict", type=int, default=256,
+                        help="tokens to generate per request (default %(default)s)")
+    parser.add_argument("--prompt-tokens", type=int, default=4096,
+                        help="prompt length for the prompt-processing test")
+    parser.add_argument("--concurrency", type=int, nargs="*",
+                        help="concurrent request counts (default: 1 and the slot count)")
+    parser.add_argument("--concurrent-prompt-tokens", type=int, default=1024,
+                        help="prompt length per concurrent request")
+    parser.add_argument("--embed-texts", type=int, default=16,
+                        help="texts in the embedding batch (default %(default)s)")
+    parser.add_argument("--embed-tokens", type=int, default=1024,
+                        help="tokens per embedded text (default %(default)s)")
     parser.add_argument("--mixed", action="store_true",
-                        help="run embedding batches concurrently with the highest concurrency test (PaperQA2-like load)")
+                        help="run embedding batches concurrently with the highest concurrency test "
+                             "(PaperQA2-like load)")
     parser.add_argument("--chat-n-predict", type=int, default=512,
                         help="maximum tokens per request in the chat and depth tests (default %(default)s)")
     parser.add_argument("--depth", type=int, nargs="+", default=[16000],
                         help="context lengths in tokens for the depth test (default %(default)s)")
     parser.add_argument("--image-size", default="1280x960",
                         help="width x height of the test image of the image test (default %(default)s)")
-    parser.add_argument("--repeat", type=int, default=3, help="repetitions of the single-request tests (the best is reported) and of the chat prompts")
+    parser.add_argument("--repeat", type=int, default=3,
+                        help="repetitions of the single-request tests (the best is reported) and of the chat prompts")
     parser.add_argument("--timeout", type=float, default=900.0, help="HTTP timeout per request in seconds")
     parser.add_argument("--label", default="", help="free-text label stored with the result, e.g. what was changed")
     parser.add_argument("--server-config", type=Path,
@@ -670,7 +718,9 @@ def main() -> int:
                         help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
 
-    api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    api_key = (
+        args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
+    )
     server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
     models = server.models()
     chat_model, embedding_model = pick_models(models, args.model, args.embedding_model)
@@ -713,12 +763,14 @@ def main() -> int:
             print(f"prompt processing: {args.prompt_tokens} tokens x{args.repeat}...", file=sys.stderr)
             result["prompt_processing"] = test_prompt_processing(server, chat_model, args.prompt_tokens, args.repeat)
         if "chat" in args.tests:
-            print(f"chat: {len(CHAT_PROMPTS)} prompts x{args.repeat}, up to {args.chat_n_predict} tokens...", file=sys.stderr)
+            print(f"chat: {len(CHAT_PROMPTS)} prompts x{args.repeat}, up to {args.chat_n_predict} tokens...",
+                  file=sys.stderr)
             result["chat"] = test_chat(server, chat_model, args.chat_n_predict, args.repeat)
         if "depth" in args.tests:
             result["depth"] = []
             for d in args.depth:
-                print(f"depth: {len(DEPTH_QUESTIONS)} x {d}-token code context, up to {args.chat_n_predict} tokens...", file=sys.stderr)
+                print(f"depth: {len(DEPTH_QUESTIONS)} x {d}-token code context, up to {args.chat_n_predict} tokens...",
+                      file=sys.stderr)
                 result["depth"].append(test_depth(server, chat_model, d, args.chat_n_predict))
         if "image" in args.tests:
             size = tuple(int(v) for v in args.image_size.lower().split("x"))
@@ -727,7 +779,10 @@ def main() -> int:
         result["concurrency"] = []
         mixed_embedding = None
         if args.mixed and embedding_model:
-            texts = [build_prompt(server, embedding_model, args.embed_tokens, salt=f"Chunk {i}. ")[0] for i in range(args.embed_texts)]
+            texts = [
+                build_prompt(server, embedding_model, args.embed_tokens, salt=f"Chunk {i}. ")[0]
+                for i in range(args.embed_texts)
+            ]
             mixed_embedding = (embedding_model, texts, sum(len(server.tokenize(embedding_model, t)) for t in texts))
         for c in concurrency if "concurrency" in args.tests else []:
             mixed = mixed_embedding if c == max(concurrency) else None
@@ -740,9 +795,10 @@ def main() -> int:
             print(f"embeddings: {args.embed_texts} texts x {args.embed_tokens} tokens...", file=sys.stderr)
             result["embeddings"] = test_embeddings(server, embedding_model, args.embed_texts, args.embed_tokens)
     if gpu.available:
-        result["gpu"] = {"names": gpu.names, "peak_memory_used_mib": gpu.peak}
+        gpu_result: dict[str, Any] = {"names": gpu.names, "peak_memory_used_mib": gpu.peak}
         if gpu.process_peak is not None:
-            result["gpu"]["peak_llama_server_memory_mib"] = gpu.process_peak
+            gpu_result["peak_llama_server_memory_mib"] = gpu.process_peak
+        result["gpu"] = gpu_result
 
     output = args.output or Path(__file__).resolve().parent / "results" / f"{result['host'].split('.')[0]}.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -759,23 +815,28 @@ def main() -> int:
         print(f"| Prompt processing, {p['prompt_tokens']} tokens | **{p['prompt_tps']} tokens/s** |")
     if ch := result.get("chat"):
         acc = f", draft acceptance {ch['draft_acceptance_mean']} %" if "draft_acceptance_mean" in ch else ""
-        print(f"| Chat, {ch['requests']} requests, up to {ch['max_tokens']} tokens | **{ch['generation_tps_mean']} tokens/s** "
+        print(f"| Chat, {ch['requests']} requests, up to {ch['max_tokens']} tokens "
+              f"| **{ch['generation_tps_mean']} tokens/s** "
               f"(median {ch['generation_tps_median']}, {ch['generation_tps_min']}-{ch['generation_tps_max']}){acc} |")
     for d in result.get("depth", []):
         acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
-        print(f"| Code context of {d['prompt_tokens']} tokens, up to {d['max_tokens']} generated | prompt **{d['prompt_tps_mean']} tokens/s**, "
-              f"generation **{d['generation_tps_mean']} tokens/s** ({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
+        print(f"| Code context of {d['prompt_tokens']} tokens, up to {d['max_tokens']} generated "
+              f"| prompt **{d['prompt_tps_mean']} tokens/s**, "
+              f"generation **{d['generation_tps_mean']} tokens/s** "
+              f"({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
     for c in result["concurrency"]:
         mixed = c.get("concurrent_embedding")
         extra = f" + embeddings at {mixed['tokens_per_s']} tokens/s" if mixed else ""
-        print(f"| {c['concurrency']} concurrent x ({c['prompt_tokens_each']} prompt + {c['generated_tokens_each']} generated)"
+        print(f"| {c['concurrency']} concurrent x "
+              f"({c['prompt_tokens_each']} prompt + {c['generated_tokens_each']} generated)"
               f"{' with concurrent embeddings' if mixed else ''} "
               f"| {c['aggregate_generation_tps']} tokens/s generated in total, "
               f"{min(c['per_request_generation_tps'])}-{max(c['per_request_generation_tps'])} per request, "
               f"{c['wall_s']} s{extra} |")
     if embedding_model:
         e = result["embeddings"]
-        print(f"| Embeddings `{embedding_model}`, {e['texts']} x {e['tokens_each']} tokens | **{e['tokens_per_s']} tokens/s**, "
+        print(f"| Embeddings `{embedding_model}`, {e['texts']} x {e['tokens_each']} tokens "
+              f"| **{e['tokens_per_s']} tokens/s**, "
               f"{e['dimension']} dims, single text {e['single_text_s']} s |")
     if im := result.get("image"):
         print(f"| Image {im['image_size']} ({im['prompt_tokens']} prompt tokens), {len(im['runs'])} requests | "

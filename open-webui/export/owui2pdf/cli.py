@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
+import sys
 
 from .build import convert_chat
 from .chat import chat_title, load_chats
@@ -15,6 +15,7 @@ from .util import slugify, which_or_die
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     p = argparse.ArgumentParser(
         prog="owui2pdf",
         description="Convert Open WebUI JSON chat exports to PDF. INPUT may be a JSON file "
@@ -95,14 +96,11 @@ def collect_inputs(inputs: list[Path]) -> list[tuple[Path, Path]]:
     return jobs
 
 
-def output_paths(json_path: Path, base: Path, chats: list[dict], args) -> list[Path]:
+def output_paths(json_path: Path, base: Path, chats: list[dict], args: argparse.Namespace) -> list[Path]:
     """PDF paths for the chats of one JSON file: <stem>.pdf, or <stem>-NNN-<title>.pdf."""
     if args.output:
         return [args.output]
-    if args.outdir:
-        outdir = args.outdir / json_path.parent.resolve().relative_to(base.resolve())
-    else:
-        outdir = json_path.parent
+    outdir = args.outdir / json_path.parent.resolve().relative_to(base.resolve()) if args.outdir else json_path.parent
     if len(chats) == 1:
         return [outdir / (json_path.stem + ".pdf")]
     paths, used = [], set()
@@ -116,13 +114,15 @@ def output_paths(json_path: Path, base: Path, chats: list[dict], args) -> list[P
 
 
 def is_up_to_date(pdf: Path, json_path: Path) -> bool:
+    """Return whether the PDF is at least as new as its JSON source."""
     try:
         return pdf.stat().st_mtime >= json_path.stat().st_mtime
     except OSError:
         return False
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the command-line interface and return the exit code."""
     args = build_parser().parse_args(argv)
 
     for tool in ("pandoc", "latexmk", "lualatex"):
@@ -154,7 +154,7 @@ def main(argv=None) -> int:
             continue
         if args.output and len(chats) > 1:
             sys.exit("error: -o/--output can only be used with a single-chat export; use --outdir")
-        for chat_item, out_pdf in zip(chats, output_paths(json_path, base, chats, args)):
+        for chat_item, out_pdf in zip(chats, output_paths(json_path, base, chats, args), strict=True):
             if args.skip_existing and is_up_to_date(out_pdf, json_path):
                 if args.verbose:
                     print(f"up to date: {out_pdf}")

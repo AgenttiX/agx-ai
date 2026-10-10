@@ -1,4 +1,4 @@
-"""Referenced notes, files and web pages: citations, bibliography, appendix.
+r"""Referenced notes, files and web pages: citations, bibliography, appendix.
 
 Open WebUI marks retrieved sources in assistant messages as ``[n]``, where n
 is the position in the message's (de-duplicated) ``sources`` list. The
@@ -10,8 +10,8 @@ included.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
+import re
 
 from .util import fmt_timestamp, tex_escape
 
@@ -24,7 +24,7 @@ def _is_url(v) -> bool:
     return isinstance(v, str) and v.startswith(("http://", "https://"))
 
 
-def _text_content(obj: dict) -> str | None:
+def text_content(obj: dict) -> str | None:
     """Extract note/file text from the various shapes Open WebUI uses."""
     if not isinstance(obj, dict):
         return None
@@ -42,6 +42,8 @@ def _text_content(obj: dict) -> str | None:
 
 @dataclass
 class Source:
+    """A referenced source, such as a note, file or web page."""
+
     key: str
     kind: str  # note | file | web | other
     title: str
@@ -57,19 +59,25 @@ class Source:
 
     @property
     def text(self) -> str:
+        """Full content if known, otherwise the joined excerpts."""
         if self.content is not None:
             return self.content
         return "\n\n".join(self.excerpts)
 
     def counts(self) -> tuple[int, int]:
+        """Return the character and word counts of the text."""
         t = self.text
         return len(t), len(t.split())
 
     @property
     def has_full_content(self) -> bool:
+        """Whether the full source content is available."""
         return self.content is not None and self.content_kind == "full"
 
-    def set_full_content(self, content: str, created_at=None, updated_at=None) -> None:
+    def set_full_content(
+        self, content: str, created_at: float | str | None = None, updated_at: float | str | None = None,
+    ) -> None:
+        """Store the full content and fill in missing timestamps."""
         self.content = content
         self.content_kind = "full"
         if created_at and not self.created_at:
@@ -77,13 +85,14 @@ class Source:
         if updated_at and not self.updated_at:
             self.updated_at = fmt_timestamp(updated_at)
 
-    def _set_export_content(self, content: str) -> None:
+    def set_export_content(self, content: str) -> None:
         """Content found in the chat export; may be truncated for notes."""
         self.content = content
         truncated = self.kind == "note" and len(content) >= NOTE_TRUNCATION_LIMIT
         self.content_kind = "truncated" if truncated else "full"
 
     def counts_text(self) -> str:
+        """Describe the size of the text, noting if it is truncated or missing."""
         chars, words = self.counts()
         if self.content_kind == "full":
             return f"{chars} characters, {words} words"
@@ -95,9 +104,11 @@ class Source:
                 "(full text not in the export)")
 
     def label(self) -> str:
+        """Return a human-readable name for the kind of source."""
         return {"note": "Open WebUI note", "file": "Uploaded file", "web": "Web page"}.get(self.kind, "Source")
 
     def metadata_text(self) -> str:
+        """Return a description of the source's timestamps, content type, size and length."""
         bits = []
         if self.created_at:
             bits.append(f"created {self.created_at}")
@@ -143,9 +154,9 @@ class SourceRegistry:
         title = f.get("name") or f.get("title") or (f.get("file") or {}).get("filename") or ident
         src = self._get_or_create(ident, kind, str(title))
         self._update_meta(src, f)
-        content = _text_content(f)
+        content = text_content(f)
         if content is not None and not src.has_full_content:
-            src._set_export_content(content)
+            src.set_export_content(content)
         return src
 
     def register_source(self, entry: dict) -> Source | None:
@@ -172,9 +183,9 @@ class SourceRegistry:
         if url and not src.url:
             src.url = url
         self._update_meta(src, s)
-        content = _text_content(s)
+        content = text_content(s)
         if content is not None and not src.has_full_content:
-            src._set_export_content(content)
+            src.set_export_content(content)
         for d in docs:
             if d not in src.excerpts:
                 src.excerpts.append(d)
@@ -216,9 +227,11 @@ class SourceRegistry:
     # -- output -------------------------------------------------------------
 
     def notes_with_content(self) -> list[Source]:
+        """Return the note sources that have non-empty text."""
         return [s for s in self.sources.values() if s.kind == "note" and s.text.strip()]
 
     def bibtex(self, include_notes: bool) -> str:
+        """Render the sources as BibTeX entries."""
         entries = []
         for src in self.sources.values():
             fields = {"title": tex_escape(src.title)}
@@ -240,7 +253,7 @@ class SourceRegistry:
         return "\n\n".join(entries) + "\n"
 
 
-CITE_MARK_RE = re.compile(r"(?<![\[\w\\])\[(\d{1,3})\](?![\(\[:\w])")
+CITE_MARK_RE: re.Pattern[str] = re.compile(r"(?<![\[\w\\])\[(\d{1,3})\](?![\(\[:\w])")
 
 
 def convert_citation_marks(text: str, cite_map: dict[int, str]) -> str:
@@ -256,4 +269,5 @@ def convert_citation_marks(text: str, cite_map: dict[int, str]) -> str:
 
 
 def cite_inline(keys: list[str]) -> str:
+    """Return a pandoc raw LaTeX citation of the given keys."""
     return "`\\cite{%s}`{=latex}" % ",".join(keys)

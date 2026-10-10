@@ -1,4 +1,4 @@
-"""Normalising Open WebUI message content and assembling the Markdown document.
+r"""Normalising Open WebUI message content and assembling the Markdown document.
 
 Open WebUI renders Markdown with marked (GFM) plus KaTeX. Before handing the
 text to pandoc we
@@ -14,28 +14,28 @@ text to pandoc we
 
 from __future__ import annotations
 
+import argparse
 import base64
 import html
-import re
 from pathlib import Path
+import re
 
-from .chat import (attachments_markdown, chat_body, chat_title, error_text, message_text,
-                   ordered_messages, usage_text)
+from .chat import attachments_markdown, chat_body, chat_title, error_text, message_text, ordered_messages, usage_text
 from .notes import resolve_notes
 from .sources import SourceRegistry, cite_inline, convert_citation_marks
 from .util import fmt_timestamp, tex_escape
 
-FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
-DETAILS_RE = re.compile(r"<details\b([^>]*)>((?:(?!<details\b).)*?)</details>", re.S | re.I)
-SUMMARY_RE = re.compile(r"\s*<summary>(.*?)</summary>\s*", re.S | re.I)
-ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
-THINK_RE = re.compile(r"<(think|thinking)>(.*?)</\1>", re.S | re.I)
-CODE_SPAN_RE = re.compile(r"(`+)(.+?)\1", re.S)
+FENCE_RE: re.Pattern[str] = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+DETAILS_RE: re.Pattern[str] = re.compile(r"<details\b([^>]*)>((?:(?!<details\b).)*?)</details>", re.S | re.I)
+SUMMARY_RE: re.Pattern[str] = re.compile(r"\s*<summary>(.*?)</summary>\s*", re.S | re.I)
+ATTR_RE: re.Pattern[str] = re.compile(r'(\w+)="([^"]*)"')
+THINK_RE: re.Pattern[str] = re.compile(r"<(think|thinking)>(.*?)</\1>", re.S | re.I)
+CODE_SPAN_RE: re.Pattern[str] = re.compile(r"(`+)(.+?)\1", re.S)
 # Code spans and math spans: no inline conversions inside these.
-PROTECTED_RE = re.compile(r"(`+)(?:.+?)\1|\$\$.+?\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$", re.S)
-DISPLAY_MATH_RE = re.compile(r"\\\[(.+?)\\\]", re.S)
-INLINE_MATH_RE = re.compile(r"\\\((.+?)\\\)", re.S)
-DATA_IMG_RE = re.compile(
+PROTECTED_RE: re.Pattern[str] = re.compile(r"(`+)(?:.+?)\1|\$\$.+?\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$", re.S)
+DISPLAY_MATH_RE: re.Pattern[str] = re.compile(r"\\\[(.+?)\\\]", re.S)
+INLINE_MATH_RE: re.Pattern[str] = re.compile(r"\\\((.+?)\\\)", re.S)
+DATA_IMG_RE: re.Pattern[str] = re.compile(
     r"!\[([^\]]*)\]\((data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))\)")
 INLINE_HTML = [
     (re.compile(r"<(b|strong)>(.*?)</\1>", re.S | re.I), r"**\2**"),
@@ -44,9 +44,9 @@ INLINE_HTML = [
     (re.compile(r"<code>(.*?)</code>", re.S | re.I), r"`\1`"),
     (re.compile(r"<(u|mark|small|span|font)(\s[^>]*)?>(.*?)</\1>", re.S | re.I), r"\3"),
 ]
-SUPSUB_RE = re.compile(r"<(sup|sub)>(.*?)</\1>", re.S | re.I)
-BR_RE = re.compile(r"<br\s*/?>", re.I)
-RAW_LATEX_INLINE_RE = re.compile(r"`\\[a-zA-Z]+\{[^`]*\}`\{=latex\}")
+SUPSUB_RE: re.Pattern[str] = re.compile(r"<(sup|sub)>(.*?)</\1>", re.S | re.I)
+BR_RE: re.Pattern[str] = re.compile(r"<br\s*/?>", re.I)
+RAW_LATEX_INLINE_RE: re.Pattern[str] = re.compile(r"`\\[a-zA-Z]+\{[^`]*\}`\{=latex\}")
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,7 @@ RAW_LATEX_INLINE_RE = re.compile(r"`\\[a-zA-Z]+\{[^`]*\}`\{=latex\}")
 # ---------------------------------------------------------------------------
 
 def blockquote(text: str) -> str:
+    """Prefix every line of the text with a Markdown blockquote marker."""
     return "\n".join("> " + line if line.strip() else ">" for line in text.strip("\n").splitlines())
 
 
@@ -122,8 +123,9 @@ def convert_inline_html(text: str) -> str:
     for line in text.split("\n"):
         if BR_RE.search(line):
             # Inside a table row a newline would end the row; use a space there.
-            line = BR_RE.sub(" " if line.lstrip().startswith("|") else "\\\n", line)
-        lines.append(line)
+            lines.append(BR_RE.sub(" " if line.lstrip().startswith("|") else "\\\n", line))
+        else:
+            lines.append(line)
     return "\n".join(lines)
 
 
@@ -153,7 +155,7 @@ def convert_inline_segment(text: str, cite_map: dict[int, str] | None = None) ->
 # Lines whose meaning depends on staying adjacent to their neighbours: list
 # items, table rows, block quotes, headings (ATX and setext underlines),
 # indented code, fences, link/footnote definitions.
-STRUCTURAL_LINE_RE = re.compile(
+STRUCTURAL_LINE_RE: re.Pattern[str] = re.compile(
     r"^\s*(?:[-*+]\s|\d+[.)]\s|\||>|#{1,6}\s|```|~~~|\[[^\]]+\]:|(?:=+|-+)\s*$)|^(?: {4}|\t)")
 
 
@@ -182,6 +184,7 @@ def single_newlines_to_paragraphs(text: str) -> str:
 def preprocess_markdown(md: str, include_reasoning: bool,
                         cite_map: dict[int, str] | None = None,
                         paragraph_breaks: bool = False) -> str:
+    """Convert chat Markdown into pandoc-ready Markdown with raw LaTeX where needed."""
     md = md.replace("\r\n", "\n")
     md = convert_details(md, include_reasoning)
     out_lines = []
@@ -227,7 +230,7 @@ def extract_data_images(md: str, media_dir: Path, counter: list[int]) -> str:
         path = media_dir / f"img{counter[0]}.{ext}"
         try:
             path.write_bytes(base64.b64decode(re.sub(r"\s+", "", m.group(4))))
-        except Exception:
+        except (ValueError, OSError):
             return f"*[image: {m.group(1) or 'undecodable'}]*"
         return f"![{m.group(1)}]({path.as_posix()})"
 
@@ -246,17 +249,20 @@ ROLE_STYLES = {
 
 
 def raw_latex_block(tex: str) -> str:
+    """Wrap LaTeX source in a pandoc raw LaTeX block."""
     return "\n\n```{=latex}\n" + tex + "\n```\n\n"
 
 
 def bookmark_preview(body: str, limit: int = 60) -> str:
+    """Return a short plain-text preview of a message body for PDF bookmarks."""
     body = RAW_LATEX_INLINE_RE.sub("", body)
     preview = re.sub(r"\s+", " ", re.sub(r"[#*`>_\[\]\\{}~^$&%]", "", body)).strip()
     return preview[:limit] + ("…" if len(preview) > limit else "")
 
 
-def message_markdown(msg: dict, opts, media_dir: Path, img_counter: list[int],
+def message_markdown(msg: dict, opts: argparse.Namespace, media_dir: Path, img_counter: list[int],
                      registry: SourceRegistry | None) -> str:
+    """Render a single chat message as Markdown with a role header."""
     role = (msg.get("role") or "assistant").lower()
     label, bg, fg = ROLE_STYLES.get(role, ROLE_STYLES["assistant"])
     if role == "user":
@@ -301,6 +307,7 @@ def message_markdown(msg: dict, opts, media_dir: Path, img_counter: list[int],
 
 
 def bibliography_markdown() -> str:
+    """Return the raw LaTeX block that prints the bibliography."""
     return raw_latex_block(
         "\\nocite{*}\n"
         "\\par\\Needspace*{6\\baselineskip}\n"
@@ -310,6 +317,7 @@ def bibliography_markdown() -> str:
 
 
 def appendix_markdown(registry: SourceRegistry) -> str:
+    """Return the appendix Markdown containing the referenced notes."""
     notes = registry.notes_with_content()
     if not notes:
         return ""
@@ -330,7 +338,7 @@ def appendix_markdown(registry: SourceRegistry) -> str:
     return "\n\n".join(parts)
 
 
-def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict, str | None]:
+def build_markdown(chat_item: dict, opts: argparse.Namespace, media_dir: Path) -> tuple[str, dict, str | None]:
     """Return (markdown document, pandoc metadata, bibtex or None) for one chat.
 
     ``opts`` needs the attributes ``show_usage``, ``show_sources``,
@@ -359,10 +367,8 @@ def build_markdown(chat_item: dict, opts, media_dir: Path) -> tuple[str, dict, s
             for f in msg.get("files") or []:
                 registry.register_file(f)
 
-    parts = []
     img_counter = [0]
-    for msg in messages:
-        parts.append(message_markdown(msg, opts, media_dir, img_counter, registry))
+    parts = [message_markdown(msg, opts, media_dir, img_counter, registry) for msg in messages]
 
     bib = None
     if registry is not None and len(registry):

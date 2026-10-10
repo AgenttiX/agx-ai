@@ -1,0 +1,245 @@
+# The uv build backend is not the default, so it has to be set explicitly.
+# Without a build-system table, uv would fall back to setuptools.
+# The upper bound follows the uv versioning policy, so that the package keeps building when new versions are released.
+# https://docs.astral.sh/uv/concepts/build-backend/
+# [build-system]
+# requires = ["uv_build >= 0.12.17, < 0.13"]
+# build-backend = "uv_build"
+
+[project]
+name = "agx-ai"
+version = "0.10.0"
+description = "AgenttiX AI configurations"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "AI",
+    "Docker",
+    "llama.cpp",
+    "LiteLLM",
+    "LLM",
+    "vLLM"
+]
+authors = [
+    {name = "Mika Mäki"},
+]
+maintainers = [
+    {name = "Mika Mäki"}
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Windows",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed"
+]
+requires-python = ">= 3.14"
+# dynamic = ["version"]
+
+dependencies = [
+    "matplotlib >= 3.10.9",
+    "numpy >= 2.4.6",
+    # As of 2026-05, Orjson does not yet support free-threading.
+    "orjson >= 3.11.9",
+    "pandas >= 3.0.5"
+]
+
+[project.urls]
+issues = "https://github.com/AgenttiX/agx-ai/issues"
+repository = "https://github.com/AgenttiX/agx-ai"
+
+# Dependency groups (PEP 735) for development and documentation.
+# These are installed by "uv sync" and are not included in the published package.
+# The exact versions are pinned in uv.lock.
+[dependency-groups]
+dev = [
+    "colorama >= 0.4.6",
+    "pandas-stubs >= 3.0.3.260530",
+    # Git hooks, configured in .pre-commit-config.yaml
+    # "prek >= 0.5.4",
+    "pyrefly >= 1.2.0",
+    "pytest >= 9.1.1",
+    "pytest-cov >= 7.1.0",
+    "pytest-html >= 4.2.0",
+    "ruff >= 0.16.6",
+    # For checking the packages built with "uv build"
+    "twine >= 6.2.0",
+]
+
+[tool.uv]
+# "uv sync" installs the full development environment, including the tools for building the documentation.
+# Use "uv sync --no-group docs" to skip the documentation dependencies.
+default-groups = ["dev"]
+
+# The package name "pttools-gw" differs from the module name, and the module is in the repository root
+# instead of the default "src" directory.
+# [tool.uv.build-backend]
+# module-name = "agx-ai"
+# module-root = ""
+
+[tool.coverage.run]
+branch = true
+concurrency = [
+    "thread",
+    "multiprocessing"
+]
+source = ["."]
+omit = [
+    "**/.venv/*",
+    "**/envs/*",
+    "**/venv/*",
+    "docs/conf.py"
+]
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:"
+]
+show_missing = true
+
+[tool.pyrefly]
+project-includes = [
+    "benchmark",
+    "open-webui",
+    "structure",
+    "vllm-radeon-vii"
+]
+# The scripts are not installed as packages, so their directories have to be added as import roots.
+search-path = [
+    "benchmark",
+    "open-webui/export"
+]
+project-excludes = [
+    "**/_build*",
+    "**/auto_examples*",
+    "docs/lint",
+    "**/__pycache__/**",
+    "**/*venv/**",
+    "**/.[!/.]*"
+]
+
+[tool.pytest.ini_options]
+# On clusters "--numprocesses=auto" creates processes according to the total number of CPU cores
+# instead of the number of cores available to the job.
+# Therefore, it may be wise to set the number of processes manually.
+addopts = [
+    "--cov=.",
+    "--cov-report=html",
+    "--cov-report=json",
+    "--cov-report=term",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--durations=50",
+    "--durations-min=1.0",
+    "--html=test-results/html/test-report.html",
+]
+norecursedirs = "test_data"
+# python_paths = "tests"
+testpaths = [
+    "tests"
+]
+# log_cli = true
+# log_cli_level = "INFO"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = [
+    "call_graphs",
+    "dev",
+    "docs/_build",
+    "docs/auto_examples",
+    "docs/gen_modules",
+    "docs/lint",
+    "htmlcov",
+    "logs",
+    "test-results"
+]
+
+[tool.ruff.lint]
+select = [
+    "A",     # flake8-builtins
+    "ARG",   # flake8-unused-arguments
+    "B",     # flake8-bugbear
+    "BLE",   # flake8-blind-except
+    "C4",    # flake8-comprehensions
+    "D",     # pydocstyle
+    "E",     # pycodestyle errors
+    "F",     # Pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "NPY",   # NumPy-specific rules
+    "PERF",  # Perflint
+    "PIE",   # flake8-pie
+    "PL",    # Pylint
+    "PT",    # flake8-pytest-style
+    "PTH",   # flake8-use-pathlib
+    "RET",   # flake8-return
+    "RUF",   # Ruff-specific rules
+    "SIM",   # flake8-simplify
+    "SLF",   # flake8-self
+    "TID",   # flake8-tidy-imports
+    "UP",    # pyupgrade
+    "W"      # pycodestyle warnings
+]
+ignore = [
+    "ARG001",   # unused-function-argument
+    # Many docstrings describe a physical quantity with a noun phrase instead of a verb.
+    "D401",     # non-imperative-mood
+    "N802",     # invalid-function-name
+    "N803",     # invalid-argument-name
+    "D105",     # undocumented-magic-method
+    "D107",     # undocumented-public-init
+    "N806",     # non-lowercase-variable-in-function
+    # The main functions of the scripts are long but linear.
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0915",  # too-many-statements
+    "PLR0917",  # too-many-positional-arguments
+    # The scripts compare against many one-off thresholds and format version numbers.
+    "PLR2004",  # magic-value-comparison
+    # Typographic characters such as "–" and "×" are intentional in the generated texts.
+    "RUF001"    # ambiguous-unicode-character-string
+]
+# The equivalent of the Pylint option "dummy-variables-rgx"
+dummy-variable-rgx = "^(_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|ignored_|unused_)"
+
+[tool.ruff.lint.flake8-unused-arguments]
+# Allow unused variadic names like *args and *kwargs
+ignore-variadic-names = true
+
+[tool.ruff.lint.isort]
+# Sort "import x" and "from x import y" together.
+force-sort-within-sections = true
+
+[tool.ruff.lint.per-file-ignores]
+# The benchmark functions are named "test_*" but are not pytest tests.
+"benchmark/**" = [
+    "PT028"  # pytest-parameter-with-default-argument
+]
+# Percent formatting is more readable than f-strings for LaTeX code with many braces.
+"open-webui/export/**" = [
+    "UP031"  # printf-string-formatting
+]
+"tests/**" = [
+    "PLR2004"  # magic-value-comparison
+]
+# The module docstring of a Sphinx-Gallery example has to start with an RST section title,
+# which cannot end with a period and has to be followed directly by its underline.
+"examples/**" = [
+    "D205",  # missing-blank-line-after-summary
+    "D400"   # missing-trailing-period
+]
+
+[tool.ruff.lint.pydocstyle]
+# This should be set to "sphinx" once it's supported.
+# https://github.com/astral-sh/ruff/issues/6606
+convention = "pep257"

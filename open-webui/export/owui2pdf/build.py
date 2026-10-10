@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import os
+from pathlib import Path
 import re
 import shutil
 import sys
 import tempfile
-from pathlib import Path
 
 from . import RESOURCE_DIR
 from .fonts import build_header
@@ -22,19 +23,21 @@ PANDOC_FORMAT = ("commonmark_x-smart-subscript-superscript-attributes-bracketed_
 
 
 def pandoc_langs() -> list[str]:
+    """List the syntax highlighting languages supported by pandoc."""
     out = run(["pandoc", "--list-highlight-languages"]).stdout
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def latex_errors(log: Path) -> list[str]:
-    errors = []
-    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith("!") or re.match(r"^\./doc\.tex:\d+: ", line):
-            errors.append(line)
+    """Extract the error lines from a LaTeX log."""
+    errors = [
+        line for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.startswith("!") or re.match(r"^\./doc\.tex:\d+: ", line)
+    ]
     return list(dict.fromkeys(errors))
 
 
-def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -> bool:
+def convert_chat(chat_item: dict, out_pdf: Path, opts: argparse.Namespace, emoji_font: str | None) -> bool:
     """Build ``out_pdf`` from one chat. Returns True when a PDF was written.
 
     All intermediate files (Markdown, LaTeX sources, extracted images, TeX
@@ -53,7 +56,7 @@ def convert_chat(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None) -
         return _build(chat_item, out_pdf, opts, emoji_font, Path(tmp).resolve(), keep=False)
 
 
-def _build(chat_item: dict, out_pdf: Path, opts, emoji_font: str | None,
+def _build(chat_item: dict, out_pdf: Path, opts: argparse.Namespace, emoji_font: str | None,
            build_dir: Path, keep: bool) -> bool:
     media_dir = build_dir / "media"
     media_dir.mkdir(exist_ok=True)

@@ -14,20 +14,22 @@ of a reply only carry the retrieved chunks. Full notes can be supplied from
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import json
+from pathlib import Path
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
-from .sources import SourceRegistry, _text_content
+from .sources import SourceRegistry, text_content
 
 
 def _note_record(obj: dict) -> dict | None:
     if not isinstance(obj, dict) or not obj.get("id"):
         return None
-    content = _text_content(obj)
+    content = text_content(obj)
     if content is None and isinstance(obj.get("content"), str):
         content = obj["content"]
     if content is None:
@@ -91,18 +93,16 @@ def fetch_note(base_url: str, token: str, note_id: str) -> dict | None:
     return None
 
 
-def resolve_notes(registry: SourceRegistry, opts) -> None:
+def resolve_notes(registry: SourceRegistry, opts: argparse.Namespace) -> None:
     """Fill in the full text of note sources from --notes files and/or --notes-url."""
     library: dict[str, dict] = getattr(opts, "note_library", None) or {}
     base_url = getattr(opts, "notes_url", None)
     token = getattr(opts, "notes_token", None)
-    cache: dict[str, dict | None] = getattr(opts, "_note_cache", None)
+    cache: dict[str, dict | None] | None = getattr(opts, "note_cache", None)
     if cache is None:
         cache = {}
-        try:
-            opts._note_cache = cache
-        except AttributeError:
-            pass
+        with contextlib.suppress(AttributeError):
+            opts.note_cache = cache
     for src in registry.sources.values():
         if src.kind != "note" or src.has_full_content:
             continue

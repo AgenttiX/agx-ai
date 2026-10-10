@@ -6,6 +6,7 @@ abbreviated as `agx` in the hostnames.
 
 ## General instructions
 - Before starting your work, run `git pull --rebase` to ensure you have the latest changes.
+- Committing directly to main is OK in this project.
 
 ## Creating a new LLM backend configuration
 - Create the new configuration in its own directory, following the naming convention of other configurations.
@@ -17,3 +18,8 @@ abbreviated as `agx` in the hostnames.
 
 ## Benchmarking
 - Use the scripts in `./benchmark/` for benchmarking. You may update the scripts as needed.
+
+## Commands
+- Lint: `uv run ruff check`
+- Type checking: `uv run pyrefly check`
+- Type coverage checking: `pyrefly coverage check`

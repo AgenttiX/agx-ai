@@ -19,17 +19,20 @@ Run it in the vLLM image, which has torch, numpy, safetensors, huggingface_hub a
 """
 
 import argparse
+from collections.abc import Callable
 import json
+from pathlib import Path
 import re
 import struct
-from pathlib import Path
+from typing import Any
 
+# The script runs in the vLLM image, which has these packages; the development environment does not have them.
+from compressed_tensors.compressors.pack_quantized.helpers import pack_to_int32  # pyrefly: ignore[missing-import]
+from huggingface_hub import hf_hub_download, hf_hub_url, snapshot_download  # pyrefly: ignore[missing-import]
 import numpy as np
 import requests
-import torch
-from compressed_tensors.compressors.pack_quantized.helpers import pack_to_int32
-from huggingface_hub import hf_hub_download, hf_hub_url, snapshot_download
-from safetensors.torch import save_file
+from safetensors.torch import save_file  # pyrefly: ignore[missing-import]
+import torch  # pyrefly: ignore[missing-import]
 
 GGUF_REPO = "google/gemma-4-26B-A4B-it-qat-q4_0-gguf"
 GGUF_FILE = "gemma-4-26B_q4_0-it.gguf"
@@ -48,7 +51,7 @@ LINEAR = {
     "ffn_down": "mlp.down_proj",
 }
 # HF tensors that come from the GGUF instead
-FROM_GGUF = re.compile(r"\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj|experts)\.")
+FROM_GGUF: re.Pattern[str] = re.compile(r"\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj|experts)\.")
 
 
 def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
@@ -57,7 +60,7 @@ def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
     buf = memoryview(mm)
     pos = 4
 
-    def rd(fmt: str):
+    def rd(fmt: str) -> Any:
         nonlocal pos
         v = struct.unpack_from("<" + fmt, buf, pos)
         pos += struct.calcsize("<" + fmt)
@@ -72,7 +75,7 @@ def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
 
     scalar = {0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i", 6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}
 
-    def rval(t: int):
+    def rval(t: int) -> Any:
         if t == 8:
             return rstr()
         if t == 9:
@@ -88,7 +91,7 @@ def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
         key = rstr()
         value = rval(rd("I"))
         if key == "general.alignment":
-            alignment = value
+            alignment = int(value)
     infos = []
     for _ in range(n_tensors):
         name = rstr()
@@ -102,7 +105,7 @@ def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
     return out
 
 
-def fetch_tensors(repo: str, keep) -> dict[str, torch.Tensor]:
+def fetch_tensors(repo: str, keep: Callable[[str], bool]) -> dict[str, torch.Tensor]:
     """The tensors of a safetensors repository whose names satisfy keep(name), downloaded with range requests."""
     index = json.loads(Path(hf_hub_download(repo, "model.safetensors.index.json")).read_text())
     shards: dict[str, list[str]] = {}
@@ -115,7 +118,7 @@ def fetch_tensors(repo: str, keep) -> dict[str, torch.Tensor]:
         for shard, names in shards.items():
             url = hf_hub_url(repo, shard)
 
-            def get(start: int, end: int) -> bytes:
+            def get(start: int, end: int, url: str = url) -> bytes:
                 r = session.get(url, headers={"Range": f"bytes={start}-{end - 1}"}, timeout=600)
                 r.raise_for_status()
                 assert len(r.content) == end - start
@@ -143,6 +146,7 @@ def q4_0_to_int(raw: np.ndarray, rows: int, cols: int) -> tuple[torch.Tensor, to
 
 
 def group_size(bits: int) -> int:
+    """Quantization group size of the embedding and the lm_head: finer for int4."""
     return 32 if bits == 4 else 128
 
 
@@ -159,6 +163,7 @@ def quant_sym(w: torch.Tensor, bits: int) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def packed(name: str, q: torch.Tensor, s: torch.Tensor, bits: int) -> dict[str, torch.Tensor]:
+    """The compressed-tensors pack-quantized tensors of a module from its integer values and scales."""
     return {
         f"{name}.weight_packed": pack_to_int32(q, bits),
         f"{name}.weight_scale": s,
@@ -166,7 +171,8 @@ def packed(name: str, q: torch.Tensor, s: torch.Tensor, bits: int) -> dict[str, 
     }
 
 
-def group_args(bits: int, group: int, targets: list[str]) -> dict:
+def group_args(bits: int, group: int, targets: list[str]) -> dict[str, Any]:
+    """A config group of the compressed-tensors quantization config: symmetric int weights, no activations."""
     return {
         "format": "pack-quantized",
         "input_activations": None,
@@ -188,6 +194,7 @@ def group_args(bits: int, group: int, targets: list[str]) -> dict:
 
 
 def main() -> None:
+    """Build the checkpoint."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", required=True, type=Path, help="output model directory")
     parser.add_argument("--lm-head-bits", type=int, default=4, choices=[4, 8])

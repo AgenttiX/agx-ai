@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -21,10 +22,10 @@ def load_chats(path: Path) -> list[dict]:
         data = [data]
     if not isinstance(data, list):
         raise ValueError("unexpected JSON structure (expected a chat object or a list of chats)")
-    chats = []
-    for item in data:
-        if isinstance(item, dict) and ("chat" in item or "history" in item or "messages" in item):
-            chats.append(item)
+    chats = [
+        item for item in data
+        if isinstance(item, dict) and ("chat" in item or "history" in item or "messages" in item)
+    ]
     if not chats:
         raise ValueError("no chats found in the file")
     return chats
@@ -36,6 +37,7 @@ def chat_body(chat_item: dict) -> dict:
 
 
 def chat_title(chat_item: dict) -> str:
+    """Return the title of a chat, falling back to "Chat"."""
     return chat_item.get("title") or chat_body(chat_item).get("title") or "Chat"
 
 
@@ -130,15 +132,14 @@ def usage_text(msg: dict) -> str:
         bits.append(f"{in_tok or '?'}→{out_tok or '?'} tokens")
     tps = usage.get("predicted_per_second") or usage.get("response_token/s")
     if tps:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             bits.append(f"{float(tps):.1f} tok/s")
-        except (TypeError, ValueError):
-            pass
     return ", ".join(bits)
 
 
 def error_text(msg: dict) -> str:
+    """Return the error message of a chat message, or an empty string."""
     err = msg.get("error")
     if not err:
         return ""
-    return err.get("content") if isinstance(err, dict) else str(err)
+    return err.get("content") or "" if isinstance(err, dict) else str(err)

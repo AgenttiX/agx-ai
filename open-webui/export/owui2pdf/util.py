@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 LATEX_SPECIALS = {
     "\\": r"\textbackslash{}",
@@ -32,7 +33,7 @@ def md_escape_inline(s: str) -> str:
     return re.sub(r"([\\`*_{}\[\]<>#|])", r"\\\1", s)
 
 
-def fmt_timestamp(ts) -> str:
+def fmt_timestamp(ts: float | str | None) -> str:
     """Open WebUI stores seconds, milliseconds or nanoseconds; normalise."""
     if not ts:
         return ""
@@ -46,16 +47,19 @@ def fmt_timestamp(ts) -> str:
 
 
 def slugify(s: str) -> str:
+    """Convert a string to a short filename-safe slug."""
     s = re.sub(r"[^\w\s-]", "", s, flags=re.U).strip().lower()
     s = re.sub(r"[\s_-]+", "-", s).strip("-")
     return s[:60].rstrip("-") or "chat"
 
 
-def run(cmd, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, text=True, capture_output=True, **kw)
+def run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+    """Run a command, capturing its text output without raising on failure."""
+    return subprocess.run(cmd, text=True, capture_output=True, check=False, **kw)
 
 
 def which_or_die(name: str) -> str:
+    """Return the path of a required program or exit with an error."""
     path = shutil.which(name)
     if not path:
         sys.exit(f"error: required program '{name}' not found in PATH")
