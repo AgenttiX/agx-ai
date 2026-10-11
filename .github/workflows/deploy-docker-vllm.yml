@@ -18,7 +18,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      # The base image is ~20 GB uncompressed, more than the free space of the runner.
+      # The base image is ~10 GB compressed per platform; after this, the runner has ~106 GB free (2026-10-11).
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -30,7 +30,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # QEMU is not needed, as the image is built only for x86-64 (the base image is available only for it).
+      # The base image is available for x86-64 and ARM64. QEMU emulates ARM64 for the only build step, the patch.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Extract metadata (tags, labels) for Docker
@@ -51,7 +53,7 @@ jobs:
           # The Dockerfile is in a subdirectory of the repository.
           context: "{{defaultContext}}:vllm"
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           provenance: mode=max
           pull: true
           push: true

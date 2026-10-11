@@ -1,7 +1,7 @@
 # Structure figure
 
 The figures show the structure of the local AI server setup of [`../docker-compose.yml`](../docker-compose.yml)
-and the llama.cpp backends that LiteLLM routes requests to, in two versions:
+and the llama.cpp and vLLM backends that LiteLLM routes requests to, in two versions:
 - [`agx-ai-structure.svg`](agx-ai-structure.svg): without the hostnames and the hardware specifications of the computers,
   except for the GPUs
 - [`agx-ai-structure-specs.svg`](agx-ai-structure-specs.svg): with the hostnames and the hardware specifications
@@ -45,4 +45,5 @@ The logos are trademarks of their owners.
 | `gptr.png` | [gpt-researcher: docs/static/img/gptr-logo.png](https://github.com/assafelovic/gpt-researcher/blob/main/docs/static/img/gptr-logo.png), trimmed, scaled to 256 px and quantized | Apache License 2.0 (repository) |
 | `litellm-icon.png` | [litellm: litellm/proxy/logo.jpg](https://github.com/BerriAI/litellm/blob/main/litellm/proxy/logo.jpg), the icon cropped to a circle | See the [repository license](https://github.com/BerriAI/litellm/blob/main/LICENSE) |
 | `llama-cpp.svg` | [llama.cpp: media/llama1-icon.svg](https://github.com/ggml-org/llama.cpp/blob/master/media/llama1-icon.svg) | MIT (repository) |
+| `vllm.png` | [vLLM: docs/assets/logos/vllm-logo-only-light.png](https://github.com/vllm-project/vllm/blob/main/docs/assets/logos/vllm-logo-only-light.png), the white background made transparent, trimmed and scaled to 256 px | Apache License 2.0 (repository) |
 | `tavily.svg` | [tavily.com/logos/tavily-mark-black.svg](https://www.tavily.com/logos/tavily-mark-black.svg) | Trademark of Tavily |

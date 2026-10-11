@@ -1,7 +1,7 @@
 # vLLM image
 
 `ghcr.io/agenttix/agx-ai/vllm`: the official vLLM image for NVIDIA GPUs with a few fixes, not specific to any
-machine. Built by [`../.github/workflows/deploy-docker-vllm.yml`](../.github/workflows/deploy-docker-vllm.yml);
+machine, for x86-64 and ARM64 (the patch applies to both variants of the base image, checked on 2026-10-11). Built by [`../.github/workflows/deploy-docker-vllm.yml`](../.github/workflows/deploy-docker-vllm.yml);
 locally:
 
 ```sh

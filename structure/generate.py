@@ -44,6 +44,7 @@ CLOUD_STROKE = "#e0a36f"
 HW_FILL = "#f1f7ee"
 HW_STROKE = "#8fb67f"
 LLAMA = "#ff8236"
+VLLM = "#30a2ff"
 MODEL = "#b4531c"
 
 
@@ -315,7 +316,7 @@ class Figure:
         text_w = 0.55 * 14 * (len(detail) + (0 if wordmark else len(title) + 1))
         w = 6 + logo_w + 8 + text_w + 14
         x = cx - w / 2
-        stroke = LLAMA if logo == "llama-cpp.svg" else "#6b4fbb"
+        stroke = {"llama-cpp.svg": LLAMA, "vllm.png": VLLM}.get(logo, "#6b4fbb")
         self.rect(x, y, w, 30, fill="#ffffff", stroke=stroke, rx=15, width=1.5)
         if wordmark:
             self.logo(logo, x + 10, y + 6, 18, logo_w)
@@ -383,6 +384,7 @@ def build(specs: bool) -> str:
     """Build the figure, with the hostnames and the hardware specifications if specs is True."""
     f = Figure()
     llama = "llama-cpp.svg"
+    vllm = "vllm.png"
     gemma_moe = "Gemma 4 26B A4B QAT"
     # Speeds of single requests with the current configurations, from the READMEs, presets and benchmark/results of
     # the backends. Generation: the generation test of benchmark/llama_cpp_bench_http.py (256 tokens, short prompt)
@@ -414,9 +416,9 @@ def build(specs: bool) -> str:
                 [(gemma_moe, "55", "1547")], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("server", 1452, spec("Big Machine"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
-                # llama-cpp-big-machine/preset-qwen3.8-27b-2gpu.ini: no single-request prompt processing results
-                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "50–67", ""), ("Qwen3-Embedding-4B", "", "")],
-                ["ubuntu.svg"], [(llama, "llama.cpp", "CUDA")]),
+                # vllm-big-machine/README.md, configuration 3; benchmark/results/big-machine.jsonl: 4096-token prompt
+                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "65", "1495"), ("Qwen3-Embedding-0.6B", "", "")],
+                ["ubuntu.svg"], [(vllm, "vLLM", "CUDA, 2 GPUs")]),
     ]
     if not specs:
         machines = [m.public() for m in machines]
@@ -514,8 +516,8 @@ def build(specs: bool) -> str:
     f.arrow([(col_d + cw, mid(rows[0])), (1160, mid(rows[0]))])
     f.arrow([(col_d + cw, mid(rows[3])), (1120, mid(rows[3])), (1120, mid(rows[1])), (1160, mid(rows[1]))])
 
-    # llama.cpp backends
-    f.text(34, hw_top + 30, "llama.cpp backends", size=20, weight="bold")
+    # LLM backends
+    f.text(34, hw_top + 30, "LLM backends", size=20, weight="bold")
     f.text(240, hw_top + 30, "OpenAI-compatible API in the LAN", size=14, color=MUTED, style="italic")
     # Right of the line from LiteLLM to the backends
     f.text(
