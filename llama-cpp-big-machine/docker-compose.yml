@@ -31,7 +31,7 @@ services:
       - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - ./config.ini:/etc/llama.cpp/config.ini:ro
       # Select the preset here (see README.md)
-      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+      - ./preset-qwen3.8-27b-2gpu.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-gemma-4-26b-a4b-qat-2gpu.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-gemma-4-26b-a4b-qat-1gpu.ini:/etc/llama.cpp/preset.ini:ro
     deploy:

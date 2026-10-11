@@ -8,7 +8,7 @@ The preset is selected in [`docker-compose.yml`](docker-compose.yml):
 
 | Preset | Model | Settings | Runs on |
 |---|---|---|---|
-| [`preset.ini`](preset.ini) (default) | `Qwen/Qwen3.8-27B`: [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) UD-Q4_K_M | Tensor split 1:1, MTP, ctx 98304, 4 slots | Both GPUs |
+| [`preset-qwen3.8-27b-2gpu.ini`](preset-qwen3.8-27b-2gpu.ini) (default) | `Qwen/Qwen3.8-27B`: [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) UD-Q4_K_M | Tensor split 1:1, MTP, ctx 98304, 4 slots | Both GPUs |
 | | `Qwen/Qwen3-Embedding-4B`: [Qwen/Qwen3-Embedding-4B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF) Q6_K | Layer split 4:3, ctx 4096, 1 slot | Both GPUs |
 | [`preset-gemma-4-26b-a4b-qat-2gpu.ini`](preset-gemma-4-26b-a4b-qat-2gpu.ini) | `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL | Layer split 4:3, MTP, ctx 262144, 4 slots, ubatch 1024 | Both GPUs |
 | | `Qwen/Qwen3-Embedding-4B` Q6_K | as above | Both GPUs |
@@ -77,7 +77,7 @@ router API (`POST /models/unload`):
 | 106496 | Loads, but dies with the first long prompt (`CUDA error: out of memory` in `cudaGraphInstantiate`) |
 
 The KV cache costs 32 KiB per token on each GPU (+258 MiB per GPU for +8192 tokens), see the model section
-in [`preset.ini`](preset.ini). Before (b11046, Qwen3-Embedding-8B, 2026-09-21), 65536 was the maximum.
+in [`preset-qwen3.8-27b-2gpu.ini`](preset-qwen3.8-27b-2gpu.ini). Before (b11046, Qwen3-Embedding-8B, 2026-09-21), 65536 was the maximum.
 
 ## Gemma 4 26B-A4B QAT
 
@@ -115,7 +115,7 @@ tg = token generation, pp = prompt processing. Measured with
 [`benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (results in
 [`benchmark/results/`](../benchmark/results/)) with b11541; generation in t/s, prompt processing in parentheses:
 
-| Test | Qwen3.8-27B ([`preset.ini`](preset.ini)) | Gemma, 2 GPUs | Gemma, 1 GPU + CPU |
+| Test | Qwen3.8-27B ([`preset-qwen3.8-27b-2gpu.ini`](preset-qwen3.8-27b-2gpu.ini)) | Gemma, 2 GPUs | Gemma, 1 GPU + CPU |
 |---|---|---|---|
 | Generation, 256 tokens | 65.2 | 124.7 | 57.8 |
 | Chat, 6 requests | 52.5 | 134.7 | 60.6 |

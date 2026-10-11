@@ -9,9 +9,9 @@
 # with both.
 
 x-vllm: &vllm
-  # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with vllm-big-machine.patch, see Dockerfile.
-  # Built by ../.github/workflows/deploy-docker-vllm-big-machine.yml. Locally: docker build -t <the image> .
-  image: ghcr.io/agenttix/agx-ai/vllm-big-machine:latest
+  # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with ../vllm/vllm.patch, see ../vllm/README.md.
+  # Built by ../.github/workflows/deploy-docker-vllm.yml. Locally: docker build -t <the image> ../vllm
+  image: ghcr.io/agenttix/agx-ai/vllm:latest
   # The API key is that of the llama.cpp server, so that clients work with both.
   entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
   env_file:

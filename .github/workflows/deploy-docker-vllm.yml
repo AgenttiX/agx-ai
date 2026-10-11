@@ -1,11 +1,11 @@
-name: Publish vLLM Big Machine Docker image
+name: Publish vLLM Docker image
 on:
   push:
     branches: [main]
     paths:
-      - "vllm-big-machine/Dockerfile"
-      - "vllm-big-machine/vllm-big-machine.patch"
-      - ".github/workflows/deploy-docker-vllm-big-machine.yml"
+      - "vllm/Dockerfile"
+      - "vllm/vllm.patch"
+      - ".github/workflows/deploy-docker-vllm.yml"
   workflow_dispatch:
 jobs:
   push_to_registry:
@@ -37,7 +37,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}/vllm-big-machine
+          images: ghcr.io/${{ github.repository }}/vllm
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
@@ -49,7 +49,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
           # The Dockerfile is in a subdirectory of the repository.
-          context: "{{defaultContext}}:vllm-big-machine"
+          context: "{{defaultContext}}:vllm"
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
           provenance: mode=max
@@ -60,6 +60,6 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest@v4
         with:
-          subject-name: ghcr.io/${{ github.repository }}/vllm-big-machine
+          subject-name: ghcr.io/${{ github.repository }}/vllm
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true

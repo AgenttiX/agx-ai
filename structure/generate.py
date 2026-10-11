@@ -414,8 +414,8 @@ def build(specs: bool) -> str:
                 [(gemma_moe, "55", "1547")], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("server", 1452, spec("Big Machine"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
-                # llama-cpp-big-machine/preset.ini: no single-request prompt processing results
-                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "50–67", ""), ("Qwen3-Embedding-8B", "", "")],
+                # llama-cpp-big-machine/preset-qwen3.8-27b-2gpu.ini: no single-request prompt processing results
+                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "50–67", ""), ("Qwen3-Embedding-4B", "", "")],
                 ["ubuntu.svg"], [(llama, "llama.cpp", "CUDA")]),
     ]
     if not specs:

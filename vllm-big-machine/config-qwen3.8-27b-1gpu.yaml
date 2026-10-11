@@ -1,6 +1,6 @@
 # vllm serve --config for Qwen3.8-27B on one GPU: configuration 5. Benchmarks: README.md
 # GPTQ int4 (group size 128) with int4 embedding and lm_head, 13.1 GiB on the GPU without the vision tower. The
-# quantized embedding needs vllm-big-machine.patch (see Dockerfile). The mtp-int8 revision has the MTP head
+# quantized embedding needs ../vllm/vllm.patch. The mtp-int8 revision has the MTP head
 # in int8; it is not used, as it would leave room for much less context.
 model: JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB
 revision: mtp-int8

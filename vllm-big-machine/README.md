@@ -54,8 +54,8 @@ the containers have memory limits (40 GiB for the LLM, 24 GiB and 16 GiB for the
 ## Setup
 
 ```sh
-# Image: vLLM v0.31.0 with vllm-big-machine.patch (also built by ../.github/workflows/deploy-docker-vllm-big-machine.yml)
-docker build -t ghcr.io/agenttix/agx-ai/vllm-big-machine:latest .
+# Image: vLLM v0.31.0 with ../vllm/vllm.patch (also built by ../.github/workflows/deploy-docker-vllm.yml)
+docker build -t ghcr.io/agenttix/agx-ai/vllm:latest ../vllm
 # Checkpoints into the Hugging Face cache
 uvx --from 'huggingface_hub[hf_xet]' hf download cyankiwi/Qwen3.8-27B-AWQ-INT4
 uvx --from 'huggingface_hub[hf_xet]' hf download JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB --revision mtp-int8
@@ -83,17 +83,8 @@ line, e.g. `COMPOSE_PROFILES=llm LLM_CONFIG=config-gemma-4-26b-a4b-qat-1gpu.yaml
 
 ## Images
 
-- `vllm/vllm-openai:latest` is v0.31.0 with CUDA 13.0 and PyTorch 2.13 (the `-cu129` tags are the CUDA 12.9
-  builds). It is pinned as `v0.31.0` in the [`Dockerfile`](Dockerfile).
-- [`vllm-big-machine.patch`](vllm-big-machine.patch), applied by the [`Dockerfile`](Dockerfile):
-  - Qwen3.5/3.8 passes its quantization config to the token embedding (main model and MTP module), so that
-    checkpoints with a quantized embedding load. Without it, the single-GPU Qwen checkpoint fails with
-    `There is no module or parameter named 'embed_tokens.weight_packed' in Qwen3_5Model`. The same fix as in
-    [`../vllm-radeon-vii`](../vllm-radeon-vii) and the checkpoint's model card.
-  - The native CPU KV offloading is allowed with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, which vLLM
-    rejects for all KV connectors, because RDMA connectors register GPU memory that the VMM allocator could remap.
-    The native offloading copies with device pointers, and the KV cache is allocated once and never freed. The
-    alternative, `enable-cumem-allocator`, works on CUDA but needs more memory: the single-GPU Gemma ran out of it.
+- The GPU configurations use `ghcr.io/agenttix/agx-ai/vllm:latest`: `vllm/vllm-openai:v0.31.0` (CUDA 13.0) with the
+  fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch), see [`../vllm/README.md`](../vllm/README.md).
 - The CPU embedding server uses `vllm/vllm-openai-cpu:v0.31.0` unchanged.
 
 ## Peer-to-peer copies between the GPUs are broken
@@ -333,7 +324,7 @@ cd ../benchmark
 # A configuration variant on a test server (port 9933); stop the production containers first
 CACHE_VOLUME=vllm-big-machine_vllm-cache GPUS=0,1 DOCKER_ARGS="--memory 40g -e NCCL_P2P_DISABLE=1 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" ./vllm_test_server.sh \
-    ghcr.io/agenttix/agx-ai/vllm-big-machine:latest /tmp/config-variant.yaml ../llama-cpp-big-machine/llama-cpp.env
+    ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp-big-machine/llama-cpp.env
 # The CPU image (no GPUs, see docker-compose.yml)
 GPUS=none NAME=vllm-cpu DOCKER_ARGS="--cpus 16 -e VLLM_CPU_OMP_THREADS_BIND=nobind -e OMP_NUM_THREADS=16" \
     ./vllm_test_server.sh vllm/vllm-openai-cpu:v0.31.0 ../vllm-big-machine/config-embedding-cpu.yaml \

@@ -228,7 +228,7 @@
 <text x="1452" y="709.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
 <text x="1452" y="727.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
 <text x="1452" y="745.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (50–67)</tspan></text>
-<text x="1452" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-8B</text>
+<text x="1452" y="763.5" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-4B</text>
 <rect x="1373.1" y="783.5" width="157.8" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="1379.1" y="787.5" width="22" height="22"/>
 <text x="1407.1" y="803.5" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA</tspan></text>
