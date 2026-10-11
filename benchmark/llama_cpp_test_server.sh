@@ -27,7 +27,8 @@ env_file=${4:-}
 port=${5:-9933}
 name=${NAME:-llama-test}
 
-args=(--name "$name" -p "$port:9931" --device /dev/dri --group-add video
+# Newer images set LLAMA_ARG_PORT=8080, which would override the port 9931 of config.ini.
+args=(--name "$name" -p "$port:9931" -e LLAMA_ARG_PORT=9931 --device /dev/dri --group-add video
       -v "$HOME/.cache/huggingface/hub:/root/.cache/huggingface/hub"
       -v "$config:/etc/llama.cpp/config.ini:ro" -v "$preset:/etc/llama.cpp/preset.ini:ro")
 [[ -e /dev/kfd ]] && args+=(--device /dev/kfd)  # ROCm

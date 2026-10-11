@@ -1,0 +1,118 @@
+# vLLM for PaperQA2 on the Big Machine (2 x RTX A4000, 16 GB each). See README.md for the configurations and results.
+# The configuration (which models run where) is selected in .env, so that a plain "docker compose up -d" (which
+# ../../phd-research/phd_code/tools/paperqa_ask.py also runs) starts it:
+# - COMPOSE_PROFILES: llm, embedding (GPU) and/or embedding-cpu
+# - LLM_CONFIG, LLM_GPUS: the vllm serve --config file of the LLM and its GPUs
+# - EMBEDDING_CONFIG, EMBEDDING_GPUS: the same for the embedding model on the GPU
+# vLLM serves one model per server: the LLM is on port 9932 and the embedding model on port 9934, both with the
+# API key of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp-big-machine/llama-cpp.env), so that clients work
+# with both.
+
+x-vllm: &vllm
+  # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with vllm-big-machine.patch, see Dockerfile.
+  # Built by ../.github/workflows/deploy-docker-vllm-big-machine.yml. Locally: docker build -t <the image> .
+  image: ghcr.io/agenttix/agx-ai/vllm-big-machine:latest
+  # The API key is that of the llama.cpp server, so that clients work with both.
+  entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+  env_file:
+    - ../llama-cpp-big-machine/llama-cpp.env
+  ipc: host
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    # The first start compiles kernels for a few minutes.
+    start_period: 15m
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            capabilities: [gpu]
+            count: all
+
+x-vllm-environment: &vllm-environment
+  HF_HUB_OFFLINE: "1"
+  # Peer-to-peer copies between the GPUs return corrupted data on this machine (see README.md), so NCCL has to
+  # communicate through host memory, and vLLM's custom all-reduce is disabled in the configurations.
+  NCCL_P2P_DISABLE: "1"
+  # Less fragmentation of PyTorch's allocator, which leaves more memory for the KV cache.
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  # Keep the Triton and Inductor caches, so that a restart is faster.
+  TRITON_CACHE_DIR: /root/.cache/vllm/triton
+  TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
+
+services:
+  vllm-llm:
+    <<: *vllm
+    container_name: vllm-llm
+    profiles: [llm]
+    environment:
+      <<: *vllm-environment
+      CUDA_VISIBLE_DEVICES: ${LLM_GPUS:-0,1}
+    # The weights are memory-mapped from the page cache, which counts towards the limit but can be reclaimed.
+    # The CPU KV offloading of the configurations takes 8 GiB of pinned memory.
+    mem_limit: 40g
+    ports:
+      - "9932:8000"
+    volumes:
+      - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      # Checkpoints built locally by ../vllm-radeon-vii/repack_gemma4_qat.py
+      - /home/makimika/.cache/vllm-models:/models:ro
+      - vllm-cache:/root/.cache/vllm
+      - ./${LLM_CONFIG:-config-qwen3.8-27b-tp2.yaml}:/etc/vllm/config.yaml:ro
+
+  vllm-embedding:
+    <<: *vllm
+    container_name: vllm-embedding
+    profiles: [embedding]
+    environment:
+      <<: *vllm-environment
+      CUDA_VISIBLE_DEVICES: ${EMBEDDING_GPUS:-0,1}
+    mem_limit: 24g
+    ports:
+      - "9934:8000"
+    volumes:
+      - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - vllm-cache:/root/.cache/vllm
+      - ./${EMBEDDING_CONFIG:-config-embedding-tp2.yaml}:/etc/vllm/config.yaml:ro
+
+  vllm-embedding-cpu:
+    # The CPU build of vLLM. No GPUs: with them (and libcuda), Triton would select its CUDA driver instead of the CPU
+    # one, and the engine would crash with "Torch not compiled with CUDA enabled".
+    image: vllm/vllm-openai-cpu:v0.31.0
+    container_name: vllm-embedding-cpu
+    profiles: [embedding-cpu]
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp-big-machine/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # The machine runs other users' simulations (one thread each), so the threads are not pinned to cores
+      # but left to the scheduler, and their number is limited. More than 16 threads were not faster (README.md).
+      VLLM_CPU_OMP_THREADS_BIND: nobind
+      OMP_NUM_THREADS: "16"
+      # GiB of RAM for the KV cache
+      VLLM_CPU_KVCACHE_SPACE: "4"
+    cpus: 16
+    mem_limit: 16g
+    ipc: host
+    restart: unless-stopped
+    ports:
+      - "9934:8000"
+    volumes:
+      - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - vllm-cpu-cache:/root/.cache/vllm
+      - ./config-embedding-cpu.yaml:/etc/vllm/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10m
+
+volumes:
+  vllm-cache:
+  vllm-cpu-cache:

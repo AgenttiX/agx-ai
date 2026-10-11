@@ -1,0 +1,37 @@
+# vllm serve --config for Qwen3.8-27B on both GPUs (tensor parallelism) next to the embedding model
+# (config-embedding-tp2-qwen.yaml): configuration 3. The same as config-qwen3.8-27b-tp2.yaml, except for the
+# memory settings. Benchmarks: README.md
+# AWQ int4 with group size 32 (asymmetric, MSE observer); the Gated DeltaNet layers, the embedding, the lm_head and
+# the MTP head are BF16. 19.6 GiB in total, 9.3 GiB per GPU without the vision tower.
+model: cyankiwi/Qwen3.8-27B-AWQ-INT4
+served-model-name: Qwen/Qwen3.8-27B
+tensor-parallel-size: 2
+# Peer-to-peer copies between the GPUs return corrupted data on this machine, so the custom all-reduce (which uses
+# them) spins forever. NCCL without P2P (NCCL_P2P_DISABLE=1 in docker-compose.yml) is used instead.
+disable-custom-all-reduce: true
+# Do not load the vision tower, which would take memory from the KV cache.
+language-model-only: true
+max-model-len: 94208
+# vLLM requires this fraction of the GPU memory to be free at startup, so it has to be lower than what the
+# embedding server leaves free (~14.1 of 15.6 GiB).
+gpu-memory-utilization: 0.85
+# Set explicitly, as gpu-memory-utilization would also count the memory of the embedding server.
+kv-cache-memory-bytes: 3900000000
+# PaperQA2 sends 4 concurrent requests by default (PAPERQA_CONCURRENCY in paperqa_ask.py). Every sequence needs its
+# own recurrent state for the 48 Gated DeltaNet layers.
+max-num-seqs: 4
+# The prefill chunk. Larger chunks need more activation memory.
+max-num-batched-tokens: 1024
+# CUDA graphs only for decoding and the batch sizes of 4 sequences with 2 drafted tokens each.
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4, 6, 8, 9, 12]}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 8 GiB of pinned RAM, for returning to long conversations. It
+# does not speed up PaperQA2, whose prompts fit in the KV cache on the GPUs (see README.md).
+kv-offloading-size: 8
+kv-offloading-backend: native
+# Speculative decoding with the model's own MTP head: chat 37.5 -> 55.4 t/s.
+speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as recommended by Qwen.

@@ -1,0 +1,19 @@
+# vllm serve --config for Qwen3-Embedding-0.6B on both GPUs next to Qwen3.8-27B: the embedding model of
+# configuration 3. Next to the 4B model (2.1 GiB per GPU in FP8, 3.5 GiB per GPU with the runtime), Qwen3.8-27B had
+# only ~1 GiB of KV cache per GPU (~26k tokens); the 0.6B model leaves it ~3 GiB. In the retrieval test (README.md),
+# the 0.6B model found the right chunk among the top 10 for 89 % of the questions, the 4B model for 92 %.
+# Tensor parallelism splits it evenly, as the LLM gets the same KV cache on both GPUs.
+model: Qwen/Qwen3-Embedding-0.6B
+served-model-name: Qwen/Qwen3-Embedding-0.6B
+runner: pooling
+tensor-parallel-size: 2
+disable-custom-all-reduce: true
+# The longest PaperQA2 chunks (5000 characters of reference lists or tables) are ~3500 tokens.
+max-model-len: 8192
+# vLLM requires this fraction of the GPU memory to be free at startup, even with kv-cache-memory-bytes. The LLM
+# starts at the same time and may have taken its memory already, so the check is effectively disabled.
+gpu-memory-utilization: 0.1
+# Per GPU: ~8.7k tokens (56 KiB per token on each GPU), one maximum-length input or a few chunks at a time
+kv-cache-memory-bytes: 500000000
+max-num-seqs: 8
+max-num-batched-tokens: 4096

@@ -1,0 +1,19 @@
+# vllm serve --config for Qwen3-Embedding-4B (FP8) on both GPUs next to Gemma 4 26B-A4B: the embedding model of
+# configuration 4. FP8 (weight-only, Marlin) halves the memory of the 4B model and retrieved as well as BF16 in the
+# retrieval test (README.md). Tensor parallelism splits it evenly, as the LLM gets the same KV cache on both GPUs.
+model: Qwen/Qwen3-Embedding-4B
+served-model-name: Qwen/Qwen3-Embedding-4B
+runner: pooling
+quantization: fp8
+tensor-parallel-size: 2
+disable-custom-all-reduce: true
+# The longest PaperQA2 chunks (5000 characters of reference lists or tables) are ~3500 tokens.
+max-model-len: 8192
+# vLLM requires this fraction of the GPU memory to be free at startup, even with kv-cache-memory-bytes. The LLM
+# starts at the same time and may have taken its memory already, so the check is effectively disabled.
+gpu-memory-utilization: 0.1
+# Per GPU: ~9.7k tokens (72 KiB per token on each GPU), i.e. one maximum-length input or a few chunks at a time.
+kv-cache-memory-bytes: 700000000
+max-num-seqs: 8
+# Smaller activations than with the default 8192
+max-num-batched-tokens: 4096

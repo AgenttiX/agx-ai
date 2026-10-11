@@ -1,0 +1,34 @@
+# vllm serve --config for Gemma 4 26B-A4B QAT on both GPUs (tensor parallelism) next to the embedding model
+# (config-embedding-tp2-gemma.yaml): configuration 4. The same as config-gemma-4-26b-a4b-qat-tp2.yaml, except for
+# the memory settings. Benchmarks: README.md
+# Built with ../vllm-radeon-vii/repack_gemma4_qat.py --embed-bits 16 --lm-head-bits 8: all linear weights bit-exact
+# from Google's QAT Q4_0 GGUF (int4, group size 32), the embedding FP16 and the lm_head int8 (see README.md).
+model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8
+served-model-name: google/gemma-4-26b-a4b-qat
+# FP16 like the scales of the Q4_0 GGUF, which BF16 would round.
+dtype: float16
+tensor-parallel-size: 2
+# Peer-to-peer copies between the GPUs return corrupted data on this machine, so the custom all-reduce (which uses
+# them) spins forever. NCCL without P2P (NCCL_P2P_DISABLE=1 in docker-compose.yml) is used instead.
+disable-custom-all-reduce: true
+# Do not load the vision tower, which would take memory from the KV cache.
+language-model-only: true
+max-model-len: 114688
+# vLLM requires this fraction of the GPU memory to be free at startup, so it has to be lower than what the
+# embedding server leaves free (~11.8 of 15.6 GiB).
+gpu-memory-utilization: 0.72
+# Set explicitly, as gpu-memory-utilization would also count the memory of the embedding server.
+kv-cache-memory-bytes: 1800000000
+# PaperQA2 sends 4 concurrent requests by default (PAPERQA_CONCURRENCY in paperqa_ask.py).
+max-num-seqs: 8
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 8 GiB of pinned RAM, for returning to long conversations. It
+# does not speed up PaperQA2, whose prompts fit in the KV cache on the GPUs (see README.md).
+kv-offloading-size: 8
+kv-offloading-backend: native
+# Speculative decoding with Google's MTP drafter (0.8 GB in BF16), which uses the KV cache of the main model.
+speculative-config: {"method": "mtp", "model": "google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.

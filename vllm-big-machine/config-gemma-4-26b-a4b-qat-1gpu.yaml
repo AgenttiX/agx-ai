@@ -1,0 +1,30 @@
+# vllm serve --config for Gemma 4 26B-A4B QAT on one GPU: configuration 6. Benchmarks: README.md
+# Built with ../vllm-radeon-vii/repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF
+# (int4, group size 32), the embedding and the lm_head int4 (round-to-nearest, group size 32), so that the model fits:
+# 14.0 GiB on the GPU.
+model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct
+served-model-name: google/gemma-4-26b-a4b-qat
+# FP16 like the scales of the Q4_0 GGUF, which BF16 would round.
+dtype: float16
+# Do not load the vision tower (1.1 GiB), which would not fit.
+language-model-only: true
+# The maximum with the KV cache below. Peak 15955 MiB of 16376 under load.
+max-model-len: 30720
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves only 0.16 GiB for the KV cache.
+kv-cache-memory-bytes: 1000000000
+# vLLM uses Triton attention for Gemma 4 (head sizes 256 and 512), which supports quantized KV caches.
+# int8 with a scale per token and head is the format closest to llama.cpp's q8_0. FP16 would halve the context.
+kv-cache-dtype: int8_per_token_head
+# The prefill chunk. Larger chunks need more activation memory.
+max-num-batched-tokens: 1024
+# CUDA graphs only for decoding and a few batch sizes: capturing the default sizes takes several hundred MiB.
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 4, 8]}
+# Every sequence needs its own sliding-window KV cache.
+max-num-seqs: 4
+enable-prefix-caching: true
+# No CPU KV offloading: it needs GPU memory too, which made the server run out of memory on the first request
+# (Qwen with 2.1 GB of KV cache), and it does not speed up PaperQA2 (see README.md).
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.

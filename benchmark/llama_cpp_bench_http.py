@@ -550,8 +550,11 @@ def test_concurrency(
     prompt_tokens: int,
     n_predict: int,
     embedding: tuple[str, list[str], int] | None = None,
+    emb_server: Server | None = None,
 ) -> dict[str, Any]:
     """Concurrent completions; with ``embedding`` (model, texts, tokens) embedding batches run at the same time.
+
+    The embeddings go to ``emb_server`` if given (a separate embedding server), else to ``server``.
 
     The mixed load reproduces how PaperQA2 uses the server (evidence summaries while new papers are embedded) and
     gives the peak GPU memory of both models under load.
@@ -565,7 +568,7 @@ def test_concurrency(
         emb_model, texts, tokens = embedding
         while not stop.is_set():
             t0 = time.perf_counter()
-            server.embeddings(emb_model, texts)
+            (emb_server or server).embeddings(emb_model, texts)
             embed_stats["seconds"] += time.perf_counter() - t0
             embed_stats["batches"] += 1
             embed_stats["tokens"] += tokens
@@ -662,7 +665,9 @@ def pick_models(models: list[dict[str, Any]], chat: str | None, embedding: str |
         return "embed" in m["id"].lower() or "--embeddings" in (m.get("status", {}).get("args") or [])
 
     def rank(m: dict[str, Any]) -> int:
-        return {"loaded": 0, "sleeping": 1}.get(m.get("status", {}).get("value"), 2)
+        if "status" not in m:  # vLLM and llama-server without the router: the served model is loaded
+            return 0
+        return {"loaded": 0, "sleeping": 1}.get(m["status"].get("value"), 2)
 
     ordered = sorted(models, key=rank)
     if chat is None:
@@ -695,6 +700,9 @@ def main() -> int:
     parser.add_argument("--embedding-model",
                         help="embedding model id (default: first loaded model with 'embed' in its id)")
     parser.add_argument("--no-embedding", action="store_true", help="skip the embedding test")
+    parser.add_argument("--embedding-url",
+                        help="base URL of a separate embedding server (e.g. vLLM, which serves one model per server; "
+                             "default: --url)")
     parser.add_argument("--tests", nargs="+", choices=ALL_TESTS, default=DEFAULT_TESTS,
                         help=f"tests to run (default: {' '.join(DEFAULT_TESTS)})")
     parser.add_argument("--n-predict", type=int, default=256,
@@ -737,11 +745,23 @@ def main() -> int:
     )
     server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
     models = server.models()
+    emb_server = server
+    emb_models = models
+    if args.embedding_url:
+        emb_server = (VllmServer if is_vllm(args.embedding_url, args.timeout) else Server)(
+            args.embedding_url, api_key, args.timeout
+        )
+        emb_models = emb_server.models()
     chat_model, embedding_model = pick_models(models, args.model, args.embedding_model)
-    if chat_model is None:
-        raise SystemExit("No chat model found; pass --model")
+    if args.embedding_url:
+        embedding_model = args.embedding_model or pick_models(emb_models, None, None)[1] or emb_models[0]["id"]
     if args.no_embedding or "embedding" not in args.tests:
         embedding_model = None
+    if chat_model is None:
+        if set(args.tests) != {"embedding"} or embedding_model is None:
+            raise SystemExit("No chat model found; pass --model")
+        # Only the embedding test: the "chat model" is the embedding model, for the server properties.
+        chat_model = embedding_model
 
     props = server.props(chat_model)
     slots = int(props.get("total_slots") or 1)
@@ -762,14 +782,16 @@ def main() -> int:
         "chat_server_config": args.server_config.read_text(encoding="utf-8") if args.server_config else None,
         "max_model_len": props.get("max_model_len"),
         "embedding_model": embedding_model,
-        "embedding_server_args": server_args(models, embedding_model) if embedding_model else None,
+        "embedding_url": emb_server.url if embedding_model else None,
+        "embedding_server_args": server_args(emb_models, embedding_model) if embedding_model else None,
     }
 
     with GpuSampler() as gpu:
         print("warm-up...", file=sys.stderr)
-        server.completion(chat_model, "Hello", 8)
+        if chat_model != embedding_model:
+            server.completion(chat_model, "Hello", 8)
         if embedding_model:
-            server.embeddings(embedding_model, ["hello"])
+            emb_server.embeddings(embedding_model, ["hello"])
         if "generation" in args.tests:
             print(f"generation: {args.n_predict} tokens x{args.repeat}...", file=sys.stderr)
             result["generation"] = test_generation(server, chat_model, args.n_predict, args.repeat)
@@ -794,20 +816,24 @@ def main() -> int:
         mixed_embedding = None
         if args.mixed and embedding_model:
             texts = [
-                build_prompt(server, embedding_model, args.embed_tokens, salt=f"Chunk {i}. ")[0]
+                build_prompt(emb_server, embedding_model, args.embed_tokens, salt=f"Chunk {i}. ")[0]
                 for i in range(args.embed_texts)
             ]
-            mixed_embedding = (embedding_model, texts, sum(len(server.tokenize(embedding_model, t)) for t in texts))
+            mixed_embedding = (
+                embedding_model, texts, sum(len(emb_server.tokenize(embedding_model, t)) for t in texts)
+            )
         for c in concurrency if "concurrency" in args.tests else []:
             mixed = mixed_embedding if c == max(concurrency) else None
             print(f"concurrency {c}: {args.concurrent_prompt_tokens}-token prompts, {args.n_predict} tokens each"
                   f"{' + concurrent embeddings' if mixed else ''}...", file=sys.stderr)
             result["concurrency"].append(
-                test_concurrency(server, chat_model, c, args.concurrent_prompt_tokens, args.n_predict, mixed)
+                test_concurrency(
+                    server, chat_model, c, args.concurrent_prompt_tokens, args.n_predict, mixed, emb_server
+                )
             )
         if embedding_model:
             print(f"embeddings: {args.embed_texts} texts x {args.embed_tokens} tokens...", file=sys.stderr)
-            result["embeddings"] = test_embeddings(server, embedding_model, args.embed_texts, args.embed_tokens)
+            result["embeddings"] = test_embeddings(emb_server, embedding_model, args.embed_texts, args.embed_tokens)
     if gpu.available:
         gpu_result: dict[str, Any] = {"names": gpu.names, "peak_memory_used_mib": gpu.peak}
         if gpu.process_peak is not None:

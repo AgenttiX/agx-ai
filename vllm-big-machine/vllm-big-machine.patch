@@ -1,0 +1,46 @@
+diff -ru a/config/vllm.py b/config/vllm.py
+--- a/config/vllm.py	2026-10-10 22:21:02.412256909 +0300
++++ b/config/vllm.py	2026-10-10 22:21:02.437085630 +0300
+@@ -1245,6 +1245,10 @@
+             return
+         if self.model_config is not None and (self.model_config.enable_cumem_allocator):
+             return
++        # agx-ai patch: the native CPU offloading copies the KV cache with device pointers and registers no GPU memory,
++        # and the KV cache is allocated once and never freed, so a VMM remap cannot affect it.
++        if self.kv_transfer_config.kv_connector == "OffloadingConnector":
++            return
+ 
+         raise ValueError(
+             f"KV connector {self.kv_transfer_config.kv_connector} is "
+diff -ru a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+--- a/model_executor/models/qwen3_5_mtp.py	2026-10-10 20:03:00.863537569 +0300
++++ b/model_executor/models/qwen3_5_mtp.py	2026-10-10 20:03:00.887317950 +0300
+@@ -82,9 +82,12 @@
+         self.mtp_start_layer_idx = config.num_hidden_layers
+         self.num_mtp_layers = getattr(config, "mtp_num_hidden_layers", 1)
+ 
++        # agx-ai patch: like Qwen3_5Model, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=vllm_config.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
+diff -ru a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+--- a/model_executor/models/qwen3_5.py	2026-10-10 20:03:00.863482024 +0300
++++ b/model_executor/models/qwen3_5.py	2026-10-10 20:03:00.887169691 +0300
+@@ -244,9 +244,12 @@
+ 
+         self.vocab_size = config.vocab_size
+ 
++        # agx-ai patch: pass the quantization config, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=self.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         def get_layer(prefix: str):

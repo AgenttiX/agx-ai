@@ -1,4 +1,6 @@
 *.env
+# The configuration selection of vLLM, which has no secrets
+!vllm-big-machine/.env
 *.pdf
 *.png
 *.rmp

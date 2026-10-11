@@ -1,0 +1,11 @@
+# vllm serve --config for Qwen3-Embedding-0.6B on the CPU: configuration 8. The threads and the KV cache size are set
+# in docker-compose.yml. FP32, as the Zen 2 CPU has no BF16 instructions. ~1100 tokens/s with 16 threads, i.e.
+# ~30 min for the 2M tokens of the PaperQA2 corpus. In the retrieval test (README.md), the 0.6B model found the
+# right chunk among the top 10 for 89 % of the questions, the 4B and 8B models for 92 %.
+model: Qwen/Qwen3-Embedding-0.6B
+served-model-name: Qwen/Qwen3-Embedding-0.6B
+runner: pooling
+dtype: float32
+max-model-len: 8192
+max-num-seqs: 8
+max-num-batched-tokens: 8192

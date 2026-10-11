@@ -1,5 +1,5 @@
 # llama.cpp router server for PaperQA2 on the Big Machine (2x RTX A4000, 16 GB each).
-# Models and their settings are in preset.ini, server-wide settings in config.ini,
+# Models and their settings are in the preset-*.ini files (selected below), server-wide settings in config.ini,
 # and the VRAM, context size and speed notes in README.md.
 services:
   llama-cpp:
@@ -7,13 +7,33 @@ services:
     container_name: llama-cpp
     env_file:
       - ./llama-cpp.env
+    environment:
+      # The image requires CUDA >= 13.4 (build b11541), but the driver 610.57 provides CUDA 13.3.
+      # CUDA minor version compatibility lets it run anyway.
+      - NVIDIA_DISABLE_REQUIRE=1
+      # The image sets LLAMA_ARG_PORT=8080 (since ~b11500), which overrides the port of config.ini.
+      - LLAMA_ARG_PORT=9931
+      # Peer-to-peer copies between the GPUs return corrupted data on this machine (../vllm-big-machine/README.md).
+      # Since ~b11500, the tensor split reduces with NCCL, which fails with "unhandled cuda error" in ncclGroupEnd
+      # unless it communicates through host memory.
+      - NCCL_P2P_DISABLE=1
+    # The machine is shared, and the others' jobs must not run out of RAM. The limit covers the experts on the CPU
+    # (preset-gemma-4-26b-a4b-qat-1gpu.ini: ~8 GB), the prompt caches (cache-ram) and the page cache of the
+    # memory-mapped models, which can be reclaimed.
+    mem_limit: 48g
+    # NCCL without peer-to-peer copies communicates through /dev/shm, whose default size of 64 MiB is too small
+    # ("unhandled system error" in ncclGroupEnd).
+    shm_size: 2g
     restart: unless-stopped
     ports:
       - "9931:9931"
     volumes:
       - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - ./config.ini:/etc/llama.cpp/config.ini:ro
+      # Select the preset here (see README.md)
       - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-gemma-4-26b-a4b-qat-2gpu.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-gemma-4-26b-a4b-qat-1gpu.ini:/etc/llama.cpp/preset.ini:ro
     deploy:
       resources:
         reservations:

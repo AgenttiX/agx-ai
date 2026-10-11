@@ -1,0 +1,12 @@
+# vllm serve --config for Qwen3-Embedding-4B on one GPU: configuration 7, and the embedding model of configurations
+# 5 + 7 and 6 + 7. In the retrieval test on the PaperQA2 corpus (README.md), the 4B model in BF16 retrieved as well
+# as the 8B model (in BF16 or FP8) at twice the speed, and better than the 0.6B model.
+model: Qwen/Qwen3-Embedding-4B
+served-model-name: Qwen/Qwen3-Embedding-4B
+runner: pooling
+# The longest PaperQA2 chunks (5000 characters of reference lists or tables) are ~3500 tokens.
+max-model-len: 8192
+# ~17k tokens: two maximum-length inputs at a time. Set explicitly, so that the server also starts next to an LLM.
+kv-cache-memory-bytes: 2500000000
+max-num-seqs: 16
+max-num-batched-tokens: 8192

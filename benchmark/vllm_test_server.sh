@@ -8,8 +8,11 @@
 #   CONFIG    YAML file for vllm serve --config
 #   ENV_FILE  env file with LLAMA_API_KEY, used as the API key (default: none)
 #   PORT      host port (default 9933)
-# The Hugging Face cache, /home/$USER/.cache/vllm-models (as /models) and the compile caches (the volume of
-# ../vllm-radeon-vii) are mounted like in the compose file. Extra docker arguments: DOCKER_ARGS="-e VAR=..."
+# The Hugging Face cache, /home/$USER/.cache/vllm-models (as /models) and the compile caches (the volume
+# CACHE_VOLUME, default that of ../vllm-radeon-vii) are mounted like in the compose files.
+# Extra docker arguments: DOCKER_ARGS="-e VAR=..."
+# On NVIDIA (nvidia-smi exists), the GPUs are given with --gpus "device=$GPUS" (default: all), e.g. GPUS=1.
+# GPUS=none gives no GPUs, for the CPU image of vLLM.
 # Container name: NAME=... (default vllm-test). Stop the production container first, and remove this one afterwards:
 #   docker rm -f vllm-test
 #
@@ -30,14 +33,21 @@ if [[ $# -gt 0 && $1 != -- ]]; then port=$1; shift; fi
 [[ $# -gt 0 && $1 == -- ]] && shift
 name=${NAME:-vllm-test}
 
-args=(--name "$name" -p "$port:8000" --device /dev/dri --group-add video --ipc host
+args=(--name "$name" -p "$port:8000" --ipc host
       -v "$HOME/.cache/huggingface/hub:/root/.cache/huggingface/hub"
       -v "$HOME/.cache/vllm-models:/models:ro"
-      -v vllm-radeon-vii_vllm-cache:/root/.cache/vllm
+      -v "${CACHE_VOLUME:-vllm-radeon-vii_vllm-cache}:/root/.cache/vllm"
       -e HF_HUB_OFFLINE=1 -e TRITON_CACHE_DIR=/root/.cache/vllm/triton
       -e TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/inductor
       -v "$config:/etc/vllm/config.yaml:ro")
-[[ -e /dev/kfd ]] && args+=(--device /dev/kfd)
+if [[ ${GPUS:-} == none ]]; then
+    :  # a CPU image: with the GPUs (and libcuda), Triton would select its CUDA driver instead of the CPU one
+elif command -v nvidia-smi >/dev/null; then
+    args+=(--gpus "\"device=${GPUS:-all}\"")
+else
+    args+=(--device /dev/dri --group-add video)
+    [[ -e /dev/kfd ]] && args+=(--device /dev/kfd)
+fi
 key_arg=
 if [[ -n $env_file ]]; then
     args+=(--env-file "$(realpath "$env_file")")
@@ -55,6 +65,9 @@ while sleep 5; do
         echo "ready on port $port after $(( $(date +%s) - start )) s"
         docker logs "$name" 2>&1 | grep -E 'Model loading took|Available KV cache memory|GPU KV cache size|Maximum concurrency|Graph capturing finished' || true
         if command -v amd-smi >/dev/null; then amd-smi metric -m | grep -E '^GPU|USED_VRAM:' | grep -v VISIBLE; fi
+        if command -v nvidia-smi >/dev/null; then
+            nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+        fi
         exit 0
     fi
     docker ps -q -f "name=^$name\$" | grep -q . || break

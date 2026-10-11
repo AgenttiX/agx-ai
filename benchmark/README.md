@@ -48,8 +48,9 @@ standard library (`asyncio` and `email`), so compare depth results measured with
 
 ### vLLM
 
-The script also benchmarks vLLM servers (detected from vLLM's `/version` endpoint), with the same tests except the
-embedding test. vLLM reports no timings, so the requests are streamed and timed on the client: prompt processing is
+The script also benchmarks vLLM servers (detected from vLLM's `/version` endpoint), with the same tests. vLLM serves
+one model per server, so the embedding model is on another server: give it with `--embedding-url` (also for
+`--mixed`). With `--tests embedding` alone, no chat model is needed. vLLM reports no timings, so the requests are streamed and timed on the client: prompt processing is
 the prompt length over the time to the first token, and generation the remaining tokens over the time from the first
 to the last one. Each request gets its own `cache_salt` instead of `cache_prompt: false`, so that the prefix cache
 is not hit. The draft acceptance comes from the counters of `/metrics` before and after each request. vLLM does not
@@ -60,7 +61,9 @@ report its arguments; `--server-config FILE` stores the YAML file given to `vllm
 
 The vLLM counterpart of `llama_cpp_test_server.sh` below: starts a container named `vllm-test` on port 9933 with a
 YAML file for `vllm serve --config`, mounted like in [`../vllm-radeon-vii`](../vllm-radeon-vii), and waits until it
-answers. Extra `vllm serve` arguments go after `--`, extra docker arguments in `DOCKER_ARGS`.
+answers. Extra `vllm serve` arguments go after `--`, extra docker arguments in `DOCKER_ARGS`. On NVIDIA, the GPUs are
+selected with `GPUS` (default all; `GPUS=none` for the CPU image), and the compile cache volume with `CACHE_VOLUME`
+(see [`../vllm-big-machine/README.md`](../vllm-big-machine/README.md#commands)).
 
 ```sh
 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
@@ -70,6 +73,15 @@ DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_
     --tests chat depth --repeat 2 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test
 ```
+
+## `embedding_retrieval_eval.py`: retrieval quality of embedding models on your own corpus
+
+Which embedding model finds the right excerpts for PaperQA2? An LLM writes one question per sampled chunk of the
+corpus (once), then each embedding model ranks all chunks for each question, and the script reports how often the
+source chunk is among the top 1, 5 and 10 (and the MRR). The results go to `results/<host>-embedding.jsonl`. Works with
+llama.cpp and vLLM servers; the commands, including exporting the chunks of a PaperQA2 index, are in
+[`../vllm-big-machine/README.md`](../vllm-big-machine/README.md#commands), and the results for the PaperQA2 corpus in
+[its embedding section](../vllm-big-machine/README.md#embedding-models).
 
 ## `llama_cpp_bench_container.py`: llama.cpp's own `llama bench` in the running container
 
