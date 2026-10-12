@@ -339,8 +339,9 @@ class GpuSampler:
     """Samples GPU memory use with nvidia-smi and amd-smi in a background thread; records the peak per GPU.
 
     GPUs of both vendors are listed if both tools are installed. amd-smi takes about a second per query, so its
-    peaks are coarser. With nvidia-smi, the peak of the memory used by llama-server processes alone is recorded too
-    (``process_peak``), which excludes other programs on the GPU, such as a desktop session.
+    peaks are coarser. With nvidia-smi, the peak of the memory used by the server processes alone (llama-server or
+    vLLM's engine) is recorded too (``process_peak``), which excludes other programs on the GPU, such as a desktop
+    session.
     """
 
     def __init__(self, interval: float = 0.5) -> None:
@@ -381,14 +382,15 @@ class GpuSampler:
         return [m for tool in self.tools for m in self._query_tool(tool)]
 
     def _query_processes(self) -> int | None:
-        """MiB used by llama-server processes on all NVIDIA GPUs (None without nvidia-smi or if it fails)."""
+        """MiB used by llama-server or vLLM processes on all NVIDIA GPUs (None without nvidia-smi or if it fails)."""
         if "nvidia-smi" not in self.tools:
             return None
         out = self._run(
             ["nvidia-smi", "--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"]
         )
         try:
-            return sum(int(line.rsplit(",", 1)[1]) for line in out.splitlines() if "llama" in line)
+            return sum(int(line.rsplit(",", 1)[1]) for line in out.splitlines()
+                       if "llama" in line or "VLLM" in line)
         except (IndexError, ValueError):
             return None
 
@@ -884,7 +886,7 @@ def main() -> int:
     if gpu.available:
         print(f"| Peak GPU memory | {', '.join(f'{n}: {m} MiB' for n, m in zip(gpu.names, gpu.peak, strict=False))} |")
         if gpu.process_peak is not None:
-            print(f"| Peak GPU memory of llama-server (NVIDIA) | {gpu.process_peak} MiB |")
+            print(f"| Peak GPU memory of the server processes (NVIDIA) | {gpu.process_peak} MiB |")
     print(f"\nAppended to `{output}`.")
     return 0
 
