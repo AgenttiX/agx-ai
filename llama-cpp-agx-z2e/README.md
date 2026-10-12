@@ -8,8 +8,9 @@ as a router with one of the presets below, which is selected by commenting the v
 server-wide settings of [`../llama-cpp-agx-ai/config.ini`](../llama-cpp-agx-ai/config.ini), which is identical to
 [`config.ini`](config.ini) here, and the API key of [`../llama-cpp-radeon-vii/llama-cpp.env`](../llama-cpp-radeon-vii).
 
-All models run entirely on the GPU with flash attention and MTP speculative decoding. The context of each one is as
-large as possible while llama-server stays at ~21 GiB of VRAM (peak 21520-21556 MiB in the benchmarks with
+All models except Qwen3.8-Flash-Next run entirely on the GPU with flash attention and MTP speculative decoding.
+Qwen3.8-Flash-Next has most of its experts in RAM (see [Qwen3.8-Flash-Next](#qwen38-flash-next)). The context of each
+one is as large as possible while llama-server stays at ~21 GiB of VRAM (peak 21520-21556 MiB in the benchmarks with
 full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the desktop session using ~1.9 GiB.
 
 | Preset | Model | KV cache | Context | Chat generation | Prompt processing |
@@ -19,6 +20,7 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL`, 2 slots | f16 | 165888 | 216 t/s, 148 t/s at 70k, 104 t/s at 163k | 4450 t/s at 16k, 2000 t/s at 163k |
 | [`preset-gemma-4-31b-qat.ini`](preset-gemma-4-31b-qat.ini) | Gemma 4 31B QAT `UD-Q4_K_XL` | q8_0 | 61440 | 77 t/s, 48 t/s at 59k | 1020 t/s at 16k, 750 t/s at 59k |
 | [`preset-gemma-4-31b-qat-uncensored.ini`](preset-gemma-4-31b-qat-uncensored.ini) | Gemma 4 31B QAT Uncensored `Q4_K_M` | q8_0 | 38912 | 51 t/s, 40 t/s at 36k | 920 t/s at 16k, 790 t/s at 36k |
+| [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S`, experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 28 t/s, 25 t/s at 36k, 20 t/s at 100k | 690 t/s at 16-100k, 780 t/s at 260k |
 
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
 (`no-mmproj-offload = 1`) for the Gemma 4 31B models. Each preset has the context size for the other choice as a
@@ -248,6 +250,50 @@ Gemma 4 26B-A4B has 2 slots with a unified KV cache (`kv-unified` in `config.ini
 so two long conversations at the same time cannot both be kept in VRAM. When a slot switches to a conversation saved
 in the host RAM prompt cache (`cache-ram`) while the other slot holds a long context, restoring it fails ("failed to
 find N available cells in kv cache") and the prompt is processed again; this is logged as an error but harmless.
+
+## Qwen3.8-Flash-Next
+
+Added on 2026-10-12, with build b11552 of the `server-cuda13` image. Qwen3.8-Flash-Next is supported since
+[ggml-org/llama.cpp#27742](https://github.com/ggml-org/llama.cpp/pull/27742) (2026-08-27), with fixes and
+optimizations since then; MTP for it is not merged yet
+([ggml-org/llama.cpp#27836](https://github.com/ggml-org/llama.cpp/pull/27836)). It is a 125B
+MoE (512 experts of which 10 are active, 6B active parameters) with a 51B-parameter n-gram embedding table and 48
+layers, of which 12 have a KV cache (Qwen Sparse Attention) and 36 a fixed-size Gated DeltaNet state. The same model
+runs with vLLM in [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next).
+
+**Quantization.** [`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
+`IQ3_S`: a quantization type per tensor chosen by a gradient-based search (3.5 bits per weight on average, 54.8 GB),
+and the n-gram table in IQ4_NL (28.8 GB). Its model card reports the BF16 model's scores on AIME25, GPQA-Diamond and
+LiveCodeBench v6 (93.26 vs 93.12 on average), and it is the most downloaded GGUF of the model. Unsloth's `UD-Q4_K_XL`
+(111 GB) and `UD-IQ4_XS` (94 GB) would leave too little RAM for the desktop: the weights that are not on the GPU are
+in RAM (`load-mode = none`, ~66 GB).
+
+**Memory.** The KV cache takes ~29 KiB per token with q8_0 (1852 MiB per 65536 tokens), so the full trained context
+of 262144 tokens costs 7.2 GiB, about as much as 7 layers of experts (~1.05 GiB each). The vision encoder takes ~1 GiB.
+
+| Experts on the CPU (of 48 layers) | Context | Threads | Chat | Gen. 6.4k | Gen. 32k | Prompt 32k | Peak VRAM |
+|---|---|---|---|---|---|---|---|
+| 40 | 131072 | 32 | 27.6 | 28.8 | 25.9 | 847 | 17926 MiB |
+| 37 | 131072 | 32 | 30.0 | 28.6 | 26.6 | 882 | 21012 MiB |
+| 42 | 262144 | 32 | 28.0 | 28.0 | 25.9 | 824 | 19434 MiB |
+| 41 | 262144 | 32 | 28.2 | 28.1 | 25.7 | 839 | 20496 MiB |
+| 41 | 262144 | 24 | 28.1 | 27.9 | 25.7 | 837 | 20496 MiB |
+
+The vision encoder on the CPU, ubatch 2048, q8_0 KV cache. Generation is bound by the memory bandwidth of the CPU (4
+channels of DDR4-2666): five more layers of experts on the GPU make it only 7 % faster, and 24 threads are as fast
+as 32. The preset therefore uses the full context, 24 threads, and the vision encoder on the GPU with the experts of
+42 layers on the CPU. ubatch 4096 does not fit even with 43 layers on the CPU.
+
+Results of the preset (`--tests generation prompt chat depth image --prompt-tokens 260000`):
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 27.6 t/s |
+| Chat, 6 requests | 27.6 t/s (27.0-27.9) |
+| Depth 6.4k / 16k / 36.5k / 100k | 26.6 / 26.3 / 24.9 / 20.4 t/s (prompt 604 / 684 / 687 / 689 t/s) |
+| Prompt of 260000 tokens | 778 t/s |
+| Image 1280x960, prompt processing | 3.2 s |
+| Peak VRAM of llama-server | 20618 MiB |
 
 ## Results of the current presets
 

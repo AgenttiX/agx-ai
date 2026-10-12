@@ -16,6 +16,7 @@ services:
       # - ./preset-gemma-4-31b-qat-uncensored.ini:/etc/llama.cpp/preset.ini:ro
       - ./preset-qwen3.8-27b.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-qwen3.8-27b-uncensored.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-qwen3.8-flash-next.ini:/etc/llama.cpp/preset.ini:ro
     deploy:
       resources:
         reservations:

@@ -1,0 +1,38 @@
+# vllm serve --config for Qwen3.8-27B on the RTX 3090 of agx-z2e. Benchmarks: README.md
+# GPTQ int4 (group size 128) with int4 embedding and lm_head, 13.1 GiB on the GPU without the vision tower. The
+# quantized embedding needs ../vllm/vllm.patch. The mtp-int8 revision has the MTP head in int8 (0.4 GiB).
+model: JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB
+revision: mtp-int8
+served-model-name: Qwen/Qwen3.8-27B
+# Do not load the vision tower (0.9 GiB), which would cost ~25k tokens of context.
+language-model-only: true
+# The maximum with the KV cache below (158480 tokens, 1.07 times the context: the scheduler needs some extra blocks
+# for the recurrent states). Peak 20976 MiB with a 145000-token prompt, with the desktop using 2.7 GiB.
+max-model-len: 147456
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
+# startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
+kv-cache-memory-bytes: 6400000000
+gpu-memory-utilization: 0.8
+# int8 with a scale per token and head (the format closest to llama.cpp's q8_0) fits twice the context of BF16. It
+# needs the Triton attention: FlashAttention 2 supports no quantized KV cache, and the FP8 cache of FlashInfer allows
+# no full CUDA graphs with MTP (chat 51 instead of 81 t/s). With the split-KV fix of ../vllm/vllm.patch, the Triton
+# attention is also the fastest at long contexts (see README.md).
+kv-cache-dtype: int8_per_token_head
+attention-backend: TRITON_ATTN
+# The prefill chunk. 4096 was not faster.
+max-num-batched-tokens: 2048
+# Full CUDA graphs for decoding, for up to 4 sequences with 3 tokens each (MTP).
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4, 6, 8, 9, 12]}
+# Every sequence needs its own recurrent state for the 48 Gated DeltaNet layers.
+max-num-seqs: 4
+# MTP with the model's own MTP head: 2 drafted tokens. 3 were not clearly faster and leave less context.
+speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM, so that a returning conversation needs
+# no new prompt processing (a 25k-token prompt: 4.0 s instead of 25.8 s). It takes no GPU memory.
+kv-offloading-size: 16
+kv-offloading-backend: native
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as recommended by Qwen.

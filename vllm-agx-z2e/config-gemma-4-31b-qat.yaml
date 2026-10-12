@@ -1,0 +1,42 @@
+# vllm serve --config for Gemma 4 31B QAT on the RTX 3090 of agx-z2e. Benchmarks: README.md
+# Google's compressed-tensors QAT checkpoint (google/gemma-4-31B-it-qat-w4a16-ct: int4, group size 32) with the
+# embedding and the lm_head quantized to int4 by quantize_gemma4_ct_embedding.py, as the BF16 ones (5.25 GiB) do not
+# fit. 16.9 GiB on the GPU. llama.cpp is better for this model on this GPU (see README.md).
+model: /models/gemma-4-31B-it-qat-w4a16-ct-embed4-head4
+served-model-name: google/gemma-4-31b-qat
+# Do not load the vision tower (1.1 GiB), which would not fit.
+language-model-only: true
+# The rotary embedding caches are allocated for max_position_embeddings (262144 tokens: 0.375 GiB); limiting it to the
+# context frees 0.31 GiB for the KV cache.
+hf-overrides: {"text_config": {"max_position_embeddings": 40960}}
+# The maximum with the KV cache below. Peak 20988 MiB with a 39500-token prompt, with the desktop using 2.7 GiB.
+max-model-len: 40960
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
+# startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
+kv-cache-memory-bytes: 2900000000
+gpu-memory-utilization: 0.8
+# int4 with a scale per token and head. With int8, only 12176 tokens fit: vLLM reserves the sliding window and a prefill
+# chunk for each of the 50 sliding-window layers, and pads the KV cache of the 10 global layers to the page size of
+# the sliding-window layers. Retrieval at 9k and 21k tokens of context: 85/88 correct (see README.md).
+kv-cache-dtype: int4_per_token_head
+attention-backend: TRITON_ATTN
+# The prefill chunk. Every sliding-window layer reserves room for one chunk on top of the window.
+max-num-batched-tokens: 512
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1]}
+max-num-seqs: 1
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM (see config-qwen3.8-27b.yaml).
+kv-offloading-size: 16
+kv-offloading-backend: native
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.
+
+# Google's MTP drafter (BF16, 0.9 GB) doubles the speed in chats (75 instead of 36 t/s) and is 43 % faster at 6.4k
+# tokens of context (46 vs 32 t/s), but leaves room for only 8192 tokens of context:
+# hf-overrides: {"text_config": {"max_position_embeddings": 8192}}
+# max-model-len: 8192
+# kv-cache-memory-bytes: 1300000000
+# compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3]}
+# speculative-config: {"method": "mtp", "model": "google/gemma-4-31B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}

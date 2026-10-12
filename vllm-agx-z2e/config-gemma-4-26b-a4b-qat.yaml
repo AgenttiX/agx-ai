@@ -1,0 +1,37 @@
+# vllm serve --config for Gemma 4 26B-A4B QAT on the RTX 3090 of agx-z2e. Benchmarks: README.md
+# Built with ../vllm-radeon-vii/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8) and then
+# quantize_gemma4_ct_embedding.py (--embed-bits 8): all linear weights bit-exact from Google's QAT Q4_0 GGUF (int4,
+# group size 32), the embedding and the lm_head int8 (round-to-nearest, group size 128). 15.4 GiB on the GPU with the
+# MTP drafter; with an fp16 embedding, there would be ~30k tokens less context.
+model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct-embed8-head8
+served-model-name: google/gemma-4-26b-a4b-qat
+# FP16 like the scales of the Q4_0 GGUF, which BF16 would round.
+dtype: float16
+# Do not load the vision tower (1.1 GiB), which would cost ~45k tokens of context.
+language-model-only: true
+# The KV cache below holds 173323 tokens. Peak 20860 MiB with a 153000-token prompt, with the desktop using 2.7 GiB.
+max-model-len: 163840
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
+# startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
+kv-cache-memory-bytes: 4200000000
+gpu-memory-utilization: 0.8
+# vLLM uses Triton attention for Gemma 4 (head sizes 256 and 512), which supports quantized KV caches.
+# int8 with a scale per token and head is the format closest to llama.cpp's q8_0. FP16 would halve the context.
+kv-cache-dtype: int8_per_token_head
+attention-backend: TRITON_ATTN
+# The prefill chunk.
+max-num-batched-tokens: 2048
+# Full CUDA graphs for decoding, for up to 4 sequences with 3 tokens each (MTP).
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4, 6, 8, 9, 12]}
+# Every sequence needs its own sliding-window KV cache.
+max-num-seqs: 4
+# Google's MTP drafter for the QAT model (BF16, 0.8 GB), which shares the KV cache of the main model.
+speculative-config: {"method": "mtp", "model": "google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM (see config-qwen3.8-27b.yaml).
+kv-offloading-size: 16
+kv-offloading-backend: native
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.
