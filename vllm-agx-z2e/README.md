@@ -85,7 +85,7 @@ uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-31B-it-qat-q4_0-
 # Qwen3.8-Flash-Next (129 GB) and its runtime
 uvx --from 'huggingface_hub[hf_xet]' hf download albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE \
     --revision ef554143369a706525336f6b42a09094835dc077
-docker pull ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
+docker pull ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
 # Stop llama.cpp on this GPU and start vLLM
 docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
 docker compose up -d
@@ -201,9 +201,12 @@ an AVX2 thread pool computes the other ("cold") experts from RAM during decode w
 over PCIe, and prefill streams all experts through the GPU. The n-gram table (FP8) is read in place from the
 checkpoint. It uses [`albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE`](https://huggingface.co/albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE)
 (Intel's AutoRound W4A16 experts and an FP8 n-gram table, 125 GB). With 68 GiB for the container, all 23808 cold
-experts fit in its RAM arena (56 GiB). The image is built from a pinned commit by
-[`../.github/workflows/deploy-docker-vllm-flash-next.yml`](../.github/workflows/deploy-docker-vllm-flash-next.yml);
-the settings are in the `environment` of the service in [`docker-compose.yml`](docker-compose.yml).
+experts fit in its RAM arena (56 GiB). The compose file uses the author's
+[v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0), pinned by
+digest; the later commits of the repository (up to `10b24c2`, 2026-10-11) change only documentation. None of the
+fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch) would help this model: its sparse attention has its own split-K
+kernels, it does not use the Qwen3.5/3.8 model code, and its decode is bound by the CPU. The settings are in the
+`environment` of the service in [`docker-compose.yml`](docker-compose.yml).
 
 | Settings | Chat | Gen. 6.4k | Gen. 32k | CPU / GPU time per decode step | Peak VRAM |
 |---|---|---|---|---|---|

@@ -60,9 +60,8 @@ services:
     <<: *gpu
     profiles: [flash-next]
     # The single-RTX-3090 runtime of https://github.com/DominikBucko/qwen38-flash-next-3090 (a vLLM build with
-    # CPU expert kernels for Qwen3.8-Flash-Next), built from a pinned commit by
-    # ../.github/workflows/deploy-docker-vllm-flash-next.yml. See README.md.
-    image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
+    # CPU expert kernels for Qwen3.8-Flash-Next): its v0.1.0 release image, pinned by digest. See README.md.
+    image: ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
     container_name: vllm-flash-next
     # The runtime takes the API key from VLLM_API_KEY. Its serve script has no option for gpu-memory-utilization,
     # whose default (0.92) fails the startup check of free GPU memory next to the desktop, so it is added to the
