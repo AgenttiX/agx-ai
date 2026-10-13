@@ -40,8 +40,11 @@ max-num-seqs: 1
 # 2 tokens: +19 % in chat (31.6-32.0 vs 26.6 t/s); 3 tokens was not faster.
 speculative-config: {"method": "mtp", "model": "google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
 enable-prefix-caching: true
-# No CPU KV offloading (kv-offloading-size): with the MTP drafter, it stores blocks but never restores an evicted
-# conversation for Gemma 4 (without MTP, a 25k-token conversation came back in 0.3 s instead of 25 s). See README.md.
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of RAM (/dev/shm), so that a returning conversation
+# needs no new prompt processing: a 26616-token conversation that two 98k-token prompts had evicted came back in
+# 2.2 s instead of 29 s. With the MTP drafter, this needs the offloading fix of ../vllm/vllm.patch (2026-10-13).
+kv-offloading-size: 16
+kv-offloading-backend: native
 reasoning-parser: gemma4
 enable-auto-tool-choice: true
 tool-call-parser: gemma4

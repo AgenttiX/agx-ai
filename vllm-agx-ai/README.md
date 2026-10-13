@@ -120,15 +120,18 @@ the MoE kernel.
   larger KV cache per sequence, which halved the context (40352 tokens at most with 1.68 GiB).
 - **Experts on the GPU.** Each layer of experts kept on the GPU (lowering `cpu-offload-gb`) would cost 408 MiB, i.e.
   ~15k tokens of context, and remove only 1/30 of the PCIe reads of a token. Not tested.
-- **CPU KV offloading** (`kv-offloading-size: 16`, `kv-offloading-backend: native`) works for this model only without
-  MTP. Test: a 25k-token conversation, then two 90k-token prompts that evict it from the GPU, then the conversation
-  again. Without MTP, it came back in 0.3 s instead of 25 s (369 MB loaded from RAM). With the MTP drafter (2 or 3
-  tokens, with 1 or 50 generated tokens per request), the connector stored the blocks but never restored them, and
-  the conversation took 26.5-27.9 s again. vLLM logs that it excludes the trailing chunk of the drafter's KV group
-  from offloading; the lookup then apparently fails for the whole request. As MTP speeds up every request and the
-  GPU prefix cache already holds ~100k tokens, the configuration uses MTP without KV offloading.
-  [`../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml`](../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml) uses the same
-  combination, so it probably has the same problem.
+- **CPU KV offloading** (`kv-offloading-size: 16`, `kv-offloading-backend: native`) keeps prefix cache blocks evicted
+  from the GPU in 16 GiB of RAM. Test: a 26616-token conversation, then two 98k-token prompts that evict it from the
+  GPU, then the conversation again. With MTP, it was computed again (29 s) until a fix on 2026-10-13: the connector
+  stored the blocks, but never loaded any. Debug logging in the offloading scheduler showed why: Gemma 4 has five
+  sliding-window KV cache groups and one full-attention group, which also holds the MTP drafter's layers. With the
+  default `prefix_cache_retention_interval` of 0, the sliding-window groups store only the window ending at the end
+  of the prompt (blocks 1599-1662), but the lookup drops the last chunk of the drafter's group as volatile, so a hit
+  ends one chunk earlier and needs blocks 1598-1661. No window was complete, so the lookup always returned 0 (without
+  MTP, it came back in 0.3 s). [`../vllm/vllm.patch`](../vllm/vllm.patch) now also keeps the sliding-window tail for
+  that boundary: the conversation came back in 2.2 s (381 MB loaded), with the same greedy answer as when it was
+  first computed. [`../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml`](../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml)
+  uses the same combination and gets the fix with the image.
 
 Results of the configuration (`--tests generation prompt chat depth --prompt-tokens 96000 --depth 6400 36500`, with
 the image including the fixes of 2026-10-13):
@@ -178,7 +181,9 @@ with the default of 512 MiB, which the memory profiling does not account for) an
 (no RAM for parallel compile workers), both in [`docker-compose.yml`](docker-compose.yml).
 
 **Memory.** ~107 GiB of the container's 128 GiB of RAM are pinned (experts, n-gram table and embedding), and
-5.03 GiB of weights are on the GPU. The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
+5.03 GiB of weights are on the GPU. With the 8 GiB of CPU KV offloading, `free -m` shows 122340 MiB used and 8731 MiB
+available of 131072 MiB (without it: 113890 MiB used, 17181 MiB available; the pinned weights and the offloading buffer
+appear as "shared" and "buff/cache", but cannot be freed). The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
 per token; the FP8 KV cache of this model is dequantized with Triton's e4m3 type, which needs sm_89). With 1.45 GB,
 a 23500-token prompt ran out of memory, so the context is 20480. MTP does not fit. Raising the memory limit of the
 LXC container (the host has 256 GB) would not help the context, only the margin. Loading takes ~13 min (~10 min for
@@ -192,6 +197,10 @@ reading 125 GB and pinning the weights, as the page cache has no room).
 
 - **Generation** reads ~1.2 GB of experts per token over PCIe (10 of 512 experts in each of the 48 layers) and does
   not slow down with the context (Qwen Sparse Attention).
+- **CPU KV offloading** (`kv-offloading-size: 8`; 16 GiB would not fit next to the pinned weights) works for this
+  hybrid model: an 8961-token conversation that two 18k-token prompts had evicted from the GPU came back in 5.7 s
+  (358 MB loaded, the same time as a hit in the GPU cache) instead of 22.6 s. The stored blocks take ~34 KB per token
+  (attention KV and Gated DeltaNet states), so the 8 GiB hold ~250k tokens.
 - **Quality.** In the long-context retrieval test of
   [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py) (44 questions in a 17360-token
   context), the int8 checkpoint answered 38/44 (single lookups 32/32, two-step 6/12) and llama.cpp's IQ3_S 37/44

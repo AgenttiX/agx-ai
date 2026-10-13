@@ -57,3 +57,12 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
       directly.
     - The UVA lookup of the pinned n-gram table copies FP8 rows as `uint8`, as Triton has no FP8 e4m3 type before
       sm_89 (`type fp8e4nv not supported in this architecture`).
+  - Native CPU KV offloading with an EAGLE/MTP drafter whose layers share the full-attention KV cache group, added on
+    2026-10-13 (`distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py`). With the default
+    `prefix_cache_retention_interval` of 0, sliding-window groups store only the window ending at the prompt's replay
+    boundary, but the lookup drops the volatile trailing chunk of the drafter's group and therefore needs the window
+    ending one chunk earlier. For Gemma 4 with MTP (5 sliding-window groups, and the full-attention group as the
+    drafter group), no window was ever complete, so nothing was loaded and every evicted conversation was computed
+    again. The sliding-window tail is now also kept for the boundary one chunk earlier (one more 16-token block per
+    conversation). On the RTX 3070 of [`../vllm-agx-ai`](../vllm-agx-ai), a 26616-token conversation evicted by two
+    98k-token prompts came back in 2.2 s instead of 29 s (381 MB loaded), with the same greedy answer as before.

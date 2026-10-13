@@ -408,6 +408,10 @@ compute buffer). `ubatch-size = 1024` (1213 MiB) would leave room for ~130k toke
   as the draft context needs its own 1.1 GiB compute buffer (there is no draft batch size option), and with
   `device-draft = none` it is slower than without MTP (11.8 vs 13.6 t/s in chat, acceptance 53 %): the verification
   batches select more distinct experts, which the CPU has to decode.
+- **Prompt cache in RAM** (`cache-ram = 16384`, as for the Gemma models; the default is 8192 MiB). It works with
+  the Gated DeltaNet state of this model: a 13741-token conversation, after another one of the same length took over
+  the slot, came back with 13737 tokens from the cache in 3.8 s instead of 29.5 s. A saved conversation of this length
+  takes an estimated ~0.3 GB (~16 KiB of KV cache per token and the 113 MiB state).
 - **The vision encoder** stays on the CPU (`no-mmproj-offload`), as there is no VRAM left: an image of 1280x960
   (1261 prompt tokens) takes 18 s.
 - **Switching models.** The router has no way to make models exclusive on the GPU. The Gemma GPU model is loaded at
@@ -453,7 +457,8 @@ the reasoning is removed from the history in thinking mode. Test with `benchmark
 
 The saved state of a ~35k-token conversation takes roughly 0.7-1 GB, so the default of 8192 MiB holds about
 8-10 long conversations. As the container has ~95 GB of RAM free with both models loaded,
-`cache-ram = 16384` is used for both models.
+`cache-ram = 16384` is used for both models, and since 2026-10-13 also for Qwen3.8-Flash-Next (see
+[Qwen3.8-Flash-Next](#qwen38-flash-next)).
 
 ### Using both models at the same time
 
