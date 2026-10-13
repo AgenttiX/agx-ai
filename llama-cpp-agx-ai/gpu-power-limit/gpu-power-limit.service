@@ -1,5 +1,5 @@
 [Unit]
-Description=Set the NVIDIA GPU power and clock limits and create the NVIDIA device nodes
+Description=Lock the NVIDIA GPU core clock (and optionally set the power limit) and create the NVIDIA device nodes
 Documentation=file:///usr/local/sbin/gpu-power-limit.sh
 After=systemd-modules-load.service nvidia-persistenced.service
 Wants=nvidia-persistenced.service

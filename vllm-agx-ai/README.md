@@ -45,7 +45,8 @@ no display, and 7839 MiB of its 8192 MiB are usable.
 
 **The 1600 MHz clock lock (or the 170 W power limit) is required**, as for llama.cpp: without it, long prompts can
 crash the GPU (Xid 79), see [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md#xid-79-crashes). During these
-tests, the clock lock was active (1590 MHz at ~125 W under full load) and the power limit was the default 240 W.
+tests, the clock lock was active (1590 MHz at ~125 W under full load) and the power limit was the default 240 W,
+which is now also the default of the script.
 
 ## Setup
 
