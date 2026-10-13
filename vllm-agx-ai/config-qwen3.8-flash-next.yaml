@@ -26,11 +26,13 @@ compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_si
 max-num-seqs: 1
 # No MTP: its module (2.6B parameters, an estimated ~1.4 GB on the GPU even with its experts in RAM) does not fit.
 enable-prefix-caching: true
-# CPU KV offloading is disabled for now to leave RAM for the vision tower: an 8 GiB buffer worked (an evicted
-# 8961-token conversation came back in 5.7 s instead of 22.6 s), but left only 8.7 GB of RAM available without the
-# vision tower. To enable it again once the container has more RAM:
-# kv-offloading-size: 8
-# kv-offloading-backend: native
+# Prefix cache blocks evicted from the GPU are kept in 8 GiB of RAM (/dev/shm), so that a returning conversation needs
+# no new prompt processing: an 8961-token conversation that two 18k-token prompts had evicted came back in 5.7 s
+# (358 MB loaded) instead of 22.6 s. ~34 KB per stored token (attention KV and Gated DeltaNet states), i.e. room for
+# ~250k tokens. Together with the vision tower, this needs the 144 GiB of the container (since 2026-10-13). See
+# README.md.
+kv-offloading-size: 8
+kv-offloading-backend: native
 reasoning-parser: qwen3
 enable-auto-tool-choice: true
 tool-call-parser: qwen3_coder

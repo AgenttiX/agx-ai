@@ -37,7 +37,7 @@ no display, and 7839 MiB of its 8192 MiB are usable.
 |---|---|
 | OS | Ubuntu 26.04.1 LTS in an LXC container on Proxmox VE (kernel 7.0.14-14-pve), host `agx-h12` (Supermicro H12SSL-i) |
 | CPU | AMD EPYC 7302 (Zen 2, 16 cores, 32 threads; AVX2, no AVX-512), of which the container gets 24 threads (see [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md)) |
-| RAM | Registered DDR4 in 8 channels (16 GB ranks according to EDAC), 128 GiB available to the container; the frequency needs root on the host to read (`dmidecode`). ~60 GB/s copy bandwidth in the container (PyTorch, 16 threads) |
+| RAM | Registered DDR4 in 8 channels (16 GB ranks according to EDAC), 144 GiB available to the container (128 GiB until 2026-10-13); the frequency needs root on the host to read (`dmidecode`). ~60 GB/s copy bandwidth in the container (PyTorch, 16 threads) |
 | NPU | none |
 | GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../llama-cpp-agx-ai/gpu-power-limit`](../llama-cpp-agx-ai/gpu-power-limit), PCIe 4.0 x16 |
 | GPU architecture | Ampere (GA104, sm_86) |
@@ -181,17 +181,17 @@ with the default of 512 MiB, which the memory profiling does not account for) an
 (no RAM for parallel compile workers), both in [`docker-compose.yml`](docker-compose.yml).
 
 **Memory.** ~107 GiB of the container's 128 GiB of RAM are pinned (experts, n-gram table and embedding), and
-5.03 GiB of weights are on the GPU. `free -m` after loading (of 131072 MiB; the pinned weights and the offloading buffer
-appear as "shared" and "buff/cache", but cannot be freed):
+5.03 GiB of weights are on the GPU. `free -m` after loading (the pinned weights and the offloading buffer appear as
+"shared" and "buff/cache", but cannot be freed):
 
-| Configuration | Available RAM |
-|---|---|
-| Text only, no CPU KV offloading | 17181 MiB |
-| Text only, 8 GiB of CPU KV offloading | 8731 MiB |
-| **Vision tower on the CPU, no CPU KV offloading (current)** | 13903 MiB, ~1.5 GiB less while a 30-s 1080p video is encoded |
+| Configuration | Container RAM | Available RAM |
+|---|---|---|
+| Text only, no CPU KV offloading | 128 GiB | 17181 MiB |
+| Text only, 8 GiB of CPU KV offloading | 128 GiB | 8731 MiB |
+| Vision tower on the CPU, no CPU KV offloading | 128 GiB | 13903 MiB, ~1.5 GiB less while a 30-s 1080p video is encoded |
+| **Vision tower on the CPU, 8 GiB of CPU KV offloading (current)** | 144 GiB (since 2026-10-13) | 22070 MiB, 20733 MiB at the lowest while a 30-s 1080p video is encoded |
 
-Both together would leave only an estimated ~5.5 GiB, and ~4 GiB while a video is encoded, so the CPU KV offloading
-is disabled until the container gets more RAM (the host has 256 GB). The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
+With 128 GiB, both together would have left only ~5.5 GiB, so the container got 16 GiB more. The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
 per token; the FP8 KV cache of this model is dequantized with Triton's e4m3 type, which needs sm_89). With 1.45 GB,
 a 23500-token prompt ran out of memory, so the context is 20480. MTP does not fit. Raising the memory limit of the
 LXC container (the host has 256 GB) would not help the context, only the margin. Loading takes ~13 min (~10 min for
@@ -205,10 +205,12 @@ reading 125 GB and pinning the weights, as the page cache has no room).
 
 - **Generation** reads ~1.2 GB of experts per token over PCIe (10 of 512 experts in each of the 48 layers) and does
   not slow down with the context (Qwen Sparse Attention).
-- **CPU KV offloading** (`kv-offloading-size: 8`; 16 GiB would not fit next to the pinned weights; disabled for now,
-  see above) works for this hybrid model: an 8961-token conversation that two 18k-token prompts had evicted from the GPU came back in 5.7 s
+- **CPU KV offloading** (`kv-offloading-size: 8`; with 128 GiB of RAM, 16 GiB would not have fit next to the pinned
+  weights) works for this hybrid model: an 8961-token conversation that two 18k-token prompts had evicted from the GPU came back in 5.7 s
   (358 MB loaded, the same time as a hit in the GPU cache) instead of 22.6 s. The stored blocks take ~34 KB per token
-  (attention KV and Gated DeltaNet states), so the 8 GiB hold ~250k tokens.
+  (attention KV and Gated DeltaNet states), so the 8 GiB hold ~250k tokens. With the vision tower and 144 GiB of RAM
+  (2026-10-13), a 9378-token conversation came back in 6.0 s instead of 22.8 s, and the images, videos and chat speed
+  (15.3 t/s) were unchanged.
 - **Images and videos** run through the vision tower on the CPU (`QWEN38_VISION_DEVICE=cpu`, 16 threads; see
   [`../vllm/vllm.patch`](../vllm/vllm.patch)), ported from the agx-z2e runtime image of
   [`../vllm-flash-next`](../vllm-flash-next/README.md): transformers' Qwen3-VL vision model in FP32, outside vLLM's
