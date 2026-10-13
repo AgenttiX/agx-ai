@@ -7,17 +7,17 @@ The LXC container is limited to 24 of the 32 threads. Proxmox picks which ones a
 of some cores and none of another: during the tests of 2026-09-25, its 24 threads were on only 15 of the 16 cores.
 
 One `llama-server` router ([`docker-compose.yml`](docker-compose.yml), [`config.ini`](config.ini),
-[`preset.ini`](preset.ini)) serves three models on port 9931. They are not used at the same time,
+[`preset.ini`](preset.ini)) serves two models on port 9931. They are not used at the same time,
 so each is tuned for running alone.
 
 | Model | Runs on | Chat generation | Prompt processing |
 |---|---|---|---|
 | `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 122880 | GPU, with the experts of 28 of 30 layers on the CPU, core clock locked to 1600 MHz | ~55 t/s, 45-49 t/s at 36-70k tokens of context | ~1490 t/s for a 70k-token prompt, ~1220 t/s for 119k |
 | [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 131072 | CPU only | 17-24 t/s | ~74 t/s |
-| `Qwen/Qwen3.8-Flash-Next`: [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) IQ3_S, ctx 81920, not loaded at startup | GPU, with all experts on the CPU | ~13.6 t/s, 12 t/s at 36.5k tokens | 420 t/s at 36.5k tokens, 530 t/s for 80k |
 
-The Gemma GPU model is loaded at startup and Qwen3.8-Flash-Next is not, as both need the GPU. To switch to
-Qwen3.8-Flash-Next, unload the Gemma GPU model first, see [Qwen3.8-Flash-Next](#qwen38-flash-next).
+Qwen3.8-Flash-Next was a third model of the router from 2026-10-13 until its GGUF was removed to free disk space the
+same day (its section in [`preset.ini`](preset.ini) is commented out); it now runs with vLLM on this GPU, see
+[Qwen3.8-Flash-Next](#qwen38-flash-next) for the llama.cpp measurements.
 The same GPU can also run vLLM instead, see [`../vllm-agx-ai`](../vllm-agx-ai/README.md).
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
@@ -373,7 +373,9 @@ the previous CPU-only container.
 
 ### Qwen3.8-Flash-Next
 
-Added on 2026-10-13, with build b11552. Qwen3.8-Flash-Next is a 125B MoE (512 experts of which 10 are active, 48
+Added on 2026-10-13, with build b11552, and removed the same day to free disk space (84 GB): the model runs with vLLM
+on this GPU instead, which generates faster ([`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next)). The
+section in [`preset.ini`](preset.ini) is commented out and can be enabled again. Qwen3.8-Flash-Next is a 125B MoE (512 experts of which 10 are active, 48
 layers, 12 of them with a KV cache and 36 with a fixed-size Gated DeltaNet state) with a 51B-parameter n-gram
 embedding table, see also [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
 [`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
