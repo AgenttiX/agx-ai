@@ -277,6 +277,30 @@ cheaper steps were enough:
 - The runtime needs a KV cache of ~1.05 times the context. With MTP, the cache costs ~15 KB per additional token
   (5.95 GB held 333406 tokens), less than the ~21.5 KB per token of the smaller cache suggested.
 
+### Other settings (2026-10-14)
+
+- **CPU KV offloading does not work with this runtime.** vLLM's native offloading (`kv-offloading-size`) requires
+  every KV cache group's block size to be a multiple of the prefix-cache hash size (3200 tokens), but the runtime keeps
+  the raw keys of the sparse attention's open compression group in a ring buffer of 8 rows (`CircularBufferSpec`:
+  the compression ratio 4 plus the 3 drafted tokens), and the connector fails at startup (`tokens_per_block=8 not
+  divisible by tokens_per_hash=3200`). The ring needs no offloading (vLLM's GPU prefix cache already excludes it and
+  gives each request a fresh one), but skipping it would mean patching the per-group bookkeeping of the offloading
+  connector's scheduler and worker. Stock vLLM's implementation of the model, which has no such group, offloads
+  fine (see [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next)). The startup check also rejects KV
+  connectors with `expandable_segments`, as in [`../vllm/vllm.patch`](../vllm/vllm.patch). Without offloading, the
+  GPU prefix cache of ~287k tokens still serves a returning conversation as long as other prompts have not evicted it.
+- **MTP 1** (with `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`, as the runtime only accepts multiples of 3200 tokens,
+  which fit the block size of MTP 3 only): slower, chat 24.0 t/s and 23.1 / 26.2 t/s at 6.4k / 32k tokens of context,
+  vs 26.5 and 26.6 / 28.3 t/s with MTP 3. The CPU part of a decode step falls from ~55 to ~36 ms, but the fixed parts
+  (~17 ms on the GPU, ~4 ms at the end of the step) stay, and only ~1.6 instead of ~2.05 tokens are accepted per step.
+  MTP 1 would have room for 310789 instead of 287594 tokens in the same KV cache.
+- **`VLLM_QSA_EXACT_TOPK=1`** is no quality setting: it replaces the top-k kernel of the sparse attention's block
+  selection with `torch.topk` and deterministic ordering, which selects the same blocks apart from ties.
+- **The CPU's frequency policy** was `powersave` with the energy-performance preference `balance_performance`
+  (amd-pstate). As decode is bound by the CPU's memory accesses, `performance` might be a few % faster; not tested, as
+  it is a system-wide setting. Transparent huge pages (`madvise`) work: 54.7 of the 56.4 GiB of the expert arena got
+  huge pages.
+
 Results with the current settings (`--tests generation prompt chat depth --prompt-tokens 260000`), with llama.cpp for
 comparison:
 
