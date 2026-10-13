@@ -7,13 +7,18 @@ The LXC container is limited to 24 of the 32 threads. Proxmox picks which ones a
 of some cores and none of another: during the tests of 2026-09-25, its 24 threads were on only 15 of the 16 cores.
 
 One `llama-server` router ([`docker-compose.yml`](docker-compose.yml), [`config.ini`](config.ini),
-[`preset.ini`](preset.ini)) serves two models on port 9931. They are not used at the same time,
+[`preset.ini`](preset.ini)) serves three models on port 9931. They are not used at the same time,
 so each is tuned for running alone.
 
 | Model | Runs on | Chat generation | Prompt processing |
 |---|---|---|---|
 | `google/gemma-4-26b-a4b-qat`: [unsloth/gemma-4-26B-A4B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF) UD-Q4_K_XL + MTP, ctx 122880 | GPU, with the experts of 28 of 30 layers on the CPU, core clock locked to 1600 MHz | ~55 t/s, 45-49 t/s at 36-70k tokens of context | ~1490 t/s for a 70k-token prompt, ~1220 t/s for 119k |
 | [llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF](https://huggingface.co/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF) Q4_0 + Unsloth's MTP drafter, ctx 131072 | CPU only | 17-24 t/s | ~74 t/s |
+| `Qwen/Qwen3.8-Flash-Next`: [ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) IQ3_S, ctx 81920, not loaded at startup | GPU, with all experts on the CPU | ~13.6 t/s, 12 t/s at 36.5k tokens | 420 t/s at 36.5k tokens, 530 t/s for 80k |
+
+The Gemma GPU model is loaded at startup and Qwen3.8-Flash-Next is not, as both need the GPU. To switch to
+Qwen3.8-Flash-Next, unload the Gemma GPU model first, see [Qwen3.8-Flash-Next](#qwen38-flash-next).
+The same GPU can also run vLLM instead, see [`../vllm-agx-ai`](../vllm-agx-ai/README.md).
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
 processed, see [Prompt cache](#prompt-cache).
@@ -132,6 +137,11 @@ The `server-cuda13` image of build b11176 requires CUDA >= 13.4, but the driver 
 so Docker refuses to start it. `NVIDIA_DISABLE_REQUIRE=1` in [`docker-compose.yml`](docker-compose.yml) skips the check,
 and CUDA minor version compatibility lets it run. The previous image (b10884, CUDA 13.3) is kept locally as
 `ghcr.io/ggml-org/llama.cpp:server-cuda13-b10884` for rollback.
+
+On 2026-10-13, the image was pinned to `server-cuda13-b11552` for Qwen3.8-Flash-Next: with b11176, its compute buffer
+for 2048-token batches is 3.2 GiB instead of 2.0 GiB, which does not fit. The Gemma GPU model runs the same with
+b11552 (119000-token prompt: 1237 t/s, chat 55.7 t/s with an MTP acceptance of 70 %) and peaks lower (7438 MiB
+instead of 7655 MiB). b11176 is still available locally as `ghcr.io/ggml-org/llama.cpp:server-cuda13`.
 
 ## Measurements
 
@@ -349,6 +359,71 @@ take ~30 min at ~74 t/s, though.
 `nvidia-smi` shows only the GPU model's process (7618 MiB), and the GPU model's peak is the same 7719 MiB as without
 the CPU model. Chat tg 21-24 t/s in English and code and 17 t/s in Finnish, pp 74 t/s, i.e. the same as in
 the previous CPU-only container.
+
+### Qwen3.8-Flash-Next
+
+Added on 2026-10-13, with build b11552. Qwen3.8-Flash-Next is a 125B MoE (512 experts of which 10 are active, 48
+layers, 12 of them with a KV cache and 36 with a fixed-size Gated DeltaNet state) with a 51B-parameter n-gram
+embedding table, see also [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
+[`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
+`IQ3_S`, like on agx-z2e: a quantization type per tensor (3.5 bits per weight on average, 54.8 GB) and the n-gram
+table in IQ4_NL (28.8 GB). It matches the BF16 model on AIME25, GPQA-Diamond and LiveCodeBench v6 according to the
+model card.
+
+**Memory.** Only the non-expert weights are on the GPU (3983 MiB). The experts (48.3 GB) are in pinned RAM
+(`load-mode = none`) and the n-gram table stays memory-mapped (27.5 GB; it is only looked up). The KV cache takes
+~16 KiB per token with q8_0 (1020 MiB per 65536 tokens), the Gated DeltaNet state 113 MiB. With
+`ubatch-size = 2048`, the compute buffer takes 2011 MiB, so ctx 81920 is the maximum (98304 fails to allocate the
+compute buffer). `ubatch-size = 1024` (1213 MiB) would leave room for ~130k tokens, but processes prompts 25 % slower:
+
+| Variant (all experts on the CPU, 16 threads) | Context | Chat | Gen. 6.4k | Gen. 32-36.5k | Prompt processing | Peak VRAM |
+|---|---|---|---|---|---|---|
+| ubatch 1024 | 65536 | 13.6 | 13.0 | 12.0 | 254 t/s at 6.4k, 295 t/s at 32k | 6588 MiB |
+| ubatch 1024, MTP 2 (drafter on the CPU) | 65536 | 11.8 | 11.3 | | 205 t/s at 6.4k | 6816 MiB |
+| ubatch 2048 | 65536 | | | 12.3 | 392 t/s at 32k | 6994 MiB |
+| ISTA's Q2_0 instead of IQ3_S, ubatch 2048 | 65536 | 5.5 | | | | 6014 MiB after loading |
+| **ubatch 2048 (preset)** | 81920 | 13.6 | 12.7 | 12.1 | 328 t/s at 6.4k, 423 t/s at 36.5k, 532 t/s at 80k | 7460 MiB |
+
+- **Generation is bound by the CPU's decoding of the quantization types**, not by the memory bandwidth: the ~1 GB of
+  experts per token is read at only ~13 GB/s (8 threads: 13.0 t/s, 16: 14.1 t/s, 24: 3.4 t/s in `llama bench`),
+  while the Q4_K experts of the Gemma GPU model are read at ~41 GB/s, and the container can copy ~60 GB/s. The
+  experts of this GGUF are in IQ2_S, IQ3_XXS, IQ3_S and IQ4_NL, which need lookup tables on AVX2. ISTA's `Q2_0`, which
+  avoids them and was 1.3-1.9 times as fast in ISTA's tests, was 2.5 times *slower* here (5.4-5.6 t/s), probably as
+  this new type has no AVX2 kernel yet. Unsloth's `UD-Q3_K_XL` (90 GB) uses IQ3_XXS and IQ4_NL for the experts too,
+  and the GGUFs with K-quants for the experts (UD-Q4_K_XL, 111 GB) do not fit in the RAM. agx-z2e generates twice
+  as fast with twice the cores (Threadripper 3970X, 32 cores).
+- **MTP** for this model was merged in [ggml-org/llama.cpp#29761](https://github.com/ggml-org/llama.cpp/pull/29761)
+  (2026-10-01). Unsloth's Q4_K_M drafter (`MTP/mtp-Qwen3.8-Flash-Next-Q4_K_M.gguf`, 2.8 GB) does not fit on the GPU,
+  as the draft context needs its own 1.1 GiB compute buffer (there is no draft batch size option), and with
+  `device-draft = none` it is slower than without MTP (11.8 vs 13.6 t/s in chat, acceptance 53 %): the verification
+  batches select more distinct experts, which the CPU has to decode.
+- **The vision encoder** stays on the CPU (`no-mmproj-offload`), as there is no VRAM left: an image of 1280x960
+  (1261 prompt tokens) takes 18 s.
+- **Switching models.** The router has no way to make models exclusive on the GPU. The Gemma GPU model is loaded at
+  startup, and requesting Qwen3.8-Flash-Next while it is loaded fails with an out-of-memory error. Unload it first:
+
+  ```sh
+  source llama-cpp.env
+  curl -H "Authorization: Bearer $LLAMA_API_KEY" -H "Content-Type: application/json" \
+      -d '{"model": "google/gemma-4-26b-a4b-qat"}' http://localhost:9931/models/unload
+  ```
+
+  Qwen3.8-Flash-Next then loads on its first request (~1.5 min). To go back, unload it the same way.
+  With all three models loaded, the RAM would be nearly full (~50 GB pinned and 27.5 GB mapped for Qwen3.8-Flash-Next,
+  ~12 GB for the experts of the Gemma GPU model, 15 GB for the CPU model, plus `cache-ram`).
+
+`llama_cpp_bench_http.py --tests generation prompt chat depth image --prompt-tokens 80000 --depth 6400 36500`:
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 13.2 t/s |
+| Chat, 6 requests | 13.6 t/s (13.1-14.1) |
+| Depth 6.4k / 36.5k | 12.7 / 12.1 t/s (prompt 328 / 423 t/s) |
+| Prompt of 80000 tokens | 532 t/s |
+| Image 1280x960, prompt processing | 18.4 s |
+| Peak VRAM of llama-server | 7460 MiB |
+
+The same model runs with vLLM in [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next).
 
 ### Prompt cache
 

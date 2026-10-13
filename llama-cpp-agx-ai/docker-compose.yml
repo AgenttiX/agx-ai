@@ -1,11 +1,13 @@
 services:
   llama-cpp:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    # Pinned to the build that was tested: Qwen3.8-Flash-Next needs b11552 or later, as b11176 needs a 3.2 GiB compute
+    # buffer for it (2.0 GiB with b11552), which does not fit. See README.md.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13-b11552
     container_name: llama-cpp
     env_file:
       - ./llama-cpp.env
     environment:
-      # The image requires CUDA >= 13.4 (build b11176), but the driver 610.57 provides CUDA 13.3.
+      # The image requires CUDA >= 13.4 (build b11176 and later), but the driver 610.57 provides CUDA 13.3.
       # CUDA minor version compatibility lets it run anyway.
       - NVIDIA_DISABLE_REQUIRE=1
     ports:

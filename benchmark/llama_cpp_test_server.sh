@@ -28,9 +28,10 @@ port=${5:-9933}
 name=${NAME:-llama-test}
 
 # Newer images set LLAMA_ARG_PORT=8080, which would override the port 9931 of config.ini.
-args=(--name "$name" -p "$port:9931" -e LLAMA_ARG_PORT=9931 --device /dev/dri --group-add video
+args=(--name "$name" -p "$port:9931" -e LLAMA_ARG_PORT=9931
       -v "$HOME/.cache/huggingface/hub:/root/.cache/huggingface/hub"
       -v "$config:/etc/llama.cpp/config.ini:ro" -v "$preset:/etc/llama.cpp/preset.ini:ro")
+[[ -e /dev/dri ]] && args+=(--device /dev/dri --group-add video)  # Vulkan, ROCm
 [[ -e /dev/kfd ]] && args+=(--device /dev/kfd)  # ROCm
 [[ -n $env_file ]] && args+=(--env-file "$(realpath "$env_file")")
 # shellcheck disable=SC2206
@@ -38,7 +39,7 @@ args+=(${DOCKER_ARGS:-})
 
 docker rm -f "$name" >/dev/null 2>&1 || true
 docker run -d "${args[@]}" --entrypoint /app/llama-server "$image" >/dev/null
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do  # up to 15 min for large models
     sleep 3
     if docker logs "$name" 2>&1 | grep -q 'llama_server: model loaded'; then
         echo "loaded on port $port"

@@ -8,7 +8,8 @@ locally:
 docker build -t ghcr.io/agenttix/agx-ai/vllm:latest .
 ```
 
-Used by [`../vllm-big-machine`](../vllm-big-machine) and [`../vllm-agx-z2e`](../vllm-agx-z2e). For gfx906 (Radeon VII), see
+Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vllm-agx-z2e) and
+[`../vllm-agx-ai`](../vllm-agx-ai). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
 - `vllm/vllm-openai:latest` is v0.31.0 with CUDA 13.0 and PyTorch 2.13 (the `-cu129` tags are the CUDA 12.9
@@ -37,3 +38,22 @@ Used by [`../vllm-big-machine`](../vllm-big-machine) and [`../vllm-agx-z2e`](../
       long-context retrieval answers (88 questions at 17k and 61k tokens) are identical to the unpatched image.
       The greedy outputs diverge after 35 % of their length on average, as the floating-point sums are reordered;
       changing only the prefill chunk size of the unpatched image (2048 -> 1024) gives a similar divergence (49 %).
+  - UVA weight offloading (`offload-backend: uva` with `cpu-offload-params`), added on 2026-10-13 for
+    Qwen3.8-Flash-Next with its experts in RAM on the 8 GB RTX 3070 of [`../vllm-agx-ai`](../vllm-agx-ai):
+    - Pinned host memory is allocated with exactly its size (`empty_pinned` and `pin_memory_exact` in
+      `utils/torch_utils.py`: an anonymous memory mapping registered with `cudaHostRegister`, unregistered when it
+      is freed). `pin_memory=True` uses PyTorch's caching host allocator, which rounds every block up to the next
+      power of two: the 47.6 GiB n-gram table of Qwen3.8-Flash-Next took 64 GiB and its 838 MB expert tensors 1 GiB
+      each, which exceeded the 128 GiB of RAM. Used by the UVA offloader, by the re-offloading of weights after
+      their post-processing (`model_loader/utils.py`) and by the pinned n-gram table of Qwen4Exp.
+    - The offloader no longer skips a module whose first parameter is already on the CPU: the decoder layer that
+      holds the pinned n-gram table kept its experts (1.25 GiB) on the GPU.
+    - Qwen4Exp offloads its token embedding too (`cpu-offload-params: embed_tokens`; it is created outside
+      `make_layers`, which offloads only the decoder layers), and passes its quantization config to the lm_head,
+      so that a quantized lm_head loads (checkpoints without one stay unquantized).
+    - The Marlin MoE post-processing of GPTQ/AutoRound experts no longer transposes the weights to N-first copies
+      and back: with UVA, each copy was new GPU memory (1.2 GiB per layer for Qwen3.8-Flash-Next). The w13 and w2
+      weights are now transposed and repacked one after the other, and the repack reads the offloaded weights
+      directly.
+    - The UVA lookup of the pinned n-gram table copies FP8 rows as `uint8`, as Triton has no FP8 e4m3 type before
+      sm_89 (`type fp8e4nv not supported in this architecture`).

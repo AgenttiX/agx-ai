@@ -1,0 +1,48 @@
+# vllm serve --config for Gemma 4 26B-A4B QAT on the RTX 3070 (8 GB) of agx-ai. Benchmarks: README.md
+# Built with ../vllm-radeon-vii/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8): all linear weights bit-exact
+# from Google's QAT Q4_0 GGUF (int4, group size 32), the lm_head int8 (round-to-nearest, group size 128), the
+# embedding fp16 (it is in RAM, see below). 14.97 GiB in total; vLLM reports 4.12 GiB of model memory on the GPU
+# with the MTP drafter.
+model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8
+served-model-name: google/gemma-4-26b-a4b-qat
+# FP16 like the scales of the Q4_0 GGUF, which BF16 would round.
+dtype: float16
+# Do not load the vision tower (1.1 GiB).
+language-model-only: true
+# The experts (11.2 GiB) and the embedding (0.7 GiB) are in pinned RAM, and the GPU reads them directly over PCIe
+# (UVA, zero-copy). The MoE kernel reads only the experts that the router selects (8 of 128 per layer, ~765 MiB per
+# token), so generation is bound by PCIe 4.0 x16 (~20 GB/s), not by the CPU. The embedding is only looked up.
+# cpu-offload-gb is only an upper limit here: the parameters that match cpu-offload-params are offloaded until it is
+# reached. Each layer of experts kept on the GPU (408 MiB, i.e. ~15k tokens of context) would remove only 1/30 of
+# the PCIe reads per token (not measured).
+offload-backend: uva
+cpu-offload-gb: 30
+cpu-offload-params: [experts, embed_tokens]
+# The KV cache below holds 102909 tokens; vLLM needs ~1.05 times the context. Peak 7755 MiB of the 7839 MiB usable
+# with a 96000-token prompt and kv-cache-memory-bytes 2850000000, i.e. ~140 MiB less with this setting.
+max-model-len: 98304
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves ~1 GiB unused.
+kv-cache-memory-bytes: 2700000000
+gpu-memory-utilization: 0.9
+# vLLM uses Triton attention for Gemma 4 (head sizes 256 and 512), which supports quantized KV caches.
+# int8 with a scale per token and head is the format closest to llama.cpp's q8_0. FP16 would halve the context.
+kv-cache-dtype: int8_per_token_head
+attention-backend: TRITON_ATTN
+# The prefill chunk. Every chunk reads all experts over PCIe, but 4096 was only 8 % faster at 36.5k tokens and
+# needs more KV cache for the sliding-window layers: it halves the context.
+max-num-batched-tokens: 2048
+# Full CUDA graphs for decoding with MTP (1 + 2 tokens).
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4]}
+# One request at a time, like parallel = 1 of the llama.cpp preset: every sequence needs its own sliding-window KV
+# cache, and the experts are read over PCIe per step anyway.
+max-num-seqs: 1
+# Google's MTP drafter for the QAT model (BF16, 0.8 GB, on the GPU), which shares the KV cache of the main model.
+# 2 tokens: +19 % in chat (31.6-32.0 vs 26.6 t/s); 3 tokens was not faster.
+speculative-config: {"method": "mtp", "model": "google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
+enable-prefix-caching: true
+# No CPU KV offloading (kv-offloading-size): with the MTP drafter, it stores blocks but never restores an evicted
+# conversation for Gemma 4 (without MTP, a 25k-token conversation came back in 0.3 s instead of 25 s). See README.md.
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 64, top-p 0.95), as recommended by Google.

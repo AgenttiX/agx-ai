@@ -96,3 +96,333 @@ diff -ru a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
          or is_batch_invariant
      )
  
+diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/layers/fused_moe/oracle/int_wna16.py
+--- a/model_executor/layers/fused_moe/oracle/int_wna16.py
++++ b/model_executor/layers/fused_moe/oracle/int_wna16.py
+@@ -611,9 +611,9 @@
+     4. Permute scales (and optionally extract INT8 global scales).
+     5. Permute bias tensors.
+     """
+-    # Canonical N-first → K-first for Marlin.
+-    w13_qweight = w13_qweight.transpose(1, 2).contiguous()
+-    w2_qweight = w2_qweight.transpose(1, 2).contiguous()
++    # Canonical N-first → K-first for Marlin. The packed weights are transposed
++    # and repacked one at a time below, so that at most one transposed copy is
++    # alive: with UVA weight offloading, every copy is new GPU memory.
+     w13_scales = w13_scales.transpose(1, 2).contiguous()
+     w2_scales = w2_scales.transpose(1, 2).contiguous()
+     if w13_qzeros is not None:
+@@ -632,16 +632,12 @@
+     w13_bias_out: torch.Tensor | None = None
+     w2_bias_out: torch.Tensor | None = None
+ 
+-    # --- FP8 weight / scale adjustment ---
++    # --- FP8 scale adjustment ---
+     if input_dtype == torch.float8_e4m3fn:
+         # NOTE: for non-zp quantization format only
+-        marlin_w13_qweight = ops.marlin_int4_fp8_preprocess(w13_qweight, inplace=False)
+-        marlin_w2_qweight = ops.marlin_int4_fp8_preprocess(w2_qweight, inplace=False)
+         marlin_w13_scales = w13_scales.data * 512
+         marlin_w2_scales = w2_scales.data * 512
+     else:
+-        marlin_w13_qweight = w13_qweight
+-        marlin_w2_qweight = w2_qweight
+         marlin_w13_scales = w13_scales
+         marlin_w2_scales = w2_scales
+ 
+@@ -650,8 +646,6 @@
+     N = layer.intermediate_size_per_partition
+     padded_N = marlin_moe_padded_intermediate(N, group_size)
+     if padded_N != N:
+-        marlin_w13_qweight = _pad_w13_shard_cols(marlin_w13_qweight, N, padded_N)
+-        marlin_w2_qweight = _pad_rows(marlin_w2_qweight, padded_N // pack_factor)
+         marlin_w13_scales = _pad_w13_shard_cols(marlin_w13_scales, N, padded_N)
+         if group_size > 0:
+             marlin_w2_scales = _pad_rows(marlin_w2_scales, padded_N // group_size)
+@@ -664,21 +658,26 @@
+         if w13_bias is not None:
+             w13_bias = _pad_w13_bias(w13_bias, N, padded_N)
+ 
+-    # --- Repack weights ---
+-    marlin_w13_qweight = ops.gptq_marlin_moe_repack(
+-        marlin_w13_qweight,
+-        marlin_w13_qweight.shape[1] * pack_factor,
+-        marlin_w13_qweight.shape[2],
+-        num_bits,
+-        is_a_8bit=is_a_8bit,
+-    )
+-    marlin_w2_qweight = ops.gptq_marlin_moe_repack(
+-        marlin_w2_qweight,
+-        marlin_w2_qweight.shape[1] * pack_factor,
+-        marlin_w2_qweight.shape[2],
+-        num_bits,
+-        is_a_8bit=is_a_8bit,
+-    )
++    # --- Transpose, FP8-preprocess, pad and repack the weights ---
++    def repack(qweight: torch.Tensor, is_w13: bool) -> torch.Tensor:
++        qweight = qweight.transpose(1, 2).contiguous()
++        if input_dtype == torch.float8_e4m3fn:
++            qweight = ops.marlin_int4_fp8_preprocess(qweight, inplace=False)
++        if padded_N != N:
++            if is_w13:
++                qweight = _pad_w13_shard_cols(qweight, N, padded_N)
++            else:
++                qweight = _pad_rows(qweight, padded_N // pack_factor)
++        return ops.gptq_marlin_moe_repack(
++            qweight,
++            qweight.shape[1] * pack_factor,
++            qweight.shape[2],
++            num_bits,
++            is_a_8bit=is_a_8bit,
++        )
++
++    marlin_w13_qweight = repack(w13_qweight, is_w13=True)
++    marlin_w2_qweight = repack(w2_qweight, is_w13=False)
+ 
+     # --- Permute scales ---
+     marlin_w13_scales = marlin_moe_permute_scales(
+diff -ru a/model_executor/layers/quantization/auto_gptq.py b/model_executor/layers/quantization/auto_gptq.py
+--- a/model_executor/layers/quantization/auto_gptq.py
++++ b/model_executor/layers/quantization/auto_gptq.py
+@@ -626,17 +626,28 @@
+             layer.register_parameter("w2_bias", None)
+             w2_bias = None
+ 
+-        # Normalize GPTQ K-first layout to canonical N-first format.
+-        w13 = layer.w13_qweight.data.transpose(1, 2).contiguous()
+-        w2 = layer.w2_qweight.data.transpose(1, 2).contiguous()
+-        w13_scale = layer.w13_scales.data.transpose(1, 2).contiguous()
+-        w2_scale = layer.w2_scales.data.transpose(1, 2).contiguous()
++        # Normalize GPTQ K-first layout to canonical N-first format. The Marlin
++        # backends transpose back to K-first, so they get views instead of copies:
++        # with UVA weight offloading, every copy is new GPU memory.
++        transpose_only = self.wna16_moe_backend in (
++            WNA16MoEBackend.MARLIN,
++            WNA16MoEBackend.BATCHED_MARLIN,
++        )
++
++        def to_n_first(t: torch.Tensor) -> torch.Tensor:
++            t = t.transpose(1, 2)
++            return t if transpose_only else t.contiguous()
++
++        w13 = to_n_first(layer.w13_qweight.data)
++        w2 = to_n_first(layer.w2_qweight.data)
++        w13_scale = to_n_first(layer.w13_scales.data)
++        w2_scale = to_n_first(layer.w2_scales.data)
+         w13_qzeros = getattr(layer, "w13_qzeros", None)
+         w2_qzeros = getattr(layer, "w2_qzeros", None)
+         if w13_qzeros is not None:
+-            w13_qzeros = w13_qzeros.data.transpose(1, 2).contiguous()
++            w13_qzeros = to_n_first(w13_qzeros.data)
+         if w2_qzeros is not None:
+-            w2_qzeros = w2_qzeros.data.transpose(1, 2).contiguous()
++            w2_qzeros = to_n_first(w2_qzeros.data)
+ 
+         converted = convert_to_wna16_moe_kernel_format(
+             backend=self.wna16_moe_backend,
+diff -ru a/model_executor/model_loader/utils.py b/model_executor/model_loader/utils.py
+--- a/model_executor/model_loader/utils.py
++++ b/model_executor/model_loader/utils.py
+@@ -38,7 +38,10 @@
+ from vllm.tracing import instrument
+ from vllm.utils.mem_utils import release_device_memory_under_pressure
+ from vllm.utils.platform_utils import is_pin_memory_available
+-from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
++from vllm.utils.torch_utils import (
++    get_accelerator_view_from_cpu_tensor,
++    pin_memory_exact,
++)
+ 
+ logger = init_logger(__name__)
+ 
+@@ -238,9 +241,11 @@
+             if name in uva_offloaded_parameters and not getattr(
+                 p, "_vllm_is_uva_offloaded", False
+             ):
+-                cpu_data = torch.empty_like(
+-                    p.data, device="cpu", pin_memory=use_pin_memory
+-                ).copy_(p.data)
++                # Exactly sized: pin_memory=True would round up to a power of two.
++                if use_pin_memory:
++                    cpu_data = pin_memory_exact(p.data)
++                else:
++                    cpu_data = p.data.to("cpu")
+                 p.data = get_accelerator_view_from_cpu_tensor(cpu_data)
+                 p._vllm_is_uva_offloaded = True
+ 
+diff -ru a/model_executor/offloader/uva.py b/model_executor/offloader/uva.py
+--- a/model_executor/offloader/uva.py
++++ b/model_executor/offloader/uva.py
+@@ -15,7 +15,10 @@
+ from vllm.utils.gpu_sync_debug import gpu_sync_allowed
+ from vllm.utils.mem_utils import format_gib
+ from vllm.utils.platform_utils import is_uva_available
+-from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
++from vllm.utils.torch_utils import (
++    get_accelerator_view_from_cpu_tensor,
++    pin_memory_exact,
++)
+ 
+ logger = init_logger(__name__)
+ 
+@@ -73,12 +76,13 @@
+ 
+     def _maybe_offload_to_cpu(self, module: nn.Module, prefix: str = "") -> nn.Module:
+         """Offload module parameters to CPU using UVA if budget allows."""
+-        if (params := next(module.parameters(), None)) is None:
+-            return module
+-
+-        device = params.device
+-
+-        if device == torch.device("cpu"):
++        # The first parameter may already be in host memory (e.g. the pinned n-gram
++        # embedding of Qwen4Exp) while the others are on the accelerator, so look
++        # for the device among all parameters.
++        device = next(
++            (p.device for p in module.parameters() if p.device.type != "cpu"), None
++        )
++        if device is None:
+             return module
+ 
+         if self.cpu_offload_bytes >= self.cpu_offload_max_bytes:
+@@ -111,9 +115,10 @@
+                 if not should_offload:
+                     continue
+ 
+-            cpu_data = p.data.to(device="cpu")
+             if self.pin_memory:
+-                cpu_data = cpu_data.pin_memory()
++                cpu_data = pin_memory_exact(p.data)
++            else:
++                cpu_data = p.data.to(device="cpu")
+ 
+             if not self.uva_offloading:
+                 p.data = cpu_data
+diff -ru a/models/qwen4_exp/common/ngram_embedding.py b/models/qwen4_exp/common/ngram_embedding.py
+--- a/models/qwen4_exp/common/ngram_embedding.py
++++ b/models/qwen4_exp/common/ngram_embedding.py
+@@ -40,7 +40,10 @@
+ from vllm.model_executor.utils import set_weight_attrs
+ from vllm.triton_utils import tl, triton
+ from vllm.utils.platform_utils import is_uva_available
+-from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
++from vllm.utils.torch_utils import (
++    empty_pinned,
++    get_accelerator_view_from_cpu_tensor,
++)
+ 
+ from .ple import PLEVocabParallelEmbedding
+ 
+@@ -432,13 +435,7 @@
+         dtype: torch.dtype,
+     ) -> torch.Tensor:
+         """Allocate the complete PLE weight directly in pinned CPU memory."""
+-        return torch.empty(
+-            num_embeddings,
+-            embedding_dim,
+-            dtype=dtype,
+-            device="cpu",
+-            pin_memory=True,
+-        )
++        return empty_pinned((num_embeddings, embedding_dim), dtype)
+ 
+     def _lookup(
+         self,
+@@ -465,10 +462,15 @@
+ 
+         flat_ids = input_ids.reshape(-1).long()
+         if flat_ids.numel():
++            # The kernel only copies rows, so 1-byte types are copied as uint8:
++            # Triton has no FP8 e4m3 type before sm_89.
++            weight, out = self._uva_weight, output
++            if weight.element_size() == 1:
++                weight, out = weight.view(torch.uint8), output.view(torch.uint8)
+             _lookup_ple_embedding_from_pinned_kernel[(flat_ids.numel(),)](
+-                self._uva_weight,
++                weight,
+                 flat_ids,
+-                output,
++                out,
+                 self.embedding_dim,
+                 self.shard_indices.org_vocab_start_index,
+                 self.shard_indices.org_vocab_end_index,
+diff -ru a/models/qwen4_exp/nvidia/model.py b/models/qwen4_exp/nvidia/model.py
+--- a/models/qwen4_exp/nvidia/model.py
++++ b/models/qwen4_exp/nvidia/model.py
+@@ -403,6 +403,11 @@
+             )
+         )
+         self.embed_tokens = VocabParallelEmbedding(self.vocab_size, config.hidden_size)
++        # make_layers() offloads only the decoder layers; the embedding is only
++        # looked up, so it can be offloaded too (cpu_offload_params: embed_tokens).
++        from vllm.model_executor.offloader import get_offloader
++
++        get_offloader().wrap_modules(iter([self.embed_tokens]), f"{prefix}.embed_tokens")
+ 
+         def get_layer(prefix: str) -> Qwen4ExpDecoderLayer:
+             layer_idx = extract_layer_index(prefix)
+@@ -679,6 +684,7 @@
+         self.lm_head = ParallelLMHead(
+             config.vocab_size,
+             config.hidden_size,
++            quant_config=vllm_config.quant_config,
+             prefix=maybe_prefix(prefix, "lm_head"),
+         )
+         self.logits_processor = LogitsProcessor(config.vocab_size)
+diff -ru a/utils/torch_utils.py b/utils/torch_utils.py
+--- a/utils/torch_utils.py
++++ b/utils/torch_utils.py
+@@ -2,11 +2,14 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import contextlib
+ import importlib.metadata
++import math
++import mmap
+ import os
+ import random
+ import sys
+ import threading
+-from collections.abc import Callable, Collection
++import weakref
++from collections.abc import Callable, Collection, Sequence
+ from typing import TYPE_CHECKING, Any, TypeVar
+ 
+ import numpy as np
+@@ -902,6 +905,37 @@
+     raise ValueError("Invalid type for tensors")
+ 
+ 
++def empty_pinned(shape: Sequence[int], dtype: torch.dtype) -> torch.Tensor:
++    """Allocate a pinned CPU tensor of exactly its size.
++
++    pin_memory=True uses PyTorch's caching host allocator, which rounds every
++    block up to the next power of two, e.g. a 48 GiB table to 64 GiB of locked
++    RAM. On CUDA, tensors of 1 MiB or more are instead backed by their own
++    anonymous memory mapping, registered with cudaHostRegister and unregistered
++    before the mapping is released with the tensor.
++    """
++    from vllm.platforms import current_platform
++
++    nbytes = math.prod(shape) * dtype.itemsize
++    if not current_platform.is_cuda() or nbytes < 1 << 20:
++        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
++    buf = mmap.mmap(-1, nbytes)
++    host = torch.frombuffer(buf, dtype=torch.uint8)
++    cudart = torch.cuda.cudart()
++    ptr = host.data_ptr()
++    if cudart.cudaHostRegister(ptr, nbytes, 0) != cudart.cudaError.success:
++        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
++    weakref.finalize(buf, cudart.cudaHostUnregister, ptr)
++    return host.view(dtype).view(tuple(shape))
++
++
++def pin_memory_exact(tensor: torch.Tensor) -> torch.Tensor:
++    """Copy a tensor to pinned CPU memory of exactly its size (see empty_pinned)."""
++    out = empty_pinned(tensor.shape, tensor.dtype)
++    out.copy_(tensor)
++    return out
++
++
+ def get_accelerator_view_from_cpu_tensor(cpu_tensor: torch.Tensor) -> torch.Tensor:
+     """Get an accelerator view of a CPU tensor via Unified Virtual Addressing."""
+     from vllm.platforms import current_platform

@@ -1,0 +1,62 @@
+# vLLM on the RTX 3070 (8 GB) of agx-ai. See README.md for the configurations and results.
+# The same port as ../llama-cpp-agx-ai (9931): only one of the two fits on the GPU at a time.
+# The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp-agx-ai/llama-cpp.env), so that
+# clients work with both.
+#
+# Gemma 4 26B-A4B or Qwen3.8-Flash-Next, selected with the volume lines below.
+# Start: docker compose -f ../llama-cpp-agx-ai/docker-compose.yml stop && docker compose up -d
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            capabilities: [gpu]
+            count: all
+
+services:
+  vllm:
+    <<: *gpu
+    # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with ../vllm/vllm.patch, whose Triton attention fix for MTP and fixes for
+    # UVA weight offloading are needed here, see ../vllm/README.md.
+    # Built by ../.github/workflows/deploy-docker-vllm.yml.
+    image: ghcr.io/agenttix/agx-ai/vllm:latest
+    container_name: vllm-agx-ai
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp-agx-ai/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # Less fragmentation of PyTorch's allocator, which leaves more memory for the KV cache.
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      # Keep the Triton and Inductor caches, so that a restart is faster.
+      TRITON_CACHE_DIR: /root/.cache/vllm/triton
+      TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
+      # Qwen3.8-Flash-Next pins ~107 GiB of the 128 GiB of RAM, which leaves no room for parallel compile workers.
+      TORCHINDUCTOR_COMPILE_THREADS: "1"
+      # The prefill logits buffer of Qwen3.8-Flash-Next's sparse attention indexer (default 512 MiB), which the
+      # memory profiling does not account for: the first request ran out of GPU memory with the default.
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "128"
+    ipc: host
+    ports:
+      - "9931:8000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      # Checkpoints built locally, see README.md
+      - /home/mika/.cache/vllm-models:/models:ro
+      - vllm-cache:/root/.cache/vllm
+      # Select the LLM model here
+      - ./config-gemma-4-26b-a4b-qat.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-qwen3.8-flash-next.yaml:/etc/vllm/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start compiles kernels for a few minutes; Qwen3.8-Flash-Next takes ~13 min to load.
+      start_period: 25m
+
+volumes:
+  vllm-cache:
