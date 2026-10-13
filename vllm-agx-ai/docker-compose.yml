@@ -38,6 +38,12 @@ services:
       # The prefill logits buffer of Qwen3.8-Flash-Next's sparse attention indexer (default 512 MiB), which the
       # memory profiling does not account for: the first request ran out of GPU memory with the default.
       VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "128"
+      # Qwen3.8-Flash-Next: the vision tower on the CPU (FP32, no VRAM), with 16 threads as for llama.cpp (the 24
+      # threads of the container include SMT siblings), and vLLM's Qwen3-VL video loader, which decodes only the
+      # sampled frames. See README.md. Gemma 4 26B-A4B runs text-only and ignores them.
+      QWEN38_VISION_DEVICE: cpu
+      QWEN38_VISION_THREADS: "16"
+      VLLM_VIDEO_LOADER_BACKEND: qwen3_vl
     ipc: host
     ports:
       - "9931:8000"

@@ -6,8 +6,6 @@
 # weights that stay on the GPU take 5.03 GiB instead of 8.0 GiB.
 model: /models/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense-int8
 served-model-name: Qwen/Qwen3.8-Flash-Next
-# Text only: the vision tower would not fit.
-language-model-only: true
 # The routed experts (58.4 GiB) and the token embedding (1.2 GiB) are in pinned RAM, and the GPU reads them directly
 # over PCIe (UVA, zero-copy). The MoE kernel reads only the 10 experts per layer that the router selects (~1.2 GB per
 # token), so generation is bound by PCIe 4.0 x16. cpu-offload-gb is only an upper limit here.
@@ -28,13 +26,21 @@ compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_si
 max-num-seqs: 1
 # No MTP: its module (2.6B parameters, an estimated ~1.4 GB on the GPU even with its experts in RAM) does not fit.
 enable-prefix-caching: true
-# Prefix cache blocks evicted from the GPU are kept in 8 GiB of RAM (/dev/shm), so that a returning conversation needs
-# no new prompt processing: an 8961-token conversation that two 18k-token prompts had evicted came back in 5.7 s
-# (358 MB loaded) instead of 22.6 s. ~34 KB per stored token (attention KV and Gated DeltaNet states), i.e. room for
-# ~250k tokens. It leaves 8731 MiB of the container's RAM available (17181 MiB without it). See README.md.
-kv-offloading-size: 8
-kv-offloading-backend: native
+# CPU KV offloading is disabled for now to leave RAM for the vision tower: an 8 GiB buffer worked (an evicted
+# 8961-token conversation came back in 5.7 s instead of 22.6 s), but left only 8.7 GB of RAM available without the
+# vision tower. To enable it again once the container has more RAM:
+# kv-offloading-size: 8
+# kv-offloading-backend: native
 reasoning-parser: qwen3
 enable-auto-tool-choice: true
 tool-call-parser: qwen3_coder
 # Sampling: generation_config.json of the model.
+# Image and video input with the vision tower on the CPU (QWEN38_VISION_DEVICE=cpu in docker-compose.yml, see
+# ../vllm/vllm.patch): no VRAM for it and an unchanged text speed. The CPU needs ~3 ms per 16x16 patch with 16
+# threads, so the sizes are limited as on agx-z2e: images to 1 megapixel (~1000 tokens, ~15 s until the first token),
+# videos to 64 frames sampled at 2 per second (only these are decoded) and 12.6 M pixels over all frames (~6000 tokens,
+# 66-74 s for a 30-s 1080p clip). Encoder profiling with a dummy input of the maximum size would take minutes on the CPU.
+limit-mm-per-prompt: {"image": 4, "video": 1}
+mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 12582912}}
+media-io-kwargs: {"video": {"max_frames": 64}}
+skip-mm-profiling: true

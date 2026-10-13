@@ -451,3 +451,156 @@ diff -ru a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/dis
  
              for group_config, group_state in zip(
                  self.config.kv_group_configs, req_status.group_states
+diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_vision.py
+--- a/models/qwen4_exp/nvidia/cpu_vision.py
++++ b/models/qwen4_exp/nvidia/cpu_vision.py
+@@ -0,0 +1,95 @@
++# SPDX-License-Identifier: Apache-2.0
++"""The vision tower of Qwen4Exp (Qwen3.8-Flash-Next) on the CPU (agx-ai, see ../vllm/README.md).
++
++On a small GPU, every MiB of VRAM is needed for the language model and its KV cache: the vision tower would need
++0.84 GiB for its weights and ~1 GiB of activations for a 1280x960 image. Here it runs with transformers' Qwen3-VL
++vision model (the same architecture and weight names) in FP32 on the CPU, outside vLLM's memory accounting, CUDA graphs
++and torch.compile. Selected with QWEN38_VISION_DEVICE=cpu, with QWEN38_VISION_THREADS threads (default: PyTorch's).
++The model sets mm_encoder_inputs_on_cpu, so that the encoder runner leaves the pixel values on the CPU, and only the
++embeddings (2560 values per token in BF16) are copied to the GPU. Zen 2 has no fast BF16, so FP32 is 3.5 times as fast
++as BF16 there; the pixel values come from the processor in FP32 anyway. The same module is used by the
++qwen38-flash-next-3090 runtime image of ../vllm-flash-next.
++"""
++
++from collections.abc import Iterable
++import os
++
++# The module runs in the vLLM image, which has these packages; the development environment does not have them.
++import torch  # pyrefly: ignore[missing-import]
++from torch import nn  # pyrefly: ignore[missing-import]
++from transformers.models.qwen3_vl.configuration_qwen3_vl import (  # pyrefly: ignore[missing-import]
++    Qwen3VLVisionConfig,
++)
++from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel  # pyrefly: ignore[missing-import]
++
++DEVICE_ENV = "QWEN38_VISION_DEVICE"
++THREADS_ENV = "QWEN38_VISION_THREADS"
++
++
++def cpu_vision_enabled() -> bool:
++    """Whether the vision tower should run on the CPU (QWEN38_VISION_DEVICE=cpu)."""
++    return os.environ.get(DEVICE_ENV, "gpu").strip().lower() == "cpu"
++
++
++class CpuVisionTower(nn.Module):
++    """Drop-in replacement for vLLM's Qwen3_VisionTransformer that computes on the CPU."""
++
++    def __init__(self, vision_config) -> None:
++        super().__init__()
++        cfg_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vision_config)
++        cfg_dict.pop("model_type", None)
++        cfg = Qwen3VLVisionConfig(**cfg_dict, attn_implementation="sdpa")
++        if cfg.deepstack_visual_indexes:
++            raise ValueError("The CPU vision tower does not implement deepstack features")
++        # vLLM builds the model under a CUDA default device and a BF16 default dtype.
++        with torch.device("cpu"):
++            model = Qwen3VLVisionModel(cfg).to(dtype=torch.float32).eval()
++        # Not a registered submodule: vLLM must neither see these parameters nor move them.
++        object.__setattr__(self, "_hf", model)
++        self.spatial_merge_size = cfg.spatial_merge_size
++        self.out_hidden_size = cfg.out_hidden_size
++        self.threads = int(os.environ.get(THREADS_ENV, "0")) or None
++
++    @property
++    def dtype(self) -> torch.dtype:
++        """The dtype that the caller casts the pixel values to."""
++        return torch.float32
++
++    @property
++    def device(self) -> torch.device:
++        """Where the vision tower computes."""
++        return torch.device("cpu")
++
++    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
++        """Load the checkpoint's visual.* weights (names relative to the tower) in FP32."""
++        params = dict(self._hf.named_parameters())
++        loaded = set()
++        for name, tensor in weights:
++            param = params.get(name)
++            if param is None:
++                raise KeyError(f"unexpected vision tower weight {name!r}")
++            with torch.no_grad():
++                param.copy_(tensor.to(device="cpu", dtype=torch.float32))
++            loaded.add(name)
++        missing = set(params) - loaded
++        if missing:
++            raise KeyError(f"vision tower weights missing from the checkpoint: {sorted(missing)[:5]}")
++        return loaded
++
++    def forward(self, pixel_values: torch.Tensor, grid_thw=None, **kwargs) -> torch.Tensor:
++        """Image or video embeddings (merged patches) in BF16 on the GPU."""
++        if grid_thw is None:
++            raise ValueError("the CPU vision tower needs grid_thw")
++        target = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else pixel_values.device
++        grid = torch.as_tensor(grid_thw).to("cpu")
++        previous = torch.get_num_threads()
++        if self.threads:
++            torch.set_num_threads(self.threads)
++        try:
++            with torch.inference_mode():
++                out = self._hf(pixel_values.to("cpu", torch.float32), grid_thw=grid)
++        finally:
++            torch.set_num_threads(previous)
++        embeds = out.pooler_output if hasattr(out, "pooler_output") else out
++        # BF16 on the CPU first: half the bytes over PCIe and no FP32 copy on the GPU.
++        return embeds.to(dtype=torch.bfloat16).to(device=target, non_blocking=False)
+diff -ruN a/models/qwen4_exp/nvidia/model.py b/models/qwen4_exp/nvidia/model.py
+--- a/models/qwen4_exp/nvidia/model.py
++++ b/models/qwen4_exp/nvidia/model.py
+@@ -81,6 +81,7 @@
+ from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
+ from .ple_layer import Qwen4ExpPLELayer
+ from .qsa import Qwen4ExpQSAAttention
++from .cpu_vision import CpuVisionTower, cpu_vision_enabled
+ 
+ 
+ def without_modelopt_fp4(
+@@ -935,12 +936,18 @@
+             self._tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
+ 
+             with self._mark_tower_model(vllm_config, {"image", "video"}):
+-                self.visual = Qwen3_VisionTransformer(
+-                    config.vision_config,
+-                    norm_eps=config.text_config.rms_norm_eps,
+-                    quant_config=quant_config,
+-                    prefix=maybe_prefix(prefix, "visual"),
+-                )
++                if cpu_vision_enabled():
++                    # No VRAM for the vision tower, see cpu_vision.py. Its inputs
++                    # stay on the CPU too (read by the encoder runner).
++                    self.visual = CpuVisionTower(config.vision_config)
++                    self.mm_encoder_inputs_on_cpu = True
++                else:
++                    self.visual = Qwen3_VisionTransformer(
++                        config.vision_config,
++                        norm_eps=config.text_config.rms_norm_eps,
++                        quant_config=quant_config,
++                        prefix=maybe_prefix(prefix, "visual"),
++                    )
+ 
+         self.use_deepstack = (
+             not self.language_model_only
+diff -ruN a/v1/worker/gpu/mm/encoder_runner.py b/v1/worker/gpu/mm/encoder_runner.py
+--- a/v1/worker/gpu/mm/encoder_runner.py
++++ b/v1/worker/gpu/mm/encoder_runner.py
+@@ -151,8 +151,13 @@
+         self, mm_kwargs: list[tuple[str, MultiModalKwargsItem]]
+     ) -> list[torch.Tensor]:
+         encoder_outputs: list[torch.Tensor] = []
++        # A model whose encoder runs on the CPU gets its inputs there, so that they
++        # never take VRAM.
++        on_cpu = getattr(self.model, "mm_encoder_inputs_on_cpu", False)
+         for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
+-            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
++            mm_kwargs,
++            device="cpu" if on_cpu else self.device,
++            pin_memory=PIN_MEMORY and not on_cpu,
+         ):
+             cg_manager = self.cudagraph_manager
+             cudagraph_output = (

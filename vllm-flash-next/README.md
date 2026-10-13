@@ -11,7 +11,9 @@ locally:
 docker build -t ghcr.io/agenttix/agx-ai/vllm-flash-next:latest .
 ```
 
-Used by [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next). The runtime serves the model text-only
+Used by [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-agx-ai`](../vllm-agx-ai) runs the
+model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner change in
+[`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
 (`--language-model-only`), although its model code supports images and videos. This image adds:
 
 - [`cpu_vision.py`](cpu_vision.py): the vision tower (Qwen3-VL architecture, 27 layers, 0.84 GiB in BF16) on the CPU,

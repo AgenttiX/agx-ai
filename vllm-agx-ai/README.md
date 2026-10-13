@@ -9,7 +9,7 @@ The model is selected by commenting the config volume lines in or out.
 | Configuration | Model | Context | Chat | Generation at 6.4k / 36.5k tokens | Prompt processing |
 |---|---|---|---|---|---|
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2 | 98304 | 32 t/s | 30 / 27 t/s | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k |
-| [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers, experts and n-gram table in RAM, no MTP | 20480 | 15.3 t/s | 15.2 / 15.2 (at 16k) t/s | 396 t/s at 6.4k, 478 t/s at 19.5k |
+| [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers, experts and n-gram table in RAM, no MTP, image and video input (vision tower on the CPU) | 20480 | 15.3 t/s | 15.2 / 15.2 (at 16k) t/s | 396 t/s at 6.4k, 478 t/s at 19.5k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md)): **llama.cpp is
 clearly better for Gemma 4 26B-A4B.** It generates 1.7 times as fast (chat ~55 vs 32 t/s, 45-49 vs 27 t/s at 36-70k
@@ -20,7 +20,7 @@ PCIe for every token.
 
 **Qwen3.8-Flash-Next: vLLM is faster, llama.cpp has 4 times the context.** vLLM generates 13 % faster (15.3 vs
 13.6 t/s) and processes prompts ~20 % faster, as the GPU reads the experts over PCIe faster than the CPU decodes
-llama.cpp's IQ quantization types. llama.cpp fits 81920 tokens of context instead of 20480, runs the vision encoder,
+llama.cpp's IQ quantization types, and it also takes videos. llama.cpp fits 81920 tokens of context instead of 20480,
 starts in 1.5 min instead of 13 and needs neither the re-quantized checkpoint nor the patched image, see
 [Qwen3.8-Flash-Next](#qwen38-flash-next).
 
@@ -181,9 +181,17 @@ with the default of 512 MiB, which the memory profiling does not account for) an
 (no RAM for parallel compile workers), both in [`docker-compose.yml`](docker-compose.yml).
 
 **Memory.** ~107 GiB of the container's 128 GiB of RAM are pinned (experts, n-gram table and embedding), and
-5.03 GiB of weights are on the GPU. With the 8 GiB of CPU KV offloading, `free -m` shows 122340 MiB used and 8731 MiB
-available of 131072 MiB (without it: 113890 MiB used, 17181 MiB available; the pinned weights and the offloading buffer
-appear as "shared" and "buff/cache", but cannot be freed). The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
+5.03 GiB of weights are on the GPU. `free -m` after loading (of 131072 MiB; the pinned weights and the offloading buffer
+appear as "shared" and "buff/cache", but cannot be freed):
+
+| Configuration | Available RAM |
+|---|---|
+| Text only, no CPU KV offloading | 17181 MiB |
+| Text only, 8 GiB of CPU KV offloading | 8731 MiB |
+| **Vision tower on the CPU, no CPU KV offloading (current)** | 13903 MiB, ~1.5 GiB less while a 30-s 1080p video is encoded |
+
+Both together would leave only an estimated ~5.5 GiB, and ~4 GiB while a video is encoded, so the CPU KV offloading
+is disabled until the container gets more RAM (the host has 256 GB). The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
 per token; the FP8 KV cache of this model is dequantized with Triton's e4m3 type, which needs sm_89). With 1.45 GB,
 a 23500-token prompt ran out of memory, so the context is 20480. MTP does not fit. Raising the memory limit of the
 LXC container (the host has 256 GB) would not help the context, only the margin. Loading takes ~13 min (~10 min for
@@ -197,10 +205,30 @@ reading 125 GB and pinning the weights, as the page cache has no room).
 
 - **Generation** reads ~1.2 GB of experts per token over PCIe (10 of 512 experts in each of the 48 layers) and does
   not slow down with the context (Qwen Sparse Attention).
-- **CPU KV offloading** (`kv-offloading-size: 8`; 16 GiB would not fit next to the pinned weights) works for this
-  hybrid model: an 8961-token conversation that two 18k-token prompts had evicted from the GPU came back in 5.7 s
+- **CPU KV offloading** (`kv-offloading-size: 8`; 16 GiB would not fit next to the pinned weights; disabled for now,
+  see above) works for this hybrid model: an 8961-token conversation that two 18k-token prompts had evicted from the GPU came back in 5.7 s
   (358 MB loaded, the same time as a hit in the GPU cache) instead of 22.6 s. The stored blocks take ~34 KB per token
   (attention KV and Gated DeltaNet states), so the 8 GiB hold ~250k tokens.
+- **Images and videos** run through the vision tower on the CPU (`QWEN38_VISION_DEVICE=cpu`, 16 threads; see
+  [`../vllm/vllm.patch`](../vllm/vllm.patch)), ported from the agx-z2e runtime image of
+  [`../vllm-flash-next`](../vllm-flash-next/README.md): transformers' Qwen3-VL vision model in FP32, outside vLLM's
+  memory accounting, with the pixel values kept on the CPU and only the BF16 embeddings copied to the GPU. The vision
+  tower takes no VRAM (peak 7360 MiB instead of 7322 MiB), and the text speed is unchanged (chat 15.4 t/s, 15.3 t/s at
+  16k tokens). The sizes are limited as on agx-z2e: images to 1 megapixel (`max_pixels`), videos to 64 frames sampled
+  at 2 per second (vLLM's `qwen3_vl` video loader decodes only these) and 12.6 M pixels over all frames
+  (`videos_kwargs.max_pixels`; vLLM 0.31 takes per-modality settings, so the video budget patch of agx-z2e is not
+  needed). Test media as on agx-z2e (`temperature 0`), all described correctly (the text, the shapes with their colors
+  and positions; the red square moving from left to right and "ALPHA" changing to "OMEGA"):
+
+  | Input | Prompt tokens | First token | RAM while encoding |
+  |---|---|---|---|
+  | Image 1280x960, scaled to 1 megapixel | 1004 | 14.3-14.9 s | -0.2 GiB |
+  | Image 1280x960 without scaling (`images_kwargs.max_pixels` did not apply) | 1232 | 17.1 s | -0.3 GiB |
+  | Video, 20 s, 640x360, 30 fps | 4608 | 52-59 s | -1.0 GiB |
+  | Video, 30 s, 1920x1080, 30 fps | 5998 | 66-74 s | -1.5 GiB |
+
+  The time is mostly the vision tower: ~3 ms per 16x16 patch with the 16 cores of the EPYC (agx-z2e: ~1.4 ms with 32
+  cores). The prompt token counts are the same as on agx-z2e.
 - **Quality.** In the long-context retrieval test of
   [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py) (44 questions in a 17360-token
   context), the int8 checkpoint answered 38/44 (single lookups 32/32, two-step 6/12) and llama.cpp's IQ3_S 37/44
@@ -209,8 +237,10 @@ reading 125 GB and pinning the weights, as the page cache has no room).
 **Compared with llama.cpp** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md#qwen38-flash-next)): vLLM generates
 13 % faster (15.3 vs 13.6 t/s in chat, 15.2 vs 12.1 t/s at 16-36.5k tokens) and processes prompts 20 % faster at
 6.4k tokens (396 vs 328 t/s), as the GPU reads the experts over PCIe faster than the 16 cores decode llama.cpp's IQ
-types. llama.cpp fits 4 times the context (81920 vs 20480), runs the vision encoder, starts in 1.5 min instead of 13,
-and needs no re-quantized checkpoint or patched image.
+types. Both run their vision encoder on the CPU: a 1280x960 image takes ~15 s until the first token with vLLM
+(scaled to 1 megapixel, 1004 tokens) and ~18 s with llama.cpp (1261 tokens), and vLLM also takes videos. llama.cpp fits
+4 times the context (81920 vs 20480), starts in 1.5 min instead of 13, and needs no re-quantized checkpoint or patched
+image.
 
 ## Commands
 

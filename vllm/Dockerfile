@@ -4,7 +4,8 @@
 # - the native CPU KV offloading is allowed with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,
 # - Triton attention uses its split-KV kernel for speculative decoding too, and larger prefill blocks on sm_86,
 # - UVA weight offloading works for MoE models with experts in RAM on small GPUs, e.g. Qwen3.8-Flash-Next on 8 GB,
-# - native CPU KV offloading restores sliding-window models with an MTP drafter in the full-attention group (Gemma 4).
+# - native CPU KV offloading restores sliding-window models with an MTP drafter in the full-attention group (Gemma 4),
+# - Qwen3.8-Flash-Next can run its vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for image and video input.
 FROM vllm/vllm-openai:v0.31.0
 
 COPY vllm.patch /tmp/vllm.patch
