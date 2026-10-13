@@ -20,7 +20,7 @@ left 0.8-1.0 GiB free:
 | [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2 | int8 | 147456 | 77-86 t/s | 83 / 68 / 45 t/s | 1160 t/s at 6.4k, 450 t/s at 145k |
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
-| `vllm-flash-next` | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 135168 | 27.5 t/s | 28 / 27 (at 36.5k) / 29 t/s | 1650 t/s at 6.4k, 2060 t/s at 133k |
+| `vllm-flash-next` | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 26.5 t/s | 27 / 28 / 28 t/s | 1650 t/s at 6.4k, 2090 t/s at 260k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#results-of-the-current-presets)):
 
@@ -33,12 +33,11 @@ left 0.8-1.0 GiB free:
 - **Gemma 4 31B: llama.cpp is much better.** It fits 1.5 times the context (61440 vs 40960) with MTP and generates
   twice as fast (77 vs 36 t/s in chat). The dense 31B model leaves vLLM no room for the MTP drafter next to a useful
   context (see [Gemma 4 31B](#gemma-4-31b)).
-- **Qwen3.8-Flash-Next: vLLM for long prompts, llama.cpp for the longest contexts and images.** Both generate
-  ~28 t/s in chats, bound by the memory bandwidth of the CPU. vLLM stays at 27-29 t/s up to 100k tokens of context
-  (llama.cpp: 20 t/s at 100k) and processes prompts 2.4-2.7 times as fast (1900-2060 vs 690-780 t/s), with MTP.
-  llama.cpp fits the full 262144 tokens of context (vLLM: 135168), processes images faster (3.2 s vs ~8 s for
-  1280x960, as vLLM's vision tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. Only
-  vLLM supports videos (~35 s for 30 s of 1080p). See
+- **Qwen3.8-Flash-Next: vLLM is better, except for images.** Both fit the full 262144 tokens of context and generate
+  ~27 t/s in chats, bound by the memory bandwidth of the CPU. vLLM stays at ~28 t/s up to 100k tokens of context
+  (llama.cpp: 20 t/s at 100k), processes prompts 2.4-2.8 times as fast (1650-2090 vs 600-780 t/s) and supports
+  videos (~35 s for 30 s of 1080p). llama.cpp processes images faster (3.2 s vs ~8 s for 1280x960, as vLLM's vision
+  tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. See
   [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
@@ -229,26 +228,70 @@ the service in [`docker-compose.yml`](docker-compose.yml).
   (a multiple of 3200).
 - **Prefill** streams all experts through the GPU in 8192-token chunks: 1650-2060 t/s, without slowing down with the
   context (Qwen Sparse Attention).
-- The runtime serves one request at a time (others queue), up to 135168 tokens. It takes ~7 min to start:
+- The runtime serves one request at a time (others queue). It takes ~7 min to start:
   it loads the 125 GB checkpoint and copies the cold experts into a RAM arena with transparent huge pages (only 23.6 of
   56 GiB got huge pages, as the RAM was fragmented after days of uptime).
 - The runtime's serve script had no option for `gpu-memory-utilization`, whose default (0.92) fails vLLM's startup
   check next to the desktop; [`../vllm-flash-next`](../vllm-flash-next/README.md) adds it (0.8).
 
-Results with the current settings (`--tests generation prompt chat depth --prompt-tokens 133000`):
+### Context size (2026-10-13)
+
+With the runtime's defaults, vLLM fitted 135168 tokens of context and llama.cpp the full 262144, although vLLM's int8
+KV cache needs less per token. What takes the 21 GiB (llama.cpp's weights estimated from its per-tensor types):
+
+| | vLLM (runtime defaults, 20 hot experts) | llama.cpp ([preset](../llama-cpp-agx-z2e/preset-qwen3.8-flash-next.ini)) |
+|---|---|---|
+| Dense weights (Gated DeltaNet, attention, shared experts, lm_head, hyper-connections, routers) | 7.97 GiB in BF16 | ~3.7 GiB in 4-6-bit types (Q4_K-Q6_K, IQ4) |
+| Token embedding | 1.18 GiB in BF16 on the GPU | IQ4_XS in RAM |
+| Routed experts on the GPU | 20 per layer, 2.27 GiB | 6 of 48 layers, ~6.5 GiB |
+| MTP module | 1.65 GiB, and its attention layer makes the KV cache ~1.5 times as large per token | none (not in llama.cpp yet) |
+| KV cache | 3.05 GB for 141504 tokens (~21.5 KB per token with MTP, ~14.5 KB without) | 7.2 GiB for 262144 tokens (~29 KiB per token, q8_0) |
+| Vision encoder | 0 (on the CPU) | ~1 GiB |
+| Activations and buffers | ~1.8 GiB above the idle level during prefill (8192-token chunks, expert streaming) | ~2.4 GiB (ubatch 2048) |
+
+The main difference is the precision of the dense weights: the checkpoint has everything but the routed experts and
+the n-gram table in BF16 (9.15 GiB, ~5.4 GiB more than llama.cpp's quantization), and the MTP module. Quantizing the
+dense weights to int8 like [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next) would save ~3.3 GiB, but it
+needs a re-quantized 65 GB checkpoint and int8 support in the runtime's custom kernels. Not needed here, as the two
+cheaper steps were enough:
+
+- **The token embedding in pinned RAM** (`QWEN38_EMBED_UVA=1`, an option of the runtime): the GPU reads the rows of
+  the prompt's tokens over PCIe. -1.18 GiB of VRAM, no measurable effect on the speed.
+- **Fewer hot experts**: decode is bound by the CPU's memory bandwidth, so 14 instead of 20 hot experts per layer
+  (-0.68 GiB) cost no measurable speed either.
+
+| Variant (all with the token embedding in RAM) | Context | KV cache | Chat | Gen. 6.4k / 32k / 100k | Prompt 260k | Peak VRAM |
+|---|---|---|---|---|---|---|
+| Before: embedding on the GPU, MTP 3, 20 hot experts | 135168 | 3.05 GB | 27.5 | 28.1 / 27.4 (36.5k) / 28.7 | 2058 t/s (133k) | 20804 MiB |
+| MTP 3, 20 hot experts | 135168 | 3.05 GB | 27.1 | 28.0 / 29.1 / - | - | 19684 MiB |
+| No MTP, 20 hot experts | 135168 | 3.05 GB (209941 tokens) | 25.5 | 25.5 / 25.4 / - | - | 17360 MiB |
+| No MTP, 40 hot experts | 262144 | 4.05 GB | out of GPU memory on the first request (idle 19758 MiB) | | | |
+| No MTP, 36 hot experts | 262144 | 3.85 GB (278812 tokens) | 25.8 | 26.3 / 25.8 / 26.4 | 2177 t/s | 20858 MiB |
+| MTP 3, 7 hot experts | 262144 | 5.95 GB (333406 tokens) | 26.0 | 26.3 / 26.5 / 28.2 | 2046 t/s | 20816 MiB |
+| **MTP 3, 14 hot experts (current)** | 262144 | 5.15 GB (287594 tokens) | 26.5 | 26.6 / 28.3 / 28.4 | 2087 t/s | 20876 MiB |
+
+- Without MTP, decode is ~8 % slower at the same context; its KV cache is a third smaller, so more experts fit on the
+  GPU, but that does not make up for it.
+- The peak is ~1.8 GiB above the idle level after loading (prefill buffers), so the idle level has to stay below
+  ~19.1 GiB.
+- The runtime needs a KV cache of ~1.05 times the context. With MTP, the cache costs ~15 KB per additional token
+  (5.95 GB held 333406 tokens), less than the ~21.5 KB per token of the smaller cache suggested.
+
+Results with the current settings (`--tests generation prompt chat depth --prompt-tokens 260000`), with llama.cpp for
+comparison:
 
 | Test | vLLM | llama.cpp ([preset](../llama-cpp-agx-z2e/preset-qwen3.8-flash-next.ini)) |
 |---|---|---|
-| Context | 135168 | 262144 |
-| Generation, 256 tokens | 32.2 t/s (MTP acceptance 45 %) | 27.6 t/s |
-| Chat, 6 requests | 27.5 t/s (23.4-34.0) | 27.6 t/s |
-| Depth 6.4k / 16k / 36.5k / 100k | 28.1 / 26.8 / 27.4 / 28.7 t/s | 26.6 / 26.3 / 24.9 / 20.4 t/s |
-| Prompt processing at the same depths | 1652 / 1957 / 1941 / 1893 t/s | 604 / 684 / 687 / 689 t/s |
-| Full-context prompt | 2058 t/s (133000 tokens) | 778 t/s (260000 tokens) |
+| Context | 262144 | 262144 |
+| Generation, 256 tokens | 29.6 t/s (MTP acceptance 44 %) | 27.6 t/s |
+| Chat, 6 requests | 26.5 t/s (22.3-35.7) | 27.6 t/s |
+| Depth 6.4k / 32k (llama.cpp: 36.5k) / 100k | 26.6 / 28.3 / 28.4 t/s | 26.6 / 24.9 / 20.4 t/s |
+| Prompt processing at the same depths | 1649 / 1982 / 1979 t/s | 604 / 687 / 689 t/s |
+| Full-context prompt (260000 tokens) | 2087 t/s | 778 t/s |
 | Image 1280x960, prompt processing | 8.1 s (vision tower on the CPU, image scaled to 1 megapixel) | 3.2 s |
 | Video 30 s 1080p | 35.4 s until the first token (5999 tokens) | not supported |
-| Peak VRAM | 20804 MiB | 20618 MiB |
-| RAM | 71 GiB container limit (56 GiB of experts, 1.7 GiB vision tower, up to ~1.5 GiB more for a video) | ~66 GB |
+| Peak VRAM | 20876 MiB | 20618 MiB |
+| RAM | 71 GiB container limit (56.4 GiB of experts, 1.7 GiB vision tower, 1.2 GiB token embedding, up to ~1.5 GiB more for a video) | ~66 GB |
 
 ## Commands
 

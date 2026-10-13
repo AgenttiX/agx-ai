@@ -78,10 +78,17 @@ services:
     environment:
       SERVED_MODEL_NAME: Qwen/Qwen3.8-Flash-Next
       PORT: "8000"
+      # The full trained context of 262144 tokens (the runtime's default: 135168), like llama.cpp. It fits because the
+      # token embedding is in pinned RAM (QWEN38_EMBED_UVA, -1.18 GiB, looked up over PCIe) and fewer experts stay on
+      # the GPU (see README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the context. Peak
+      # 20876 MiB with a 260000-token prompt.
+      MAX_MODEL_LEN: "262144"
+      KV_CACHE_MEMORY_BYTES: "5150000000"
+      QWEN38_EMBED_UVA: "1"
       # Experts per layer kept on the GPU (~116 MiB of VRAM each; default 32, which needs 23.4 GB). The other ones
       # are computed by the CPU during decode (and partly by the GPU over PCIe) and streamed to the GPU during
-      # prefill. Peak 20724 MiB with 20, 20330 MiB with 16.
-      QWEN38_HOT_ONLY: "20"
+      # prefill. Decode is bound by the CPU's memory bandwidth, so 14 instead of 20 cost no measurable speed.
+      QWEN38_HOT_ONLY: "14"
       # Share of each layer's cold experts that the GPU computes during decode, at most 8 per layer
       # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
       # help (see README.md).
@@ -101,9 +108,10 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
-    # The runtime sizes its RAM arena for the cold experts from this limit (limit - 10 GiB, at most all 23808 cold
-    # experts, 56.2 GiB). The vision tower on the CPU takes 1.7 GiB, and a video up to ~2 GiB more while it is
-    # encoded, so the limit has ~5 GiB of headroom over the 66 GiB in use. The rest of the RAM is left for the desktop.
+    # The runtime sizes its RAM arena for the cold experts from this limit (limit - 10 GiB, at most all 23904 cold
+    # experts, 56.4 GiB). The vision tower on the CPU takes 1.7 GiB and the pinned token embedding 1.2 GiB, and a video
+    # up to ~1.5 GiB more while it is encoded, so the limit has ~4.4 GiB of headroom over the 66.6 GiB in use. The rest
+    # of the RAM is left for the desktop.
     mem_limit: 71g
     memswap_limit: 71g
     ports:
