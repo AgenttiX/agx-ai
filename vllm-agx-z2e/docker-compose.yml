@@ -88,9 +88,12 @@ services:
       QWEN38_GPU_SHARE_FRAC: "0.3"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
-      # Image input with the vision tower on the CPU (../vllm-flash-next/README.md): 32 threads were the fastest
-      # (6.5 s for a 1280x960 image without scaling, vs 9.7 s with 16 and 9.2 s with 64). Images are scaled down
-      # to QWEN38_VISION_MAX_PIXELS (default 1048576). QWEN38_VISION=0 serves text only.
+      # Image and video input with the vision tower on the CPU (../vllm-flash-next/README.md): 32 threads were the
+      # fastest (6.5 s for a 1280x960 image without scaling, vs 9.7 s with 16 and 9.2 s with 64). The defaults of
+      # the image: images scaled to 1 megapixel (QWEN38_VISION_MAX_PIXELS), up to 4 per request; 1 video per
+      # request (QWEN38_VISION_MAX_VIDEOS), sampled at 2 frames per second, at most 64 frames
+      # (QWEN38_VISION_VIDEO_MAX_FRAMES) with 12 megapixels over all frames (QWEN38_VISION_VIDEO_MAX_PIXELS).
+      # QWEN38_VISION=0 serves text only.
       QWEN38_VISION_THREADS: "32"
     ipc: host
     cap_add:
@@ -98,10 +101,11 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
-    # The runtime sizes its RAM arena for the cold experts from this limit: limit - 10 GiB, i.e. all 23040 experts
-    # (54.5 GiB) with 68 GiB. The rest of the RAM is left for the desktop.
-    mem_limit: 68g
-    memswap_limit: 68g
+    # The runtime sizes its RAM arena for the cold experts from this limit (limit - 10 GiB, at most all 23808 cold
+    # experts, 56.2 GiB). The vision tower on the CPU takes 1.7 GiB, and a video up to ~2 GiB more while it is
+    # encoded, so the limit has ~5 GiB of headroom over the 66 GiB in use. The rest of the RAM is left for the desktop.
+    mem_limit: 71g
+    memswap_limit: 71g
     ports:
       - "9931:8000"
     volumes:

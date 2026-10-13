@@ -1,0 +1,82 @@
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_vl.py b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_vl.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_vl.py	2026-08-26 12:13:42.000000000 +0300
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_vl.py	2026-10-13 18:05:52.083943376 +0300
+@@ -939,6 +939,9 @@
+             size = size | {"shortest_edge": override_min_pixels}
+         if (override_max_pixels := mm_kwargs.get("max_pixels")) is not None:
+             size = size | {"longest_edge": override_max_pixels}
++        # agx-ai patch: a separate pixel budget for videos (all frames together), as max_pixels limits the images.
++        if is_video and (video_max_pixels := mm_kwargs.get("video_max_pixels")) is not None:
++            size = size | {"longest_edge": video_max_pixels}
+ 
+         if do_resize:
+             if is_video:
+@@ -997,6 +1000,8 @@
+ 
+         mm_kwargs = self.ctx.get_merged_mm_kwargs({})
+         video_size = mm_kwargs.get("size", video_processor.size)
++        if (video_max_pixels := mm_kwargs.get("video_max_pixels")) is not None:  # agx-ai patch
++            video_size = dict(video_size) | {"longest_edge": video_max_pixels}
+         temporal_patch_size = mm_kwargs.get(
+             "temporal_patch_size", video_processor.temporal_patch_size
+         )
+@@ -1133,6 +1138,8 @@
+ 
+         mm_kwargs = self.info.ctx.get_merged_mm_kwargs({})
+         video_size = mm_kwargs.get("size", video_processor.size)
++        if (video_max_pixels := mm_kwargs.get("video_max_pixels")) is not None:  # agx-ai patch
++            video_size = dict(video_size) | {"longest_edge": video_max_pixels}
+         temporal_patch_size = mm_kwargs.get(
+             "temporal_patch_size", video_processor.temporal_patch_size
+         )
+@@ -1315,9 +1322,9 @@
+ 
+                 # NOTE: a copy of is created to update do_sample_frames,
+                 # otherwise mm_hash for the object will be incorrect.
+-                video_mm_kwargs = dict(**mm_kwargs)
++                video_mm_kwargs = {k: v for k, v in mm_kwargs.items() if k != "video_max_pixels"}
+                 merged = self.info.ctx.get_merged_mm_kwargs(mm_kwargs)
+-                if merged.keys() & {"size", "min_pixels", "max_pixels"}:
++                if merged.keys() & {"size", "min_pixels", "max_pixels", "video_max_pixels"}:
+                     video_size = dict(self.info.get_video_processor().size)
+                     size_override = merged.get("size")
+                     if size_override is not None:
+@@ -1328,6 +1335,10 @@
+                     max_pixels = merged.get("max_pixels")
+                     if max_pixels is not None:
+                         video_size["longest_edge"] = max_pixels
++                    # agx-ai patch: a separate pixel budget for videos
++                    video_max_pixels = merged.get("video_max_pixels")
++                    if video_max_pixels is not None:
++                        video_size["longest_edge"] = video_max_pixels
+                     video_mm_kwargs["size"] = video_size
+                 sampled_fps = video_mm_kwargs.get("fps")
+                 if is_list_of(sampled_fps, float):
+@@ -1426,7 +1437,9 @@
+         # fps/num_frames are video-only kwargs already consumed by the loop;
+         # exclude them so the text/image processor call below never gets a list.
+         non_video_mm_kwargs = {
+-            k: v for k, v in mm_kwargs.items() if k not in ("fps", "num_frames")
++            k: v
++            for k, v in mm_kwargs.items()
++            if k not in ("fps", "num_frames", "video_max_pixels")
+         }
+         processed_outputs = super()._call_hf_processor(
+             prompt=prompt,
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/mm/encoder_runner.py b/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/mm/encoder_runner.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/mm/encoder_runner.py	2026-08-26 12:13:42.000000000 +0300
++++ b/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/mm/encoder_runner.py	2026-10-13 18:05:52.084101566 +0300
+@@ -140,8 +140,12 @@
+         self, mm_kwargs: list[tuple[str, MultiModalKwargsItem]]
+     ) -> list[torch.Tensor]:
+         encoder_outputs: list[torch.Tensor] = []
++        # agx-ai patch: a model whose encoder runs on the CPU gets its inputs there, so that they never take VRAM.
++        on_cpu = getattr(self.model, "mm_encoder_inputs_on_cpu", False)
+         for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
+-            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
++            mm_kwargs,
++            device="cpu" if on_cpu else self.device,
++            pin_memory=PIN_MEMORY and not on_cpu,
+         ):
+             cg_manager = self.cudagraph_manager
+             cudagraph_output = (

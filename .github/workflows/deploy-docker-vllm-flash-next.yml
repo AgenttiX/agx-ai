@@ -1,5 +1,5 @@
 name: Publish vLLM Qwen3.8-Flash-Next Docker image
-# The Qwen3.8-Flash-Next runtime of DominikBucko/qwen38-flash-next-3090 with image input (vision tower on the CPU),
+# The Qwen3.8-Flash-Next runtime of DominikBucko/qwen38-flash-next-3090 with image and video input (vision tower on the CPU),
 # see ../../vllm-flash-next/README.md.
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - "vllm-flash-next/Dockerfile"
       - "vllm-flash-next/cpu_vision.py"
       - "vllm-flash-next/flash-next.patch"
+      - "vllm-flash-next/vllm-mm.patch"
       - ".github/workflows/deploy-docker-vllm-flash-next.yml"
   workflow_dispatch:
 jobs:

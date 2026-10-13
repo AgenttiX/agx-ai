@@ -1,17 +1,24 @@
 diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
 --- a/usr/local/bin/qwen38-serve	2026-09-30 05:31:33.000000000 +0300
-+++ b/usr/local/bin/qwen38-serve	2026-10-13 03:15:59.917315598 +0300
-@@ -51,14 +51,26 @@
++++ b/usr/local/bin/qwen38-serve	2026-10-13 18:06:13.956663978 +0300
+@@ -51,14 +51,33 @@
  done < <(python3 "$host_py" --env)
  python3 "$host_py" | sed 's/^/[qwen38-3090] /'
  
-+# agx-ai: images with the vision tower on the CPU (QWEN38_VISION=1, the default), or text only (QWEN38_VISION=0).
-+# The size of the images is limited, as the CPU needs ~10 s for 1.2 megapixels. Encoder profiling with a dummy
-+# image of the maximum size would take minutes on the CPU and is skipped.
++# agx-ai: images and videos with the vision tower on the CPU (QWEN38_VISION=1, the default), or text only
++# (QWEN38_VISION=0). The CPU needs ~1.4 ms per 16x16 patch, so the sizes are limited: each image to
++# QWEN38_VISION_MAX_PIXELS, and each video to QWEN38_VISION_VIDEO_MAX_FRAMES frames (sampled at 2 per second, only
++# these are decoded) with QWEN38_VISION_VIDEO_MAX_PIXELS pixels over all frames. Encoder profiling with a dummy
++# input of the maximum size would take minutes on the CPU and is skipped.
 +if [[ "${QWEN38_VISION:-1}" == 1 ]]; then
 +  export QWEN38_VISION_DEVICE=${QWEN38_VISION_DEVICE:-cpu}
-+  mm_args=(--limit-mm-per-prompt.image "${QWEN38_VISION_MAX_IMAGES:-4}" --limit-mm-per-prompt.video 0
-+    --mm-processor-kwargs.max_pixels "${QWEN38_VISION_MAX_PIXELS:-1048576}" --skip-mm-profiling)
++  export VLLM_VIDEO_LOADER_BACKEND=${VLLM_VIDEO_LOADER_BACKEND:-qwen3_vl}
++  mm_args=(--limit-mm-per-prompt.image "${QWEN38_VISION_MAX_IMAGES:-4}"
++    --limit-mm-per-prompt.video "${QWEN38_VISION_MAX_VIDEOS:-1}"
++    --mm-processor-kwargs.max_pixels "${QWEN38_VISION_MAX_PIXELS:-1048576}"
++    --mm-processor-kwargs.video_max_pixels "${QWEN38_VISION_VIDEO_MAX_PIXELS:-12582912}"
++    --media-io-kwargs.video.max_frames "${QWEN38_VISION_VIDEO_MAX_FRAMES:-64}"
++    --skip-mm-profiling)
 +else
 +  mm_args=(--language-model-only)
 +fi
@@ -31,7 +38,7 @@ diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
    --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
 diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
 --- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-09-29 10:11:58.000000000 +0300
-+++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-10-13 03:15:59.917238732 +0300
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-10-13 18:06:13.956590800 +0300
 @@ -80,6 +80,7 @@
  from .low_latency_gemm import enable_qwen38next_low_latency_gemm
  from .ple_layer import Qwen3_8FlashNextPLELayer
@@ -40,7 +47,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
  
  
  def without_modelopt_fp4(
-@@ -928,12 +929,16 @@
+@@ -928,12 +929,18 @@
              self._tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
  
              with self._mark_tower_model(vllm_config, {"image", "video"}):
@@ -51,8 +58,10 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
 -                    prefix=maybe_prefix(prefix, "visual"),
 -                )
 +                if cpu_vision_enabled():
-+                    # agx-ai: no VRAM for the vision tower, see cpu_vision.py
++                    # agx-ai: no VRAM for the vision tower, see cpu_vision.py. Its inputs stay on the CPU too
++                    # (read by the encoder runner, see vllm-mm.patch).
 +                    self.visual = CpuVisionTower(config.vision_config)
++                    self.mm_encoder_inputs_on_cpu = True
 +                else:
 +                    self.visual = Qwen3_VisionTransformer(
 +                        config.vision_config,
