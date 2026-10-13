@@ -3,11 +3,12 @@
 general_settings:
   # master-key: sk-SET_ME_IN_ENV
   # alerting: [""]
-  background_health_checks: true
-  enable_health_check_routing: true
+  background_health_checks: false
+  # background_health_check_model_groups: ["transient"]
+  # enable_health_check_routing: true
   health_check_details: true
   health_check_ignore_transient_errors: true
-  health_check_interval: 60
+  # health_check_interval: 60
 
 litellm_settings:
   # Drop unrecognized parameters
