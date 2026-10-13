@@ -60,19 +60,16 @@ services:
     <<: *gpu
     profiles: [flash-next]
     # The single-RTX-3090 runtime of https://github.com/DominikBucko/qwen38-flash-next-3090 (a vLLM build with
-    # CPU expert kernels for Qwen3.8-Flash-Next): its v0.1.0 release image, pinned by digest. See README.md.
-    image: ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
+    # CPU expert kernels for Qwen3.8-Flash-Next) with image input, the vision tower on the CPU: ../vllm-flash-next,
+    # built by ../.github/workflows/deploy-docker-vllm-flash-next.yml. See README.md.
+    image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
     container_name: vllm-flash-next
-    # The runtime takes the API key from VLLM_API_KEY. Its serve script has no option for gpu-memory-utilization,
-    # whose default (0.92) fails the startup check of free GPU memory next to the desktop, so it is added to the
-    # script; the KV cache size is set explicitly anyway.
+    # The runtime takes the API key from VLLM_API_KEY.
     entrypoint:
       - /bin/sh
       - -c
       - >-
-        sed 's/--tensor-parallel-size 1 /--tensor-parallel-size 1 --gpu-memory-utilization 0.8 /'
-        /usr/local/bin/qwen38-serve > /tmp/qwen38-serve &&
-        VLLM_API_KEY="$$LLAMA_API_KEY" exec bash /tmp/qwen38-serve
+        VLLM_API_KEY="$$LLAMA_API_KEY" exec /usr/local/bin/qwen38-serve
         /root/.cache/huggingface/hub/models--albucino--Qwen3.8-Flash-Next-W4A16-FP8PLE/snapshots/ef554143369a706525336f6b42a09094835dc077
     env_file:
       - ../llama-cpp-radeon-vii/llama-cpp.env
@@ -91,6 +88,10 @@ services:
       QWEN38_GPU_SHARE_FRAC: "0.3"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
+      # Image input with the vision tower on the CPU (../vllm-flash-next/README.md): 32 threads were the fastest
+      # (6.5 s for a 1280x960 image without scaling, vs 9.7 s with 16 and 9.2 s with 64). Images are scaled down
+      # to QWEN38_VISION_MAX_PIXELS (default 1048576). QWEN38_VISION=0 serves text only.
+      QWEN38_VISION_THREADS: "32"
     ipc: host
     cap_add:
       - SYS_PTRACE

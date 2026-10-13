@@ -8,8 +8,8 @@ services:
   the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`, CUDA 13.0, with the fixes of
   [`../vllm/vllm.patch`](../vllm/vllm.patch)). The model is selected by commenting the config volume lines in or out.
 - `vllm-flash-next` (`docker compose stop vllm && docker compose --profile flash-next up -d vllm-flash-next`):
-  Qwen3.8-Flash-Next with most of its experts in RAM, with a third-party vLLM runtime (see
-  [Qwen3.8-Flash-Next](#qwen38-flash-next)).
+  Qwen3.8-Flash-Next with most of its experts in RAM, with a third-party vLLM runtime and its vision tower on the CPU
+  (see [Qwen3.8-Flash-Next](#qwen38-flash-next)).
 
 All use the API key of the llama.cpp servers. Like the llama.cpp presets, each configuration keeps vLLM at ≤ 21 GiB of
 VRAM (peaks 20804-20988 MiB with full-context prompts). The desktop used 2.7 GiB during these measurements, which
@@ -36,8 +36,8 @@ left 0.8-1.0 GiB free:
 - **Qwen3.8-Flash-Next: vLLM for long prompts, llama.cpp for the longest contexts and images.** Both generate
   ~28 t/s in chats, bound by the memory bandwidth of the CPU. vLLM stays at 27-29 t/s up to 100k tokens of context
   (llama.cpp: 20 t/s at 100k) and processes prompts 2.4-2.7 times as fast (1900-2060 vs 690-780 t/s), with MTP.
-  llama.cpp fits the full 262144 tokens of context (vLLM: 135168), runs the vision encoder (vLLM: text only), starts in
-  1.5 min instead of 7, and uses the stock image. See
+  llama.cpp fits the full 262144 tokens of context (vLLM: 135168), processes images faster (3.2 s vs ~8 s for
+  1280x960, as vLLM's vision tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. See
   [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
@@ -85,7 +85,7 @@ uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-31B-it-qat-q4_0-
 # Qwen3.8-Flash-Next (129 GB) and its runtime
 uvx --from 'huggingface_hub[hf_xet]' hf download albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE \
     --revision ef554143369a706525336f6b42a09094835dc077
-docker pull ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
+docker pull ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
 # Stop llama.cpp on this GPU and start vLLM
 docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
 docker compose up -d
@@ -201,12 +201,14 @@ an AVX2 thread pool computes the other ("cold") experts from RAM during decode w
 over PCIe, and prefill streams all experts through the GPU. The n-gram table (FP8) is read in place from the
 checkpoint. It uses [`albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE`](https://huggingface.co/albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE)
 (Intel's AutoRound W4A16 experts and an FP8 n-gram table, 125 GB). With 68 GiB for the container, all 23808 cold
-experts fit in its RAM arena (56 GiB). The compose file uses the author's
-[v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0), pinned by
-digest; the later commits of the repository (up to `10b24c2`, 2026-10-11) change only documentation. None of the
-fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch) would help this model: its sparse attention has its own split-K
-kernels, it does not use the Qwen3.5/3.8 model code, and its decode is bound by the CPU. The settings are in the
-`environment` of the service in [`docker-compose.yml`](docker-compose.yml).
+experts fit in its RAM arena (56 GiB). The compose file uses [`../vllm-flash-next`](../vllm-flash-next/README.md):
+the author's [v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0)
+(the later commits of the repository, up to `10b24c2` of 2026-10-11, change only documentation) with image input, the
+vision tower running on the CPU so that it takes no VRAM and does not slow down text. A 1280x960 image takes ~8 s until
+the first token. With the vision tower on the GPU, the first image ran out of GPU memory. None of the fixes of
+[`../vllm/vllm.patch`](../vllm/vllm.patch) would help this model: its sparse attention has its own split-K kernels, it
+does not use the Qwen3.5/3.8 model code, and its decode is bound by the CPU. The settings are in the `environment` of
+the service in [`docker-compose.yml`](docker-compose.yml).
 
 | Settings | Chat | Gen. 6.4k | Gen. 32k | CPU / GPU time per decode step | Peak VRAM |
 |---|---|---|---|---|---|
@@ -225,11 +227,11 @@ kernels, it does not use the Qwen3.5/3.8 model code, and its decode is bound by 
   (a multiple of 3200).
 - **Prefill** streams all experts through the GPU in 8192-token chunks: 1650-2060 t/s, without slowing down with the
   context (Qwen Sparse Attention).
-- The runtime serves one request at a time (others queue), up to 135168 tokens, text only. It takes ~7 min to start:
+- The runtime serves one request at a time (others queue), up to 135168 tokens. It takes ~7 min to start:
   it loads the 125 GB checkpoint and copies the cold experts into a RAM arena with transparent huge pages (only 23.6 of
   56 GiB got huge pages, as the RAM was fragmented after days of uptime).
-- The serve script of the image has no option for `gpu-memory-utilization`, whose default (0.92) fails vLLM's startup
-  check next to the desktop, so the compose entrypoint adds `--gpu-memory-utilization 0.8` with `sed`.
+- The runtime's serve script had no option for `gpu-memory-utilization`, whose default (0.92) fails vLLM's startup
+  check next to the desktop; [`../vllm-flash-next`](../vllm-flash-next/README.md) adds it (0.8).
 
 Results with the current settings (`--tests generation prompt chat depth --prompt-tokens 133000`):
 
@@ -241,6 +243,7 @@ Results with the current settings (`--tests generation prompt chat depth --promp
 | Depth 6.4k / 16k / 36.5k / 100k | 28.1 / 26.8 / 27.4 / 28.7 t/s | 26.6 / 26.3 / 24.9 / 20.4 t/s |
 | Prompt processing at the same depths | 1652 / 1957 / 1941 / 1893 t/s | 604 / 684 / 687 / 689 t/s |
 | Full-context prompt | 2058 t/s (133000 tokens) | 778 t/s (260000 tokens) |
+| Image 1280x960, prompt processing | 8.1 s (vision tower on the CPU, image scaled to 1 megapixel) | 3.2 s |
 | Peak VRAM | 20804 MiB | 20618 MiB |
 | RAM | 68 GiB container limit (56 GiB of experts) | ~66 GB |
 
