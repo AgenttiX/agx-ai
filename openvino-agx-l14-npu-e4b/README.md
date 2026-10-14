@@ -79,5 +79,3 @@ Notes:
 - The upstream `requirements.txt` uses `--extra-index-url`, which is open to dependency confusion.
   Here OpenVINO comes from PyPI, and the PyTorch CPU index is restricted to its packages ([pyproject.toml](pyproject.toml), [uv.lock](uv.lock)),
   and the Dockerfile checks the code files and the NPU driver against the checksums of the reviewed versions.
-- OpenVINO includes telemetry (`openvino-telemetry`).
-  In the container, it logs "Could not create directory for storing client ID. No data will be sent."
