@@ -6,34 +6,28 @@ services:
     devices:
       - /dev/accel:/dev/accel
     environment:
-      # No network access is needed after the download.
-      HF_HUB_OFFLINE: "1"
+      # The model files of the reviewed commit are downloaded at startup to the Hugging Face cache of the host.
+      # Only the hub directory is mounted, so that e.g. a token in ~/.cache/huggingface is not visible.
+      HF_HUB_CACHE: /hf-hub
     # /dev/accel/accel0 belongs to the host's render group, whose name does not exist in the image (getent group render).
     group_add:
       - "992"
     restart: unless-stopped
     ports:
       - "127.0.0.1:9934:8000"
-    # Run as the host user, so that the NPU compilation cache is not owned by root.
+    # Run as the host user, so that the files in the Hugging Face cache are not owned by root.
     user: "1000:1000"
     volumes:
-      - /home/mika/.cache/gemma4-npu/models:/app/models
+      - /home/mika/.cache/huggingface/hub:/hf-hub
+      - npu-cache:/npu-cache
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/models', timeout=5)" ]
       interval: 30s
       timeout: 10s
       retries: 3
-      # The first start compiles the model for the NPU.
-      start_period: 900s
+      # The first start downloads the model files (~15.5 GB) and compiles the model for the NPU.
+      start_period: 3600s
 
-  # Downloads the model files of the reviewed commit to /home/mika/.cache/gemma4-npu/models.
-  download:
-    profiles: [ "setup" ]
-    image: ghcr.io/agenttix/agx-ai/gemma4-npu:latest
-    environment:
-      # The Xet download backend failed with "Permission denied" when logging to a file.
-      HF_HUB_DISABLE_XET: "1"
-    entrypoint: [ "python", "-c", "from huggingface_hub import snapshot_download; snapshot_download('ryugyosoft/gemma-4-E4B-it-npu', revision='e120bd9ca8cdee3bd9cbfd42a5b6045aef69657c', allow_patterns=['models/*'], local_dir='/download')" ]
-    user: "1000:1000"
-    volumes:
-      - /home/mika/.cache/gemma4-npu:/download
+volumes:
+  # The NPU compilation cache (9 GB). It depends on the NPU driver and OpenVINO versions in the image.
+  npu-cache:

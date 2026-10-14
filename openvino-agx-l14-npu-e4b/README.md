@@ -8,12 +8,13 @@ which neither llama.cpp nor OpenVINO Model Server can do for Gemma 4 on this NPU
 (see [../openvino-agx-l14](../openvino-agx-l14) and [../llama-cpp-agx-l14](../llama-cpp-agx-l14)).
 
 ## Setup
-The model files are ~15.5 GB.
 ```sh
 docker compose pull
-docker compose run --rm download
 docker compose up -d
 ```
+At startup, [start.py](start.py) downloads the model files (~15.5 GB) of the reviewed commit
+to the Hugging Face cache of the host (`~/.cache/huggingface/hub`) if they are missing, and then starts the server.
+Without a network connection, the cached files are used.
 The image is built by [deploy-docker-gemma4-npu.yml](../.github/workflows/deploy-docker-gemma4-npu.yml).
 To build it locally instead, run:
 ```sh
@@ -26,9 +27,12 @@ uv lock
 ```
 
 - The first start compiles the model for the NPU (~10 min, 578-653 s measured).
-  Later starts load the compiled blobs from `models/npu_cache` (9 GB) in ~30 s.
-  The blobs depend on the NPU driver and OpenVINO versions in the image, so updating either recompiles them,
-  and the old blobs have to be deleted by hand.
+  Later starts load the compiled blobs (9 GB) from the Docker volume `openvino-agx-l14-npu-e4b_npu-cache` in 20-30 s.
+  The Dockerfile patches `gemma4_npu.py` to use this volume instead of the model directory, which is in the Hugging Face cache.
+  The blobs depend on the NPU driver and OpenVINO versions in the image, so updating either recompiles them.
+  To delete the old blobs, recreate the volume with `docker compose down -v` before the update.
+  The blobs are readable only by the user that created them, so the volume should be recreated also when changing
+  `user` in [docker-compose.yml](docker-compose.yml).
 - Memory: the container peaked at ~24 GB of RAM while compiling and uses ~15-18.5 GB when loaded
   (the 64-token prefill decoder is loaded only with >= 24 GB of RAM, see `block_sizes()` in `gemma4_npu.py`).
 - Do not run this at the same time as [../llama-cpp-agx-l14](../llama-cpp-agx-l14)
@@ -69,6 +73,9 @@ Notes:
   so the weights cannot be verified against Google's release.
 - `server.py` downloads `image_url` http(s) URLs given by the client, and the API has no authentication,
   so the port is published only on localhost.
+- The container has network access, as it downloads the model files at startup.
+  Only the `hub` directory of the Hugging Face cache is mounted, so the container cannot read e.g. a token
+  in `~/.cache/huggingface`, but it can modify the other models in the cache.
 - The upstream `requirements.txt` uses `--extra-index-url`, which is open to dependency confusion.
   Here OpenVINO comes from PyPI, and the PyTorch CPU index is restricted to its packages ([pyproject.toml](pyproject.toml), [uv.lock](uv.lock)),
   and the Dockerfile checks the code files and the NPU driver against the checksums of the reviewed versions.
