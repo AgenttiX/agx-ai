@@ -6,34 +6,31 @@ version = "0.1.0"
 description = "Container for the ryugyosoft/gemma-4-E4B-it-npu server"
 # Ubuntu 26.04 includes Python 3.14.
 requires-python = "==3.14.*"
-# The versions tested upstream (requirements.txt: openvino>=2026.5.0b1, transformers==5.5.4).
+# Upstream requirements.txt: openvino>=2026.5.0b1 (nightly), transformers==5.5.4.
+# The OpenVINO release from PyPI is used instead of a nightly, as 2026.5.0.dev20261013 was not faster
+# and gave the same answers (tested on 2026-10-14, see README.md).
+# PyTorch is used only by the image processor of transformers (resizing the input image), so the CPU build suffices.
 dependencies = [
     "fastapi",
     "huggingface-hub",
     "numpy>=1.26",
-    "openvino==2026.5.0b1",
+    "openvino==2026.4.1",
     "pillow",
-    "torch==2.14.0",
-    "torchvision==0.29.0",
-    "transformers==5.5.4",
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "transformers==5.19.0",
     "uvicorn",
 ]
 
 # The upstream requirements.txt uses --extra-index-url, which lets a package with the same name on PyPI take
-# precedence (dependency confusion). Here the extra indexes are explicit, i.e. used only for the packages listed
+# precedence (dependency confusion). Here the extra index is explicit, i.e. used only for the packages listed
 # in tool.uv.sources, and everything else comes from PyPI.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[[tool.uv.index]]
-name = "openvino-nightly"
-url = "https://storage.openvinotoolkit.org/simple/wheels/nightly"
-explicit = true
-
 [tool.uv.sources]
-openvino = { index = "openvino-nightly" }
 torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
 

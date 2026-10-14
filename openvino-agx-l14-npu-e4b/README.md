@@ -25,9 +25,9 @@ The Python dependencies are locked in [uv.lock](uv.lock). To update it, run in U
 uv lock
 ```
 
-- The first start compiles the model for the NPU (~10 min, 578-632 s measured).
+- The first start compiles the model for the NPU (~10 min, 578-653 s measured).
   Later starts load the compiled blobs from `models/npu_cache` (9 GB) in ~30 s.
-  The blobs depend on the NPU driver version in the image, so a driver update recompiles them,
+  The blobs depend on the NPU driver and OpenVINO versions in the image, so updating either recompiles them,
   and the old blobs have to be deleted by hand.
 - Memory: the container peaked at ~24 GB of RAM while compiling and uses ~15-18.5 GB when loaded
   (the 64-token prefill decoder is loaded only with >= 24 GB of RAM, see `block_sizes()` in `gemma4_npu.py`).
@@ -42,7 +42,18 @@ uv lock
 - Tool calls and thinking are not supported by the server.
 
 ## Performance
-Measured on 2026-09-26 (default decoder, not `--fast`):
+Measured on 2026-10-14 with [bench.py](bench.py) (default decoder, not `--fast`),
+OpenVINO 2026.4.1, transformers 5.19.0 and NPU driver 1.38.0:
+- Generation 8.2-8.6 t/s. Time to the first token 0.34 s for a 26-29-token prompt
+  and 4.2-4.3 s for a 777-token prompt (~180 t/s), after which generation stays at 8.5 t/s.
+- A 290-token prompt with a 640x480 image took 3.5-3.8 s to the first token.
+- 8/8 correct answers to the short questions in `bench.py` (a different set from the one below).
+- The OpenVINO nightly 2026.5.0.dev20261013, which upstream recommends, gave the same speeds and the same answers,
+  so the release from PyPI is used.
+- PyTorch is used only by the image processor of transformers for resizing the input image,
+  and every model component runs on the NPU with OpenVINO, so a GPU build of PyTorch would not help.
+
+Measured on 2026-09-26 with OpenVINO 2026.5.0b1 and transformers 5.5.4:
 - Generation 8.1-8.6 t/s. Time to the first token 0.9 s for an 18-token prompt
   and 3.7-3.8 s for a 684-token prompt (~185 t/s), after which generation slows to 5.8-5.9 t/s.
 - Image input works: a 293-token prompt with an image took 3.7-3.8 s to the first token.
@@ -59,7 +70,7 @@ Notes:
 - `server.py` downloads `image_url` http(s) URLs given by the client, and the API has no authentication,
   so the port is published only on localhost.
 - The upstream `requirements.txt` uses `--extra-index-url`, which is open to dependency confusion.
-  Here the extra indexes are restricted to their packages ([pyproject.toml](pyproject.toml), [uv.lock](uv.lock)),
+  Here OpenVINO comes from PyPI, and the PyTorch CPU index is restricted to its packages ([pyproject.toml](pyproject.toml), [uv.lock](uv.lock)),
   and the Dockerfile checks the code files and the NPU driver against the checksums of the reviewed versions.
 - OpenVINO includes telemetry (`openvino-telemetry`).
   In the container, it logs "Could not create directory for storing client ID. No data will be sent."

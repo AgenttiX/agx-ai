@@ -11,7 +11,7 @@ ARG UBUNTU_IMAGE="ubuntu:26.04"
 
 # The uv image is used for copying the uv binary to the other stages.
 # https://docs.astral.sh/uv/guides/integration/docker/
-ARG UV_IMAGE="ghcr.io/astral-sh/uv:0.12"
+ARG UV_IMAGE="ghcr.io/astral-sh/uv:0.13"
 
 # The Python libraries are installed in a virtual environment,
 # as the system Python of Ubuntu is externally managed (PEP 668).
@@ -100,7 +100,7 @@ RUN \
     && apt-get install -y --no-install-recommends ca-certificates python3
 
 # The dependencies are installed from the lock file.
-# The extra package indexes are restricted to their packages in pyproject.toml (see the comments there).
+# The extra package index (PyTorch CPU) is restricted to its packages in pyproject.toml (see the comments there).
 RUN \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-${TARGETARCH} \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
