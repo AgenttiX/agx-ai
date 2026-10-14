@@ -604,3 +604,103 @@ diff -ruN a/v1/worker/gpu/mm/encoder_runner.py b/v1/worker/gpu/mm/encoder_runner
          ):
              cg_manager = self.cudagraph_manager
              cudagraph_output = (
+diff -ruN a/models/qwen4_exp/nvidia/ops/qsa.py b/models/qwen4_exp/nvidia/ops/qsa.py
+--- a/models/qwen4_exp/nvidia/ops/qsa.py
++++ b/models/qwen4_exp/nvidia/ops/qsa.py
+@@ -23,6 +23,28 @@
+ 
+ 
+ @lru_cache(maxsize=1)
++def _fp8_as_bits() -> bool:
++    """True below sm_89, where Triton has no FP8 e4m3 type: FP8 caches are then
++    read as uint8 and converted with bit operations (_e4m3_bits_to_fp16)."""
++    return not current_platform.has_device_capability(89)
++
++
++@triton.jit
++def _e4m3_bits_to_fp16(x):
++    """Convert FP8 e4m3fn values, loaded as uint8, to FP16 (exact).
++
++    The sign, exponent and mantissa bits shifted into their FP16 positions give
++    the value times 2**-8 (exponent bias 15 instead of 7), subnormals included,
++    so a multiplication by 256 restores it. Cheap enough for the one-warp tiles
++    of the prefill configuration (a version with int32 ops and selects was ~25
++    times slower there).
++    """
++    x = x.to(tl.int16)
++    bits = ((x & 0x80) << 8) | ((x & 0x7F) << 7)
++    return bits.to(tl.float16, bitcast=True) * 256.0
++
++
++@lru_cache(maxsize=1)
+ def _is_sm90() -> bool:
+     """True on sm_90 (H100/H200/H20): selects the sm_90 tuning table."""
+     return current_platform.get_device_capability() == (9, 0)
+@@ -70,6 +92,7 @@
+     BLOCK_M: tl.constexpr,
+     BLOCK_N: tl.constexpr,
+     IS_FP8: tl.constexpr,
++    FP8_AS_BITS: tl.constexpr,
+ ) -> None:
+     row = tl.program_id(0)
+     kv_head = tl.program_id(1)
+@@ -153,6 +176,8 @@
+         if IS_FP8:
+             # e4m3 -> Q dtype is exact; keep the QK dot in Q's dtype (fp8 QK
+             # measured slower here and less accurate).
++            if FP8_AS_BITS:
++                keys = _e4m3_bits_to_fp16(keys)
+             keys = keys.to(query.dtype)
+         scores = tl.dot(query, keys)
+         # Scaling scores avoids re-quantizing a scaled query to BF16; for fp8
+@@ -169,7 +194,10 @@
+             # Dequant V to fp16 (not bf16) for the PV dot: P <= 1 (online
+             # softmax) so fp16 has the range, its wider mantissa is more
+             # accurate, and the fp8->fp16 upcast with an fp16 PV dot is faster.
+-            values = values.to(tl.float16)
++            if FP8_AS_BITS:
++                values = _e4m3_bits_to_fp16(values)
++            else:
++                values = values.to(tl.float16)
+         accumulator = tl.dot(
+             probabilities.to(values.dtype),
+             values,
+@@ -643,6 +671,9 @@
+         # and pass V's dequant scale as the kernel's output scale.
+         softmax_scale = (head_dim**-0.5) * float(k_scale)
+         output_scale = float(v_scale)
++        if _fp8_as_bits():
++            k_cache = k_cache.view(torch.uint8)
++            v_cache = v_cache.view(torch.uint8)
+     else:
+         assert k_cache.dtype == torch.bfloat16
+         softmax_scale = head_dim**-0.5
+@@ -732,6 +763,7 @@
+         BLOCK_M=block_m,
+         BLOCK_N=block_n,
+         IS_FP8=is_fp8,
++        FP8_AS_BITS=is_fp8 and _fp8_as_bits(),
+         num_warps=partial_warps,
+         num_stages=2,
+     )
+@@ -770,7 +802,11 @@
+     key_cache, value_cache = kv_cache.transpose(1, 2).split(head_dim, dim=-1)
+     # An fp8 cache is allocated as uint8 and viewed as e4m3 at attention time.
+     is_fp8 = kv_cache.dtype == torch.uint8
+-    cache_dtype = torch.float8_e4m3fn if is_fp8 else key_cache.dtype
++    cache_dtype = (
++        (torch.uint8 if _fp8_as_bits() else torch.float8_e4m3fn)
++        if is_fp8
++        else key_cache.dtype
++    )
+     num_kv_heads = key_cache.shape[2]
+     group_size = num_query_heads // num_kv_heads
+     block_m = triton.next_power_of_2(group_size)
+@@ -875,6 +911,7 @@
+             BLOCK_M=block_m,
+             BLOCK_N=block_n,
+             IS_FP8=is_fp8,
++            FP8_AS_BITS=is_fp8 and _fp8_as_bits(),
+             num_warps=warps,
+             num_stages=2,
+             grid=(num_rows, num_kv_heads, num_splits),

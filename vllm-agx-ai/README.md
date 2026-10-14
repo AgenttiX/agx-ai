@@ -9,7 +9,7 @@ The model is selected by commenting the config volume lines in or out.
 | Configuration | Model | Context | Chat | Generation at 6.4k / 36.5k tokens | Prompt processing |
 |---|---|---|---|---|---|
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2 | 98304 | 32 t/s | 30 / 27 t/s | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k |
-| [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers, experts and n-gram table in RAM, no MTP, image and video input (vision tower on the CPU) | 20480 | 15.3 t/s | 15.2 / 15.2 (at 16k) t/s | 396 t/s at 6.4k, 478 t/s at 19.5k |
+| [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts and n-gram table in RAM, FP8 KV cache, no MTP, image and video input (vision tower on the CPU) | 57344 | 15.4 t/s | 15.4 / 15.4 (at 32k) t/s | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md)): **llama.cpp is
 clearly better for Gemma 4 26B-A4B.** It generates 1.7 times as fast (chat ~55 vs 32 t/s, 45-49 vs 27 t/s at 36-70k
@@ -18,11 +18,11 @@ tokens), processes long prompts twice as fast (~1220 t/s at 119k vs 580 t/s at 9
 them on the 16-core EPYC, while vLLM has no CPU kernels for them, so the GPU reads the selected experts from RAM over
 PCIe for every token.
 
-**Qwen3.8-Flash-Next: vLLM is faster, llama.cpp has 4 times the context.** vLLM generates 13 % faster (15.3 vs
-13.6 t/s) and processes prompts ~20 % faster, as the GPU reads the experts over PCIe faster than the CPU decodes
-llama.cpp's IQ quantization types, and it also takes videos. llama.cpp fits 81920 tokens of context instead of 20480,
-starts in 1.5 min instead of 13 and needs neither the re-quantized checkpoint nor the patched image, see
-[Qwen3.8-Flash-Next](#qwen38-flash-next).
+**Qwen3.8-Flash-Next: vLLM is faster, llama.cpp had more context.** vLLM generates 13 % faster (15.4 vs 13.6 t/s,
+15.4 vs 12.1 t/s at 32-36.5k tokens) and processes prompts ~15-20 % faster, as the GPU reads the experts over PCIe
+faster than the CPU decodes llama.cpp's IQ quantization types, and it also takes videos. llama.cpp fitted 81920 tokens
+of context instead of 57344, started in 1.5 min instead of 13 and needed neither the re-quantized checkpoint nor the
+patched image; its GGUF was removed on 2026-10-13 to free disk space, see [Qwen3.8-Flash-Next](#qwen38-flash-next).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 and 2026-10-13 with the
 tools in [`../benchmark`](../benchmark/README.md), on test servers
@@ -60,13 +60,14 @@ docker run --rm --memory 40g -v "$PWD/../vllm-radeon-vii":/src:ro -v ~/.cache/hu
     /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
 docker run --rm -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub python:3-slim sh -c \
     "pip install -q 'huggingface_hub[hf_xet]' && hf download google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant"
-# Qwen3.8-Flash-Next (125 GB, must stay in the cache), then its dense layers and lm_head in int8 (~10 min, 65 GB)
+# Qwen3.8-Flash-Next (125 GB, must stay in the cache), then its dense layers in int8 and its lm_head in int4
+# (~10 min, 65 GB)
 docker run --rm -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub python:3-slim sh -c \
     "pip install -q 'huggingface_hub[hf_xet]' && hf download albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE \
     --revision ef554143369a706525336f6b42a09094835dc077 --exclude 'docs/*' --exclude 'runtime/*'"
 docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro -v ~/.cache/vllm-models:/out \
     -v "$PWD":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest /src/quantize_flash_next_dense.py \
-    --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense-int8 --bits 8 --lm-head-bits 8
+    --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense-int8-head4 --bits 8 --lm-head-bits 4
 # Stop llama.cpp on this GPU and start vLLM
 docker compose -f ../llama-cpp-agx-ai/docker-compose.yml stop
 docker compose up -d
@@ -151,7 +152,7 @@ and 36 with Gated DeltaNet) with a 51B-parameter n-gram embedding table. On agx-
 runtime of DominikBucko/qwen38-flash-next-3090 (see [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next)),
 which needs 9.8 GB of VRAM for its BF16 dense weights alone and has no option for smaller GPUs. Stock vLLM 0.31 runs
 the model with the experts read from RAM over UVA as for Gemma, but only with six fixes and a re-quantized
-checkpoint. The vLLM CPU backend is no alternative: it would need the whole model in RAM, the model has no CPU
+checkpoint (and two more fixes for images and videos and for the FP8 KV cache). The vLLM CPU backend is no alternative: it would need the whole model in RAM, the model has no CPU
 implementation in vLLM, and the fast paths need AVX-512.
 
 **Checkpoint.** [`albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE`](https://huggingface.co/albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE)
@@ -159,9 +160,10 @@ implementation in vLLM, and the fast paths need AVX-512.
 instead of 95 GiB in BF16): the routed experts in Intel's AutoRound int4 (58.4 GiB), everything else in BF16 (9.2 GiB).
 The other int4 checkpoints keep the n-gram table in BF16, or need patched vLLM builds for their FP8/INT6 layers.
 [`quantize_flash_next_dense.py`](quantize_flash_next_dense.py) quantizes the BF16 Gated DeltaNet, attention and
-shared expert projections and the lm_head to int8 with round-to-nearest (group size 128, the GPTQ format of the
-experts), which takes the weights on the GPU from 8.0 GiB (without the embedding) to 5.03 GiB. Its
-relative error is 0.8 % (int4: 14 %). The output directory gets new shards for the quantized tensors (65 GB) and
+shared expert projections to int8 and the lm_head to int4 with round-to-nearest (group size 128, the GPTQ format of
+the experts), which takes the weights on the GPU from 8.0 GiB (without the embedding) to 4.83 GiB (5.03 GiB with an
+int8 lm_head, as until 2026-10-13). The relative error of the int8 weights is 0.8 % (int4: 14 %); for the lm_head,
+int4 cost less quality than the FP8 KV cache, see [Context size](#context-size). The output directory gets new shards for the quantized tensors (65 GB) and
 symbolic links to the n-gram table and the other files of the source, which must stay in the Hugging Face cache.
 
 **The fixes**, in [`../vllm/vllm.patch`](../vllm/vllm.patch) (details in [`../vllm/README.md`](../vllm/README.md)),
@@ -180,8 +182,8 @@ Two settings are needed as well: `VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=128` (the fi
 with the default of 512 MiB, which the memory profiling does not account for) and `TORCHINDUCTOR_COMPILE_THREADS=1`
 (no RAM for parallel compile workers), both in [`docker-compose.yml`](docker-compose.yml).
 
-**Memory.** ~107 GiB of the container's 128 GiB of RAM are pinned (experts, n-gram table and embedding), and
-5.03 GiB of weights are on the GPU. `free -m` after loading (the pinned weights and the offloading buffer appear as
+**Memory.** ~107 GiB of the container's RAM are pinned (experts, n-gram table and embedding), and 4.83 GiB of
+weights are on the GPU (5.03 GiB with the int8 lm_head). `free -m` after loading (the pinned weights and the offloading buffer appear as
 "shared" and "buff/cache", but cannot be freed):
 
 | Configuration | Container RAM | Available RAM |
@@ -191,17 +193,16 @@ with the default of 512 MiB, which the memory profiling does not account for) an
 | Vision tower on the CPU, no CPU KV offloading | 128 GiB | 13903 MiB, ~1.5 GiB less while a 30-s 1080p video is encoded |
 | **Vision tower on the CPU, 8 GiB of CPU KV offloading (current)** | 144 GiB (since 2026-10-13) | 22070 MiB, 20733 MiB at the lowest while a 30-s 1080p video is encoded |
 
-With 128 GiB, both together would have left only ~5.5 GiB, so the container got 16 GiB more. The remaining ~1.1 GB of VRAM holds a KV cache of 24041 tokens in BF16 (~45 KiB
-per token; the FP8 KV cache of this model is dequantized with Triton's e4m3 type, which needs sm_89). With 1.45 GB,
-a 23500-token prompt ran out of memory, so the context is 20480. MTP does not fit. Raising the memory limit of the
-LXC container (the host has 256 GB) would not help the context, only the margin. Loading takes ~13 min (~10 min for
-reading 125 GB and pinning the weights, as the page cache has no room).
+With 128 GiB, both together would have left only ~5.5 GiB, so the container got 16 GiB more. With the final
+configuration of 2026-10-14 (FP8 KV cache, int4 lm_head, 57344 tokens), 21678 MiB are available after loading.
+The KV cache on the GPU is described in [Context size](#context-size); MTP does not fit. Loading takes 13-23 min
+(~10-20 min for reading 125 GB and pinning the weights, as the page cache has no room).
 
-| Variant (KV cache in BF16) | Context | Chat | Gen. 6.4k / 16k | Prompt processing | Peak VRAM |
+| Variant (int8 lm_head, BF16 KV cache) | Context | Chat | Gen. 6.4k / 16k | Prompt processing | Peak VRAM |
 |---|---|---|---|---|---|
 | Eager mode, KV cache 0.8 GB | 12288 | 7.4 | 7.7 / - | 383 t/s at 6.4k | 7104 MiB |
 | CUDA graphs for decoding, KV cache 0.8 GB | 12288 | 15.3 | 15.2 / - | 396 t/s at 6.4k | 7062 MiB |
-| **CUDA graphs, KV cache 1.1 GB (current)** | 20480 | 15.3 | 15.2 / 15.2 | 396 / 421 t/s at 6.4k / 16k, 478 t/s at 19.5k | 7322 MiB |
+| CUDA graphs, KV cache 1.1 GB (until 2026-10-13) | 20480 | 15.3 | 15.2 / 15.2 | 396 / 421 t/s at 6.4k / 16k, 478 t/s at 19.5k | 7322 MiB |
 
 - **Generation** reads ~1.2 GB of experts per token over PCIe (10 of 512 experts in each of the 48 layers) and does
   not slow down with the context (Qwen Sparse Attention).
@@ -236,13 +237,78 @@ reading 125 GB and pinning the weights, as the page cache has no room).
   context), the int8 checkpoint answered 38/44 (single lookups 32/32, two-step 6/12) and llama.cpp's IQ3_S 37/44
   (32/32, 5/12), so the round-to-nearest int8 layers do not cost measurable quality.
 
+### Context size
+
+Measured on 2026-10-13 and -14, following the steps that gave agx-z2e the full context (its token embedding in RAM
+and fewer experts on the GPU, see [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#context-size-2026-10-13)). Here, the
+embedding and all experts were already in RAM, so the room had to come from the KV cache itself and the dense weights.
+
+**Why the KV cache was so large.** It took ~45 KiB per token in BF16, although the attention of the 12 QSA layers
+needs only 24 KiB. vLLM gives all KV cache groups of this hybrid model the same page size, and the attention block
+is made as large as needed for one Gated DeltaNet state per page: "Setting attention block size to 1568 tokens to
+ensure that attention page size is >= mamba page size" (groups `[1568, 1568, 1568, 1568, 4, 1568]`). With prefix
+caching (`mamba-cache-mode: align`), the Gated DeltaNet groups take a page per block too. The memory per token is
+therefore set by the state size divided by the tokens per page.
+
+**FP8 KV cache.** An FP8 cache halves the attention page per token, so a page holds 3136 tokens, which roughly halves
+the memory per token of all groups: 1.1 GB held 42598 tokens instead of 24041. This model's sparse attention kernel
+reads the FP8 cache through Triton's e4m3 type, which needs sm_89; [`../vllm/vllm.patch`](../vllm/vllm.patch) now
+reads it as uint8 below sm_89 and converts it with bit operations (exact for all finite values). The first version
+of the conversion made prompt processing twice as slow (228 instead of 421 t/s at 16k tokens), as the kernel's
+one-warp prefill tiles spilled; a cheaper conversion (shifting the bits into FP16 positions and multiplying by 256)
+takes 15.9 instead of 14.6 ms per layer and chunk.
+
+**int4 lm_head** (0.6 -> 0.3 GiB, ~12k tokens of context with the FP8 cache), built with
+`quantize_flash_next_dense.py --lm-head-bits 4`.
+
+**Quality** in the retrieval test of [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py)
+(44 questions in a 17360-token context, with the probabilities of the top 5 tokens at every answer position), compared
+with FP8 KV and an int8 lm_head:
+
+| Variant | Score | Identical answers | Mean KL divergence | Top-token flips |
+|---|---|---|---|---|
+| FP8 KV, int8 lm_head (reference) | 39/44 | | | |
+| The same with 1024-token prefill chunks (noise floor, lossless in principle) | 39/44 | 44/44 | 0.0020 | 0 |
+| BF16 KV, int8 lm_head | 38/44 | 43/44 | 0.0056 | 1 |
+| FP8 KV, int4 lm_head | 39/44 | 42/44 | 0.0042 | 2 |
+
+Both changes cost very little: the FP8 cache's divergence from BF16 is ~3 times the noise floor, and the int4 lm_head's
+is lower than that.
+
+| Variant (all with CUDA graphs, vision tower on the CPU) | KV cache | Context | Chat | Gen. 6.4k / 32k | Prompt processing | Peak VRAM |
+|---|---|---|---|---|---|---|
+| BF16 KV, int8 lm_head (until 2026-10-13) | 1.1 GB, 24041 tokens | 20480 | 15.3 | 15.2 / - (15.2 at 16k) | 421 t/s at 16k | 7322 MiB |
+| FP8 KV (first conversion), int8 lm_head | 1.1 GB, 42598 tokens | 32768 | 15.3 | - / - (15.2 at 16k) | 228 t/s at 16k, 240 t/s at 31k | 7594 MiB (too tight) |
+| FP8 KV, int8 lm_head | 1.0 GB, 42130 tokens | 36864 | 15.3 | 15.2 / - (15.2 at 16k) | 377 / 399 t/s at 6.4k / 16k, 456 t/s at 35.5k | 7362 MiB |
+| FP8 KV, int4 lm_head | 1.3 GB, 60948 tokens | 49152 | 15.4 | - / - (15.4 at 16k) | 399 t/s at 16k, 456 t/s at 48k | 7320 MiB |
+| **FP8 KV, int4 lm_head (current)** | 1.3 GB, 63488 tokens | 57344 | 15.4 | 15.4 / 15.4 | 377 / 404 t/s at 6.4k / 32k, 455 t/s at 56k | 7342 MiB |
+| The same with 4096-token prefill chunks | 1.0 GB | 40960 | out of GPU memory on the first long prompt (7571 MiB after loading) | | | |
+
+- **Prefix cache granularity.** The prefix cache reuses whole blocks, which are now 3136 tokens instead of 1568, so
+  the end of a conversation since the last block boundary is processed again on every turn: re-sending a 9378-token
+  conversation took 9.7 s with FP8 (4.7-6.0 s with BF16), i.e. up to ~7 s, ~3.5 s on average at ~420 t/s.
+  For long conversations, the larger context is worth more.
+- **CPU KV offloading** works with the FP8 cache: after two 38.5k-token prompts had evicted a 9378-token conversation,
+  it came back in 9.8 s (246 MB loaded) instead of 24.1 s. The stored blocks take ~18 KB per token, so the 8 GiB hold
+  roughly 450k tokens.
+- **Images and videos** were unchanged (1004 prompt tokens and 15.6 s for the image, 58.2 and 78.4 s for the videos).
+- **Not done:**
+  - Prefill chunks of 4096 tokens would stream the experts half as often, but run out of GPU memory (see above).
+  - MTP: the module does not fit, and with 10 of 512 experts per token, verifying 3-4 tokens would read nearly 3-4
+    times the experts per step over PCIe for ~2 accepted tokens. llama.cpp's MTP was slower here for the same reason.
+  - int4 for the Gated DeltaNet projections would free ~1 GiB (~40k tokens), but round-to-nearest int4 has a 14 %
+    relative error on these weights, and a better (calibrated) quantization would need a GPTQ run.
+  - More experts on the GPU: the offloading works per layer (1.22 GiB each).
+  - Without prefix caching, the Gated DeltaNet groups would need no pages per block, but every turn would process
+    the whole conversation again.
+
 **Compared with llama.cpp** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md#qwen38-flash-next)): vLLM generates
-13 % faster (15.3 vs 13.6 t/s in chat, 15.2 vs 12.1 t/s at 16-36.5k tokens) and processes prompts 20 % faster at
-6.4k tokens (396 vs 328 t/s), as the GPU reads the experts over PCIe faster than the 16 cores decode llama.cpp's IQ
+13 % faster (15.4 vs 13.6 t/s in chat, 15.4 vs 12.1 t/s at 32-36.5k tokens) and processes prompts ~15 % faster at
+6.4k tokens (377 vs 328 t/s), as the GPU reads the experts over PCIe faster than the 16 cores decode llama.cpp's IQ
 types. Both run their vision encoder on the CPU: a 1280x960 image takes ~15 s until the first token with vLLM
-(scaled to 1 megapixel, 1004 tokens) and ~18 s with llama.cpp (1261 tokens), and vLLM also takes videos. llama.cpp fits
-4 times the context (81920 vs 20480), starts in 1.5 min instead of 13, and needs no re-quantized checkpoint or patched
-image.
+(scaled to 1 megapixel, 1004 tokens) and ~18 s with llama.cpp (1261 tokens), and vLLM also takes videos. llama.cpp fit
+more context (81920 vs 57344), started in 1.5 min instead of 13-23, and needed no re-quantized checkpoint or patched
+image. Its GGUF was removed on 2026-10-13 to free disk space.
 
 ## Commands
 

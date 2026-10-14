@@ -74,4 +74,14 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     (`v1/worker/gpu/mm/encoder_runner.py`) leaves the pixel values of such a model on the CPU, so that they never take
     VRAM. The separate pixel budget for videos of `vllm-mm.patch` is not needed in vLLM 0.31, which takes
     per-modality processor settings (`mm-processor-kwargs: {"max_pixels": ..., "videos_kwargs": {"max_pixels": ...}}`).
+  - FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-agx-ai`](../vllm-agx-ai)
+    (`models/qwen4_exp/nvidia/ops/qsa.py`): the sparse attention kernel reads the e4m3 cache through Triton's FP8 type,
+    which Triton does not support before sm_89 (`type fp8e4nv not supported in this architecture`). Below sm_89, the
+    cache is now read as uint8 and converted to FP16 with bit operations: the sign, exponent and mantissa bits shifted
+    into their FP16 positions give the value times 2**-8, subnormals included, so a multiplication by 256 restores it
+    (exact for all finite values). A first version with int32 operations and selects was ~25 times slower in the
+    one-warp tiles of the prefill configuration (363 instead of 14 ms per layer for a 2048-token chunk); this one takes
+    15.9 ms (BF16 cache: 14.6 ms). The cache is written by vLLM's CUDA `reshape_and_cache`, which supports FP8 on
+    Ampere. As the hybrid model's attention pages are as large as its Gated DeltaNet state pages, the FP8 cache doubles
+    the tokens per page, which roughly halves the memory per token of all cache groups.
 

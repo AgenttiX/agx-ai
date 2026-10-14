@@ -5,7 +5,8 @@
 # - Triton attention uses its split-KV kernel for speculative decoding too, and larger prefill blocks on sm_86,
 # - UVA weight offloading works for MoE models with experts in RAM on small GPUs, e.g. Qwen3.8-Flash-Next on 8 GB,
 # - native CPU KV offloading restores sliding-window models with an MTP drafter in the full-attention group (Gemma 4),
-# - Qwen3.8-Flash-Next can run its vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for image and video input.
+# - Qwen3.8-Flash-Next can run its vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for image and video input,
+# - and use an FP8 KV cache below sm_89.
 FROM vllm/vllm-openai:v0.31.0
 
 COPY vllm.patch /tmp/vllm.patch
