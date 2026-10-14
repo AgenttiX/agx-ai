@@ -7,8 +7,11 @@
 # - native CPU KV offloading restores sliding-window models with an MTP drafter in the full-attention group (Gemma 4),
 # - Qwen3.8-Flash-Next can run its vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for image and video input,
 # - and use an FP8 KV cache below sm_89.
+# It also includes the Gemma 4 checkpoint scripts (repack_gemma4_qat.py, quantize_gemma4_ct_embedding.py) as commands.
 FROM vllm/vllm-openai:v0.31.0
 
 COPY vllm.patch /tmp/vllm.patch
 RUN patch -p1 -d /usr/local/lib/python3.12/dist-packages/vllm < /tmp/vllm.patch \
     && rm /tmp/vllm.patch
+# quantize_gemma4_ct_embedding.py imports repack_gemma4_qat from its own directory.
+COPY --chmod=755 repack_gemma4_qat.py quantize_gemma4_ct_embedding.py /usr/local/bin/

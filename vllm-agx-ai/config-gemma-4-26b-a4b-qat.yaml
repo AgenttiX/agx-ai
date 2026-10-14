@@ -1,5 +1,5 @@
 # vllm serve --config for Gemma 4 26B-A4B QAT on the RTX 3070 (8 GB) of agx-ai. Benchmarks: README.md
-# Built with ../vllm-radeon-vii/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8): all linear weights bit-exact
+# Built with ../vllm/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8): all linear weights bit-exact
 # from Google's QAT Q4_0 GGUF (int4, group size 32), the lm_head int8 (round-to-nearest, group size 128), the
 # embedding fp16 (it is in RAM, see below). 14.97 GiB in total; vLLM reports 4.12 GiB of model memory on the GPU
 # with the MTP drafter.

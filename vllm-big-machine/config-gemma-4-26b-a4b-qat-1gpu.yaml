@@ -1,5 +1,5 @@
 # vllm serve --config for Gemma 4 26B-A4B QAT on one GPU: configuration 6. Benchmarks: README.md
-# Built with ../vllm-radeon-vii/repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF
+# Built with ../vllm/repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF
 # (int4, group size 32), the embedding and the lm_head int4 (round-to-nearest, group size 32), so that the model fits:
 # 14.0 GiB on the GPU.
 model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct

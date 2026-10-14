@@ -1,7 +1,7 @@
 # vllm serve --config for Gemma 4 26B-A4B QAT on both GPUs (tensor parallelism) next to the embedding model
 # (config-embedding-tp2-gemma.yaml): configuration 4. The same as config-gemma-4-26b-a4b-qat-tp2.yaml, except for
 # the memory settings. Benchmarks: README.md
-# Built with ../vllm-radeon-vii/repack_gemma4_qat.py --embed-bits 16 --lm-head-bits 8: all linear weights bit-exact
+# Built with ../vllm/repack_gemma4_qat.py --embed-bits 16 --lm-head-bits 8: all linear weights bit-exact
 # from Google's QAT Q4_0 GGUF (int4, group size 32), the embedding FP16 and the lm_head int8 (see README.md).
 model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8
 served-model-name: google/gemma-4-26b-a4b-qat

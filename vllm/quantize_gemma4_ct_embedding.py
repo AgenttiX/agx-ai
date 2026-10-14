@@ -5,42 +5,28 @@
 Google's quantization-aware training), but the embedding and the lm_head in BF16: 2.6 GiB each, 20.6 GiB on the GPU
 in total, which leaves no room for a KV cache in 21 GB. This script copies the checkpoint and quantizes the two with
 round-to-nearest (--embed-bits, --lm-head-bits; group size 32 for int4 and 128 for int8), with the functions of
-../vllm-radeon-vii/repack_gemma4_qat.py. The embedding and the lm_head stay untied, because vLLM cannot use a
+repack_gemma4_qat.py. The embedding and the lm_head stay untied, because vLLM cannot use a
 quantized embedding as the lm_head. All other tensors (the int4 linear weights, the norms and the vision tower) are
 copied unchanged. A tensor that is already quantized (e.g. the int8 lm_head of a checkpoint built by
 repack_gemma4_qat.py, given as a directory with --repo) is copied unchanged too.
 
-Run it in the vLLM image, which has torch, safetensors, huggingface_hub and compressed-tensors (see README.md).
+Included as a command in the vLLM image of this directory, which has torch, safetensors, huggingface_hub and
+compressed-tensors (see README.md). repack_gemma4_qat.py must be in the same directory.
 """
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
-import sys
 
 # The script runs in the vLLM image, which has these packages; the development environment does not have them.
 from huggingface_hub import snapshot_download  # pyrefly: ignore[missing-import]
+import repack_gemma4_qat as repack
 from safetensors import safe_open  # pyrefly: ignore[missing-import]
 from safetensors.torch import save_file  # pyrefly: ignore[missing-import]
 import torch  # pyrefly: ignore[missing-import]
 
 REPO = "google/gemma-4-31B-it-qat-w4a16-ct"
 EMBED = "model.language_model.embed_tokens"
-
-
-def load_repack_module():
-    """Import ../vllm-radeon-vii/repack_gemma4_qat.py (quant_sym, packed, group_args and group_size)."""
-    path = Path(__file__).resolve().parent.parent / "vllm-radeon-vii" / "repack_gemma4_qat.py"
-    if not path.exists():  # in a container, the script directories may be mounted side by side
-        path = Path(__file__).resolve().parent / "repack_gemma4_qat.py"
-    spec = importlib.util.spec_from_file_location("repack_gemma4_qat", path)
-    assert spec is not None, path
-    assert spec.loader is not None, path
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def main() -> None:
@@ -53,7 +39,6 @@ def main() -> None:
     parser.add_argument("--embed-bits", type=int, default=4, choices=[4, 8])
     parser.add_argument("--lm-head-bits", type=int, default=8, choices=[4, 8])
     args = parser.parse_args()
-    repack = load_repack_module()
 
     src = Path(args.repo) if Path(args.repo).is_dir() else Path(snapshot_download(args.repo))
     weights = sorted(src.glob("*.safetensors"))

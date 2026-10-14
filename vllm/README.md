@@ -85,3 +85,31 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     Ampere. As the hybrid model's attention pages are as large as its Gated DeltaNet state pages, the FP8 cache doubles
     the tokens per page, which roughly halves the memory per token of all cache groups.
 
+
+## Checkpoint scripts
+
+Gemma 4 QAT checkpoints for vLLM, built locally into `~/.cache/vllm-models` and mounted as `/models` by the Docker
+Compose configurations. The image includes both scripts as commands in `/usr/local/bin` (they run on the CPU, ~30 GB
+of RAM), e.g.:
+
+```sh
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct
+```
+
+They also run in another image with torch, safetensors, huggingface_hub and compressed-tensors, such as `vllm-gfx906`
+of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
+`-v "$PWD":/src:ro --entrypoint python3 <image> /src/repack_gemma4_qat.py`.
+
+- [`repack_gemma4_qat.py`](repack_gemma4_qat.py) builds Gemma 4 26B-A4B with all linear weights bit-exact from
+  Google's QAT Q4_0 GGUF (int4, group size 32), and the other tensors from Google's unquantized QAT checkpoint
+  (~2.5 GB of it, downloaded with HTTP range requests). The embedding and the lm_head are untied and quantized with
+  round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). The reasons are in
+  [`../vllm-radeon-vii/README.md`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09). Used by the Gemma 4 26B-A4B
+  configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-big-machine`](../vllm-big-machine),
+  [`../vllm-agx-ai`](../vllm-agx-ai) and [`../vllm-agx-z2e`](../vllm-agx-z2e).
+- [`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) quantizes only the embedding and the lm_head
+  of an existing compressed-tensors checkpoint (`--repo`: Google's `google/gemma-4-31B-it-qat-w4a16-ct` by default,
+  or a directory built by `repack_gemma4_qat.py`), with the functions of `repack_gemma4_qat.py`, and copies all other
+  tensors unchanged. Used by the Gemma 4 26B-A4B (int8 embedding) and 31B (int4 embedding and lm_head)
+  configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e) (see its README for the commands).

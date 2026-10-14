@@ -59,7 +59,7 @@ services:
       - "9932:8000"
     volumes:
       - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      # Checkpoints built locally by ../vllm-radeon-vii/repack_gemma4_qat.py
+      # Checkpoints built locally by ../vllm/repack_gemma4_qat.py
       - /home/makimika/.cache/vllm-models:/models:ro
       - vllm-cache:/root/.cache/vllm
       - ./${LLM_CONFIG:-config-qwen3.8-27b-tp2.yaml}:/etc/vllm/config.yaml:ro

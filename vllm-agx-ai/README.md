@@ -55,9 +55,9 @@ which is now also the default of the script.
 docker pull ghcr.io/agenttix/agx-ai/vllm:latest
 # Gemma 4 26B-A4B: the bit-exact QAT checkpoint with an fp16 embedding (~10 min on the CPU, ~30 GB of RAM; downloads
 # Google's Q4_0 GGUF, 15 GB, which can be deleted afterwards)
-docker run --rm --memory 40g -v "$PWD/../vllm-radeon-vii":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
-    -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest \
-    /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest \
+    --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
 docker run --rm -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub python:3-slim sh -c \
     "pip install -q 'huggingface_hub[hf_xet]' && hf download google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant"
 # Qwen3.8-Flash-Next (125 GB, must stay in the cache), then its dense layers in int8 and its lm_head in int4
@@ -83,7 +83,7 @@ volume), most of it for loading the 15 GiB checkpoint and pinning 12 GiB of it i
 
 ## Gemma 4 26B-A4B
 
-The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#gemma-4-26b-a4b-qat) (all linear
+The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09) (all linear
 weights from Google's Q4_0 GGUF), with Google's QAT MTP drafter, as in [`../vllm-agx-z2e`](../vllm-agx-z2e). It does
 not fit in 8 GB: the experts alone take 11.2 GiB.
 

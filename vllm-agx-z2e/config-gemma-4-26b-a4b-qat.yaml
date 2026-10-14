@@ -1,8 +1,8 @@
 # vllm serve --config for Gemma 4 26B-A4B QAT on the RTX 3090 of agx-z2e. Benchmarks: README.md
-# Built with ../vllm-radeon-vii/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8) and then
-# quantize_gemma4_ct_embedding.py (--embed-bits 8): all linear weights bit-exact from Google's QAT Q4_0 GGUF (int4,
-# group size 32), the embedding and the lm_head int8 (round-to-nearest, group size 128). 15.4 GiB on the GPU with the
-# MTP drafter; with an fp16 embedding, there would be ~30k tokens less context.
+# Built with ../vllm/repack_gemma4_qat.py (--embed-bits 16 --lm-head-bits 8) and then
+# ../vllm/quantize_gemma4_ct_embedding.py (--embed-bits 8): all linear weights bit-exact from Google's QAT Q4_0 GGUF
+# (int4, group size 32), the embedding and the lm_head int8 (round-to-nearest, group size 128). 15.4 GiB on the GPU
+# with the MTP drafter; with an fp16 embedding, there would be ~30k tokens less context.
 model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct-embed8-head8
 served-model-name: google/gemma-4-26b-a4b-qat
 # FP16 like the scales of the Q4_0 GGUF, which BF16 would round.

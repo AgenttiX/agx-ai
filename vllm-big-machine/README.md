@@ -63,14 +63,11 @@ uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-26B-A4B-it-qat-q
 uvx --from 'huggingface_hub[hf_xet]' hf download Qwen/Qwen3-Embedding-4B
 uvx --from 'huggingface_hub[hf_xet]' hf download Qwen/Qwen3-Embedding-0.6B
 # Gemma: the bit-exact QAT checkpoints (~10 min each on the CPU, ~30 GB of RAM), see ../vllm-radeon-vii/README.md
-cd ../vllm-radeon-vii
-docker run --rm --memory 40g -v "$PWD":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
-    -v ~/.cache/vllm-models:/out --entrypoint python3 vllm/vllm-openai:v0.31.0 \
-    /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct
-docker run --rm --memory 40g -v "$PWD":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
-    -v ~/.cache/vllm-models:/out --entrypoint python3 vllm/vllm-openai:v0.31.0 \
-    /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
-cd ../vllm-big-machine
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest \
+    --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
 # Select the configuration in .env, stop the llama.cpp server if it uses the same GPUs, and start
 docker compose -f ../llama-cpp-big-machine/docker-compose.yml down
 docker compose up -d
@@ -114,7 +111,8 @@ MTP), while the weights alone would allow ~45 t/s.
 
 All run with the Marlin kernels (`MarlinLinearKernel`, and the `MARLIN` WNA16 MoE backend for Gemma's experts,
 which handles their intermediate size of 704). Gemma runs in FP16 like the scales of the Q4_0 GGUF, which BF16 would
-round; the repacking script is shared with [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09).
+round; the repacking script [`../vllm/repack_gemma4_qat.py`](../vllm/repack_gemma4_qat.py) is shared with
+[`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09).
 NeoChen1024/gemma-4-26B-A4B-it-qat-W4A16 is the same conversion but with the embedding and the vision tower in BF16
 and Marlin padding (19.2 GB), too large here. EmbeddingGemma 2 is not supported by vLLM 0.31.
 

@@ -69,19 +69,18 @@ docker pull ghcr.io/agenttix/agx-ai/vllm:latest
 uvx --from 'huggingface_hub[hf_xet]' hf download JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB --revision mtp-int8
 # Gemma 4 26B-A4B: the bit-exact QAT checkpoint (~10 min on the CPU, ~30 GB of RAM; see ../vllm-radeon-vii/README.md),
 # then the embedding in int8
-docker run --rm --memory 40g -v "$PWD/../vllm-radeon-vii":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
-    -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest \
-    /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
-docker run --rm --memory 60g -v "$PWD/..":/src:ro -v ~/.cache/vllm-models:/out --entrypoint python3 \
-    ghcr.io/agenttix/agx-ai/vllm:latest /src/vllm-agx-z2e/quantize_gemma4_ct_embedding.py \
-    --repo /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 8 --lm-head-bits 8 \
-    --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed8-head8
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest \
+    --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
+docker run --rm --memory 60g -v ~/.cache/vllm-models:/out --entrypoint quantize_gemma4_ct_embedding.py \
+    ghcr.io/agenttix/agx-ai/vllm:latest --repo /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 \
+    --embed-bits 8 --lm-head-bits 8 --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed8-head8
 uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant
 # Gemma 4 31B: Google's compressed-tensors checkpoint (23 GB), then the embedding and the lm_head in int4 (~5 min)
 uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-31B-it-qat-w4a16-ct
-docker run --rm --memory 60g -v "$PWD/..":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
-    -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest \
-    /src/vllm-agx-z2e/quantize_gemma4_ct_embedding.py --lm-head-bits 4 --out /out/gemma-4-31B-it-qat-w4a16-ct-embed4-head4
+docker run --rm --memory 60g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
+    --entrypoint quantize_gemma4_ct_embedding.py ghcr.io/agenttix/agx-ai/vllm:latest \
+    --lm-head-bits 4 --out /out/gemma-4-31B-it-qat-w4a16-ct-embed4-head4
 uvx --from 'huggingface_hub[hf_xet]' hf download google/gemma-4-31B-it-qat-q4_0-unquantized-assistant  # MTP variant
 # Qwen3.8-Flash-Next (129 GB) and its runtime
 uvx --from 'huggingface_hub[hf_xet]' hf download albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE \
@@ -149,7 +148,7 @@ with the MTP head, without the vision tower. The other int4 checkpoints keep the
 
 ## Gemma 4 26B-A4B
 
-The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#gemma-4-26b-a4b-qat) (all linear
+The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09) (all linear
 weights from Google's Q4_0 GGUF), with Google's QAT MTP drafter. The 24 GB leave room for a better embedding than
 on the 16 GB GPUs:
 
@@ -159,21 +158,21 @@ on the 16 GB GPUs:
 | **int8 / int8 (current)** | 15.41 GiB | 4.2 GB, 173323 tokens | 163840 | 255.0 | 130.2 | 84.0 |
 
 The int8 embedding (round-to-nearest, group size 128) of
-[`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) is practically lossless and gives ~55k more
-tokens of context. With the int4 embedding and lm_head of the 16 GB GPUs, the context could be ~12k tokens larger.
-At 150k tokens of context: 69.9 t/s (1004 t/s prompt processing); llama.cpp at 163k: 103.5 t/s (2008 t/s).
-With the CPU KV offloading of the configuration (16 GiB, as for Qwen), the peak with a 16k-token context was
-20938 MiB (31B: 20948 MiB).
+[`../vllm/quantize_gemma4_ct_embedding.py`](../vllm/quantize_gemma4_ct_embedding.py) is practically lossless and gives
+~55k more tokens of context. With the int4 embedding and lm_head of the 16 GB GPUs, the context could be ~12k tokens
+larger. At 150k tokens of context: 69.9 t/s (1004 t/s prompt processing); llama.cpp at 163k: 103.5 t/s (2008 t/s). With
+the CPU KV offloading of the configuration (16 GiB, as for Qwen), the peak with a 16k-token context was 20938 MiB (31B:
+20948 MiB).
 
 ## Gemma 4 31B
 
-[`google/gemma-4-31B-it-qat-w4a16-ct`](https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct) has the linear
-weights in int4 (group size 32) but the embedding and the lm_head in BF16 (2.6 GiB each), 20.6 GiB on the GPU.
-[`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) quantizes both to int4 (with an int8 lm_head, the
-model ran out of memory while loading): 16.9 GiB on the GPU. That leaves ~3 GB for everything else, and vLLM needs
-much more KV cache for this model than llama.cpp: it reserves the sliding window and a prefill chunk for each of the 50
-sliding-window layers, and pads the KV cache of the 10 global layers (4 KV heads of 512) to the page size of the
-sliding-window layers (16 KV heads of 256).
+[`google/gemma-4-31B-it-qat-w4a16-ct`](https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct) has the linear weights
+in int4 (group size 32) but the embedding and the lm_head in BF16 (2.6 GiB each), 20.6 GiB on the GPU.
+[`../vllm/quantize_gemma4_ct_embedding.py`](../vllm/quantize_gemma4_ct_embedding.py) quantizes both to int4 (with an
+int8 lm_head, the model ran out of memory while loading): 16.9 GiB on the GPU. That leaves ~3 GB for everything else,
+and vLLM needs much more KV cache for this model than llama.cpp: it reserves the sliding window and a prefill chunk for
+each of the 50 sliding-window layers, and pads the KV cache of the 10 global layers (4 KV heads of 512) to the page size
+of the sliding-window layers (16 KV heads of 256).
 
 | Variant | KV cache | Context | Chat | Gen. 6.4k | Gen. 16k | Gen. 36.5k | Peak VRAM |
 |---|---|---|---|---|---|---|---|

@@ -13,9 +13,11 @@ quantized with round-to-nearest (--embed-bits, --lm-head-bits; group size 32 for
 fp16 versions (1.4 GiB each) do not fit. The vision tower stays fp16 (vLLM skips it with --language-model-only).
 
 The ready-made int4 checkpoints of this model on Hugging Face (e.g. cyankiwi/gemma-4-26B-A4B-it-qat-AWQ-INT4) are not
-on Google's grid: their quantizer chose other scales, so only 60-70 % of the int4 values are the same (see README.md).
+on Google's grid: their quantizer chose other scales, so only 60-70 % of the int4 values are the same (see
+../vllm-radeon-vii/README.md).
 
-Run it in the vLLM image, which has torch, numpy, safetensors, huggingface_hub and compressed-tensors (see README.md).
+Included as a command in the vLLM image of this directory, which has torch, numpy, safetensors, huggingface_hub and
+compressed-tensors (see README.md).
 """
 
 import argparse

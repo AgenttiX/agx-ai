@@ -5,6 +5,8 @@ on:
     paths:
       - "vllm/Dockerfile"
       - "vllm/vllm.patch"
+      - "vllm/repack_gemma4_qat.py"
+      - "vllm/quantize_gemma4_ct_embedding.py"
       - ".github/workflows/deploy-docker-vllm.yml"
   workflow_dispatch:
 jobs:

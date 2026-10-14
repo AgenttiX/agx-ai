@@ -1,7 +1,7 @@
 # vllm serve --config for Gemma 4 31B QAT on the RTX 3090 of agx-z2e. Benchmarks: README.md
 # Google's compressed-tensors QAT checkpoint (google/gemma-4-31B-it-qat-w4a16-ct: int4, group size 32) with the
-# embedding and the lm_head quantized to int4 by quantize_gemma4_ct_embedding.py, as the BF16 ones (5.25 GiB) do not
-# fit. 16.9 GiB on the GPU. llama.cpp is better for this model on this GPU (see README.md).
+# embedding and the lm_head quantized to int4 by ../vllm/quantize_gemma4_ct_embedding.py, as the BF16 ones (5.25 GiB)
+# do not fit. 16.9 GiB on the GPU. llama.cpp is better for this model on this GPU (see README.md).
 model: /models/gemma-4-31B-it-qat-w4a16-ct-embed4-head4
 served-model-name: google/gemma-4-31b-qat
 # Do not load the vision tower (1.1 GiB), which would not fit.

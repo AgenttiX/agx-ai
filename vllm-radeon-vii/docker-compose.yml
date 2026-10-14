@@ -29,7 +29,7 @@ services:
       - "9932:8000"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      # Checkpoints built locally by repack_gemma4_qat.py
+      # Checkpoints built locally by ../vllm/repack_gemma4_qat.py
       - /home/mika/.cache/vllm-models:/models:ro
       - vllm-cache:/root/.cache/vllm
       # Select the LLM model here

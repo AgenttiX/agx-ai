@@ -1,6 +1,6 @@
 # vllm serve --config for Gemma 4 26B-A4B QAT on the Radeon VII. Benchmarks: README.md
-# Built with repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF (int4, group size 32),
-# embedding and lm_head int4 (round-to-nearest, group size 32).
+# Built with ../vllm/repack_gemma4_qat.py: all linear weights bit-exact from Google's QAT Q4_0 GGUF (int4, group size
+# 32), embedding and lm_head int4 (round-to-nearest, group size 32).
 model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct
 served-model-name: google/gemma-4-26b-a4b-qat
 # gfx906 has no native bf16.

@@ -60,8 +60,9 @@ are at the end.
 
 ```sh
 # Gemma: build the checkpoint (downloads Google's 14.4 GB Q4_0 GGUF and ~2.5 GB of the unquantized QAT checkpoint;
-# ~10 min on the CPU and ~30 GB of RAM)
-docker run --rm -v "$PWD":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
+# ~10 min on the CPU and ~30 GB of RAM). The script is a command in the NVIDIA image of ../vllm; this image runs it
+# from ../vllm instead.
+docker run --rm -v "$PWD/../vllm":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
     -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm-gfx906:latest \
     /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct
 # Qwen: download the checkpoint (14.8 GB) into the Hugging Face cache
@@ -104,12 +105,12 @@ ggml's Q4_0 rounding (`d = max / -8`, `q = trunc(x / d + 8.5)`) applied to it re
 the GGUF is the exact QAT target. Besides, that checkpoint is 17.2 GB, with the dense MLP, the embedding and the vision
 tower in fp16, and does not fit.
 
-[`repack_gemma4_qat.py`](repack_gemma4_qat.py) therefore builds the checkpoint from Google's two QAT repositories:
-every linear weight of the language model (attention, dense MLP, experts) from the Q4_0 GGUF, and the norms,
-routers, embedding and vision tower from the unquantized QAT checkpoint (downloaded with HTTP range requests, ~2.5 GB
-of 52 GB). The embedding and the lm_head are untied, because vLLM cannot use a quantized embedding as the lm_head,
-and both are quantized to int4 with group size 32 (round-to-nearest; the GGUF has them in Q6_K). The vision tower stays
-fp16 and is not loaded (`language-model-only`).
+[`../vllm/repack_gemma4_qat.py`](../vllm/repack_gemma4_qat.py) therefore builds the checkpoint from Google's two QAT
+repositories: every linear weight of the language model (attention, dense MLP, experts) from the Q4_0 GGUF, and the
+norms, routers, embedding and vision tower from the unquantized QAT checkpoint (downloaded with HTTP range requests,
+~2.5 GB of 52 GB). The embedding and the lm_head are untied, because vLLM cannot use a quantized embedding as the
+lm_head, and both are quantized to int4 with group size 32 (round-to-nearest; the GGUF has them in Q6_K). The vision
+tower stays fp16 and is not loaded (`language-model-only`).
 
 | Variant | Size of the language model | Result |
 |---|---|---|
