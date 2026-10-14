@@ -61,8 +61,8 @@ from llama_cpp_bench_http import (
     Server,
     VllmServer,
     build_code_context,
+    connect,
     host_name,
-    is_vllm,
     pick_models,
     read_env_key,
     server_args,
@@ -342,7 +342,7 @@ def main() -> int:
     api_key = (
         args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
     )
-    server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
+    server = connect(args.url, api_key, args.timeout)
     models = server.models()
     model, _ = pick_models(models, args.model, None)
     if model is None:

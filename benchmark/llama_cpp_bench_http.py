@@ -22,6 +22,7 @@ Examples:
     ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
     ./llama_cpp_bench_http.py --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts
 
+vLLM servers are supported for the same tests, and OpenVINO Model Server (OVMS) for the embedding test.
 For the raw model speed independent of the server configuration, see ``llama_cpp_bench_container.py``.
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
@@ -138,6 +139,10 @@ class Server:
     def detokenize(self, model: str, tokens: list[int]) -> str:
         """Convert token IDs back to text."""
         return self.request("/detokenize", {"model": model, "tokens": tokens})["content"]
+
+    def truncate(self, model: str, text: str, n_tokens: int) -> str:
+        """Cut the text to its first n_tokens tokens."""
+        return self.detokenize(model, self.tokenize(model, text)[:n_tokens])
 
     def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
         """Raw completion (no chat template, so no thinking mode); returns the server's timings."""
@@ -300,13 +305,56 @@ class VllmServer(Server):
         return self.stream("/v1/chat/completions", payload)
 
 
-def is_vllm(url: str, timeout: float) -> bool:
-    """VLLM answers ``/version`` with its version; llama-server does not have that endpoint."""
+class OvmsServer(Server):
+    """The interface for OpenVINO Model Server (OVMS), for the embedding test only.
+
+    OVMS has no ``/props`` or ``/detokenize``, so prompts are cut to length at word boundaries,
+    and its version is not available over the API (give it with ``--label`` or ``--server-config``).
+    """
+
+    def props(self, model: str) -> dict[str, Any]:  # noqa: ARG002 (the same interface as Server.props)
+        """Return llama-server-like properties; OVMS does not report its version or the model arguments."""
+        return {"build_info": "OpenVINO Model Server", "total_slots": 1}
+
+    def tokenize(self, model: str, text: str) -> list[int]:
+        """Convert text to token IDs."""
+        return self.request("/v3/tokenize", {"model": model, "text": text, "add_special_tokens": False})["tokens"]
+
+    def truncate(self, model: str, text: str, n_tokens: int) -> str:
+        """Cut the text at a word boundary to at most n_tokens tokens (binary search over the word count)."""
+        words = text.split(" ")
+        low, high = 0, len(words)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if len(self.tokenize(model, " ".join(words[:mid]))) <= n_tokens:
+                low = mid
+            else:
+                high = mid - 1
+        return " ".join(words[:low])
+
+
+def get_json(url: str, timeout: float) -> Any:
+    """Fetch and decode a JSON response, or return None if the request or the decoding fails."""
     try:
-        with urllib.request.urlopen(url.rstrip("/") + "/version", timeout=timeout) as resp:
-            return "version" in json.loads(resp.read())
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read())
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
-        return False
+        return None
+
+
+def connect(url: str, api_key: str | None, timeout: float) -> Server:
+    """Return a client for the server type at the URL.
+
+    vLLM answers ``/version`` with its version, and OVMS ``/v1/config`` with the model status;
+    llama-server has neither endpoint.
+    """
+    base = url.rstrip("/")
+    version = get_json(base + "/version", timeout)
+    if isinstance(version, dict) and "version" in version:
+        return VllmServer(url, api_key, timeout)
+    if isinstance(get_json(base + "/v1/config", timeout), dict):
+        return OvmsServer(url, api_key, timeout)
+    return Server(url, api_key, timeout)
 
 
 def build_prompt(server: Server, model: str, n_tokens: int, salt: str = "") -> tuple[str, int]:
@@ -315,7 +363,7 @@ def build_prompt(server: Server, model: str, n_tokens: int, salt: str = "") -> t
     tokens = server.tokenize(model, text)
     if len(tokens) < n_tokens:
         raise SystemExit(f"Could not build a {n_tokens}-token prompt (got {len(tokens)})")
-    prompt = server.detokenize(model, tokens[:n_tokens])
+    prompt = server.truncate(model, text, n_tokens)
     return prompt, len(server.tokenize(model, prompt))
 
 
@@ -745,14 +793,12 @@ def main() -> int:
     api_key = (
         args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")
     )
-    server = (VllmServer if is_vllm(args.url, args.timeout) else Server)(args.url, api_key, args.timeout)
+    server = connect(args.url, api_key, args.timeout)
     models = server.models()
     emb_server = server
     emb_models = models
     if args.embedding_url:
-        emb_server = (VllmServer if is_vllm(args.embedding_url, args.timeout) else Server)(
-            args.embedding_url, api_key, args.timeout
-        )
+        emb_server = connect(args.embedding_url, api_key, args.timeout)
         emb_models = emb_server.models()
     chat_model, embedding_model = pick_models(models, args.model, args.embedding_model)
     if args.embedding_url:
