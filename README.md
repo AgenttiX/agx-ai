@@ -19,6 +19,7 @@
   - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU config](llama-cpp-agx-l14/README.md)
   - [ThinkPad L14 Gen 5 NPU config with OpenVINO Model Server](openvino-agx-l14/README.md)
   - [ThinkPad L14 Gen 5 NPU config for Gemma 4 E4B with a third-party server](openvino-agx-l14-npu-e4b/README.md)
+  - [ThinkPad L14 Gen 5 NPU config for EmbeddingGemma 2 with OpenVINO Model Server and a converter](openvino-agx-l14-npu-embeddinggemma2/README.md)
   - [ThinkPad T480 (Intel Core i7-8550U, NVIDIA GeForce MX150 2 GB) CPU + dGPU config](llama-cpp-agx-t480/README.md)
   - [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
 - [LM Studio](https://lmstudio.ai/)

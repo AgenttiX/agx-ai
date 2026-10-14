@@ -1,0 +1,28 @@
+# Python dependencies of the converter that exports EmbeddingGemma 2 to OpenVINO IR (see Dockerfile and convert.py).
+# Update the lock file with "uv lock" in Ubuntu 26.04 with its system Python (see README.md).
+[project]
+name = "embeddinggemma2-ov-convert"
+version = "0.1.0"
+description = "Converter of google/embeddinggemma-2 to OpenVINO IR for OpenVINO Model Server"
+# Ubuntu 26.04 includes Python 3.14.
+requires-python = "==3.14.*"
+# OpenVINO and openvino-tokenizers should match the OpenVINO version of the OVMS image in docker-compose.yml.
+dependencies = [
+    "openvino==2026.4.1",
+    "openvino-tokenizers==2026.4.1.0",
+    "torch==2.14.1",
+    "transformers==5.19.0",
+]
+
+# Only torch comes from the PyTorch CPU index, and everything else from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+# The converter is run as a script, not installed as a package.
+package = false

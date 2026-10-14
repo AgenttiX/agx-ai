@@ -1,0 +1,58 @@
+# EmbeddingGemma 2 on the NPU of the ThinkPad L14 Gen 5 with OpenVINO Model Server (OVMS). See README.md for the notes.
+services:
+  # Exports the text model to OpenVINO IR on the first start (and after updates of the converter), then exits.
+  convert:
+    image: ghcr.io/agenttix/agx-ai/embeddinggemma2-ov-convert:latest
+    container_name: embeddinggemma2-convert
+    environment:
+      # The model files are downloaded to the Hugging Face cache of the host.
+      # Only the hub directory is mounted, so that e.g. a token in ~/.cache/huggingface is not visible.
+      HF_HUB_CACHE: /hf-hub
+    # Run as the host user, so that the files in the Hugging Face cache are not owned by root.
+    user: "1000:1000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/hf-hub
+      - models:/models
+
+  ovms-embeddinggemma2:
+    image: openvino/model_server:2026.4.1-gpu
+    container_name: ovms-embeddinggemma2
+    command: [
+      "--rest_port", "8000",
+      "--model_path", "/models/embeddinggemma-2",
+      "--model_name", "google/embeddinggemma-2-npu",
+      "--task", "embeddings",
+      "--target_device", "NPU",
+      # The model has no pooling configuration for OVMS, and sentence-transformers uses mean pooling.
+      "--pooling", "MEAN",
+      # The NPU runs a static graph, so every input is padded to this length (0.16 s per input).
+      # Inputs longer than this are rejected. 1023 is the maximum for this static graph, but 5x slower,
+      # and longer lengths fail with batches of several inputs (see README.md).
+      "--max_length", "512",
+      # Compiled NPU blobs, so that later starts are faster.
+      "--cache_dir", "/models/ov_cache",
+    ]
+    depends_on:
+      convert:
+        condition: service_completed_successfully
+    devices:
+      - /dev/accel:/dev/accel
+    # /dev/accel/accel0 belongs to the host's render group, whose name does not exist in the image (getent group render).
+    group_add:
+      - "992"
+    restart: unless-stopped
+    ports:
+      - "9935:8000"
+    # The converted model and the compilation cache are writable by any user, see the Dockerfile.
+    user: "1000:1000"
+    volumes:
+      - models:/models
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  # The converted model (0.6 GB) and the NPU compilation cache (0.5 GB).
+  models:

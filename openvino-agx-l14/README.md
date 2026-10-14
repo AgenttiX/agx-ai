@@ -3,7 +3,8 @@
 OpenVINO Model Server (OVMS) for the NPU of the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Meteor Lake NPU 3720),
 serving Qwen3-8B.
 The llama.cpp server for the CPU and iGPU is in [../llama-cpp-agx-l14](../llama-cpp-agx-l14),
-and Gemma 4 E4B on the NPU in [../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b).
+Gemma 4 E4B on the NPU in [../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b),
+and EmbeddingGemma 2 on the NPU (also with OVMS) in [../openvino-agx-l14-npu-embeddinggemma2](../openvino-agx-l14-npu-embeddinggemma2).
 
 llama.cpp's OpenVINO backend compiles a static graph for the whole context, which makes it unusable on the NPU
 beyond ~512 tokens of context (see [../llama-cpp-agx-l14/README.md](../llama-cpp-agx-l14/README.md)).
