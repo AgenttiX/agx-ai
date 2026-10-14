@@ -16,6 +16,7 @@ pass: transformers' model attends within each frame (pair), like vLLM's.
 
 from collections.abc import Iterable
 import os
+from typing import Any
 
 # The module runs in the vLLM image, which has these packages; the development environment does not have them.
 import torch  # pyrefly: ignore[missing-import]
@@ -37,7 +38,7 @@ def cpu_vision_enabled() -> bool:
 class CpuVisionTower(nn.Module):
     """Drop-in replacement for vLLM's Qwen3_VisionTransformer that computes on the CPU."""
 
-    def __init__(self, vision_config) -> None:
+    def __init__(self, vision_config: Any) -> None:  # a transformers config or a mapping
         super().__init__()
         cfg_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vision_config)
         cfg_dict.pop("model_type", None)
@@ -49,9 +50,9 @@ class CpuVisionTower(nn.Module):
             model = Qwen3VLVisionModel(cfg).to(dtype=torch.float32).eval()
         # Not a registered submodule: vLLM must neither see these parameters nor move them.
         object.__setattr__(self, "_hf", model)
-        self.spatial_merge_size = cfg.spatial_merge_size
-        self.out_hidden_size = cfg.out_hidden_size
-        self.threads = int(os.environ.get(THREADS_ENV, "0")) or None
+        self.spatial_merge_size: int = cfg.spatial_merge_size
+        self.out_hidden_size: int = cfg.out_hidden_size
+        self.threads: int | None = int(os.environ.get(THREADS_ENV, "0")) or None
 
     @property
     def dtype(self) -> torch.dtype:
@@ -79,7 +80,12 @@ class CpuVisionTower(nn.Module):
             raise KeyError(f"vision tower weights missing from the checkpoint: {sorted(missing)[:5]}")
         return loaded
 
-    def forward(self, pixel_values: torch.Tensor, grid_thw=None, **kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        pixel_values: torch.Tensor,
+        grid_thw: torch.Tensor | list[list[int]] | None = None,
+        **kwargs: object,
+    ) -> torch.Tensor:
         """Image or video embeddings (merged patches) in BF16 on the GPU."""
         if grid_thw is None:
             raise ValueError("the CPU vision tower needs grid_thw")

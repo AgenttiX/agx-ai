@@ -112,7 +112,9 @@ project-includes = [
     "hostname.py",
     "open-webui",
     "structure",
-    "vllm"
+    "vllm",
+    "vllm-agx-ai",
+    "vllm-rtx3090-flash-next"
 ]
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [
