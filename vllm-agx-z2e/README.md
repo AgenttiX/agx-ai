@@ -1,15 +1,16 @@
 # vLLM on agx-z2e (RTX 3090)
 
 vLLM on the RTX 3090 of agx-z2e, as an alternative to [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) on the same GPU
-and port (9931). Only one of the two fits on the GPU at a time. [`docker-compose.yml`](docker-compose.yml) has two
-services:
+and port (9931). Only one of them fits on the GPU at a time. There are two Docker Compose configurations:
 
-- `vllm` (the default, `docker compose up -d`): Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B entirely on the GPU, with
-  the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`, CUDA 13.0, with the fixes of
-  [`../vllm/vllm.patch`](../vllm/vllm.patch)). The model is selected by commenting the config volume lines in or out.
-- `vllm-flash-next` (`docker compose stop vllm && docker compose --profile flash-next up -d vllm-flash-next`):
-  Qwen3.8-Flash-Next with most of its experts in RAM, with a third-party vLLM runtime and its vision tower on the CPU
-  for images and videos (see [Qwen3.8-Flash-Next](#qwen38-flash-next)).
+- [`docker-compose.yml`](docker-compose.yml) (`docker compose up -d`): Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B
+  entirely on the GPU, with the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`, CUDA 13.0, with the fixes
+  of [`../vllm/vllm.patch`](../vllm/vllm.patch)). The model is selected by commenting the config volume lines in or
+  out.
+- [`../vllm-flash-next-rtx3090/docker-compose.yml`](../vllm-flash-next-rtx3090/docker-compose.yml) (`docker compose
+  stop` here, then `docker compose up -d` there): Qwen3.8-Flash-Next with most of its experts in RAM, with a
+  third-party vLLM runtime and its vision tower on the CPU for images and videos (see
+  [Qwen3.8-Flash-Next](#qwen38-flash-next)).
 
 All use the API key of the llama.cpp servers. Like the llama.cpp presets, each configuration keeps vLLM at ≤ 21 GiB of
 VRAM (peaks 20804-20988 MiB with full-context prompts). The desktop used 2.7 GiB during these measurements, which
@@ -20,7 +21,7 @@ left 0.8-1.0 GiB free:
 | [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2 | int8 | 147456 | 77-86 t/s | 83 / 68 / 45 t/s | 1160 t/s at 6.4k, 450 t/s at 145k |
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
-| `vllm-flash-next` | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 26.5 t/s | 27 / 28 / 28 t/s | 1650 t/s at 6.4k, 2090 t/s at 260k |
+| [`../vllm-flash-next-rtx3090`](../vllm-flash-next-rtx3090) | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 26.5 t/s | 27 / 28 / 28 t/s | 1650 t/s at 6.4k, 2090 t/s at 260k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#results-of-the-current-presets)):
 
@@ -89,6 +90,8 @@ docker pull ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
 # Stop llama.cpp on this GPU and start vLLM
 docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
 docker compose up -d
+# Or Qwen3.8-Flash-Next instead
+docker compose stop && docker compose -f ../vllm-flash-next-rtx3090/docker-compose.yml up -d
 ```
 
 The first start compiles kernels for a few minutes; later starts take 1.5-2 min (the caches are in the `vllm-cache`
@@ -201,7 +204,7 @@ an AVX2 thread pool computes the other ("cold") experts from RAM during decode w
 over PCIe, and prefill streams all experts through the GPU. The n-gram table (FP8) is read in place from the
 checkpoint. It uses [`albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE`](https://huggingface.co/albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE)
 (Intel's AutoRound W4A16 experts and an FP8 n-gram table, 125 GB). With 68 GiB for the container (71 GiB since images and videos run on the CPU), all 23808 cold
-experts fit in its RAM arena (56 GiB). The compose file uses [`../vllm-flash-next`](../vllm-flash-next/README.md):
+experts fit in its RAM arena (56 GiB). The compose file uses [`../vllm-flash-next-rtx3090`](../vllm-flash-next-rtx3090/README.md):
 the author's [v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0)
 (the later commits of the repository, up to `10b24c2` of 2026-10-11, change only documentation) with image and video
 input, the vision tower running on the CPU so that it takes no VRAM and does not slow down text. A 1280x960 image takes
@@ -209,7 +212,7 @@ input, the vision tower running on the CPU so that it takes no VRAM and does not
 out of GPU memory. None of the fixes of
 [`../vllm/vllm.patch`](../vllm/vllm.patch) would help this model: its sparse attention has its own split-K kernels, it
 does not use the Qwen3.5/3.8 model code, and its decode is bound by the CPU. The settings are in the `environment` of
-the service in [`docker-compose.yml`](docker-compose.yml).
+the service in [`../vllm-flash-next-rtx3090/docker-compose.yml`](../vllm-flash-next-rtx3090/docker-compose.yml).
 
 | Settings | Chat | Gen. 6.4k | Gen. 32k | CPU / GPU time per decode step | Peak VRAM |
 |---|---|---|---|---|---|
@@ -232,7 +235,7 @@ the service in [`docker-compose.yml`](docker-compose.yml).
   it loads the 125 GB checkpoint and copies the cold experts into a RAM arena with transparent huge pages (only 23.6 of
   56 GiB got huge pages, as the RAM was fragmented after days of uptime).
 - The runtime's serve script had no option for `gpu-memory-utilization`, whose default (0.92) fails vLLM's startup
-  check next to the desktop; [`../vllm-flash-next`](../vllm-flash-next/README.md) adds it (0.8).
+  check next to the desktop; [`../vllm-flash-next-rtx3090`](../vllm-flash-next-rtx3090/README.md) adds it (0.8).
 
 ### Context size (2026-10-13)
 

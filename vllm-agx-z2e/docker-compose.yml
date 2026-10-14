@@ -3,10 +3,9 @@
 # The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp-radeon-vii/llama-cpp.env), so that
 # clients work with both.
 #
-# - "vllm" (the default): Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B entirely on the GPU, selected with the volume
-#   lines below. Start: docker compose up -d
-# - "vllm-flash-next": Qwen3.8-Flash-Next with its experts in RAM and computed partly on the CPU.
-#   Start: docker compose stop vllm && docker compose --profile flash-next up -d vllm-flash-next
+# Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B entirely on the GPU, selected with the volume lines below.
+# Qwen3.8-Flash-Next, with its experts in RAM, runs on the same port from
+# ../vllm-flash-next-rtx3090/docker-compose.yml.
 
 x-gpu: &gpu
   deploy:
@@ -56,80 +55,5 @@ services:
       # The first start compiles kernels for a few minutes.
       start_period: 15m
 
-  vllm-flash-next:
-    <<: *gpu
-    profiles: [flash-next]
-    # The single-RTX-3090 runtime of https://github.com/DominikBucko/qwen38-flash-next-3090 (a vLLM build with
-    # CPU expert kernels for Qwen3.8-Flash-Next) with image input, the vision tower on the CPU: ../vllm-flash-next,
-    # built by ../.github/workflows/deploy-docker-vllm-flash-next.yml. See README.md.
-    image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
-    container_name: vllm-flash-next
-    # The runtime takes the API key from VLLM_API_KEY.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - >-
-        VLLM_API_KEY="$$LLAMA_API_KEY" exec /usr/local/bin/qwen38-serve
-        /root/.cache/huggingface/hub/models--albucino--Qwen3.8-Flash-Next-W4A16-FP8PLE/snapshots/ef554143369a706525336f6b42a09094835dc077
-    env_file:
-      - ../llama-cpp-radeon-vii/llama-cpp.env
-    # Overrides of the runtime's defaults (configs/3090-64gb-128k.env of the runtime repository, see its
-    # docs/tuning.md). Benchmarks: README.md
-    environment:
-      SERVED_MODEL_NAME: Qwen/Qwen3.8-Flash-Next
-      PORT: "8000"
-      # The full trained context of 262144 tokens (the runtime's default: 135168), like llama.cpp. It fits because the
-      # token embedding is in pinned RAM (QWEN38_EMBED_UVA, -1.18 GiB, looked up over PCIe) and fewer experts stay on
-      # the GPU (see README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the context. Peak
-      # 20876 MiB with a 260000-token prompt.
-      MAX_MODEL_LEN: "262144"
-      KV_CACHE_MEMORY_BYTES: "5150000000"
-      QWEN38_EMBED_UVA: "1"
-      # Experts per layer kept on the GPU (~116 MiB of VRAM each; default 32, which needs 23.4 GB). The other ones
-      # are computed by the CPU during decode (and partly by the GPU over PCIe) and streamed to the GPU during
-      # prefill. Decode is bound by the CPU's memory bandwidth, so 14 instead of 20 cost no measurable speed.
-      QWEN38_HOT_ONLY: "14"
-      # Share of each layer's cold experts that the GPU computes during decode, at most 8 per layer
-      # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
-      # help (see README.md).
-      QWEN38_GPU_SHARE_FRAC: "0.3"
-      # Log CPU and GPU decode step times every N steps (0 = off).
-      QWEN38_CPU_EXPERTS_STATS: "0"
-      # Image and video input with the vision tower on the CPU (../vllm-flash-next/README.md): 32 threads were the
-      # fastest (6.5 s for a 1280x960 image without scaling, vs 9.7 s with 16 and 9.2 s with 64). The defaults of
-      # the image: images scaled to 1 megapixel (QWEN38_VISION_MAX_PIXELS), up to 4 per request; 1 video per
-      # request (QWEN38_VISION_MAX_VIDEOS), sampled at 2 frames per second, at most 64 frames
-      # (QWEN38_VISION_VIDEO_MAX_FRAMES) with 12 megapixels over all frames (QWEN38_VISION_VIDEO_MAX_PIXELS).
-      # QWEN38_VISION=0 serves text only.
-      QWEN38_VISION_THREADS: "32"
-    ipc: host
-    cap_add:
-      - SYS_PTRACE
-    ulimits:
-      memlock: -1
-      stack: 67108864
-    # The runtime sizes its RAM arena for the cold experts from this limit (limit - 10 GiB, at most all 23904 cold
-    # experts, 56.4 GiB). The vision tower on the CPU takes 1.7 GiB and the pinned token embedding 1.2 GiB, and a video
-    # up to ~1.5 GiB more while it is encoded, so the limit has ~4.4 GiB of headroom over the 66.6 GiB in use. The rest
-    # of the RAM is left for the desktop.
-    mem_limit: 71g
-    memswap_limit: 71g
-    ports:
-      - "9931:8000"
-    volumes:
-      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
-      # Kernel caches (Humming, Triton): the first start compiles kernels, later starts reuse them.
-      - flash-next-cache:/root/.humming
-      - flash-next-triton-cache:/root/.triton
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20m
-
 volumes:
   vllm-cache:
-  flash-next-cache:
-  flash-next-triton-cache:

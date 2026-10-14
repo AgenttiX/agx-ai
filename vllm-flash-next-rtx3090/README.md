@@ -4,14 +4,17 @@
 [DominikBucko/qwen38-flash-next-3090](https://github.com/DominikBucko/qwen38-flash-next-3090) (its
 [v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0), pinned by digest),
 with image and video input added. Built by
-[`../.github/workflows/deploy-docker-vllm-flash-next.yml`](../.github/workflows/deploy-docker-vllm-flash-next.yml);
+[`../.github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml`](../.github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml);
 locally:
 
 ```sh
 docker build -t ghcr.io/agenttix/agx-ai/vllm-flash-next:latest .
 ```
 
-Used by [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-agx-ai`](../vllm-agx-ai) runs the
+[`docker-compose.yml`](docker-compose.yml) runs it on the RTX 3090 of agx-z2e (`docker compose up -d`, after stopping
+[`../vllm-agx-z2e`](../vllm-agx-z2e) or [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) on the same GPU and port);
+its settings and the measurements behind them are in
+[`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-agx-ai`](../vllm-agx-ai) runs the
 model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner change in
 [`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
 (`--language-model-only`), although its model code supports images and videos. This image adds:
@@ -43,15 +46,14 @@ model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner 
     explicitly anyway.
 
 The CPU vision tower takes 1.7 GiB of RAM, and a video up to ~1.5 GiB more while it is encoded, so the container
-needs a few GiB more than the expert arena (see the `mem_limit` in
-[`../vllm-agx-z2e/docker-compose.yml`](../vllm-agx-z2e/docker-compose.yml)). transformers logs once at startup that
+needs a few GiB more than the expert arena (see the `mem_limit` in [`docker-compose.yml`](docker-compose.yml)). transformers logs once at startup that
 `video_max_pixels` "is not a valid argument for this processor and will be ignored"; the patch removes it before the
 processor calls, and the budget is applied (see the measurements).
 
 ## Measurements (2026-10-13, agx-z2e)
 
-RTX 3090 and Threadripper 3970X (32 cores, Zen 2), with the settings of
-[`../vllm-agx-z2e/docker-compose.yml`](../vllm-agx-z2e/docker-compose.yml):
+RTX 3090 and Threadripper 3970X (32 cores, Zen 2), with the settings of [`docker-compose.yml`](docker-compose.yml)
+at the time (20 hot experts, 135168 tokens of context):
 
 - **Vision tower on the GPU** (vLLM's own, the runtime without `--language-model-only`): 0.84 GiB of weights, which
   needed 12 instead of 20 hot experts per layer. The first 1280x960 image then ran out of GPU memory (the encoder's

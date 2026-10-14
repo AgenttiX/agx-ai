@@ -214,7 +214,7 @@ The KV cache on the GPU is described in [Context size](#context-size); MTP does 
   (15.3 t/s) were unchanged.
 - **Images and videos** run through the vision tower on the CPU (`QWEN38_VISION_DEVICE=cpu`, 16 threads; see
   [`../vllm/vllm.patch`](../vllm/vllm.patch)), ported from the agx-z2e runtime image of
-  [`../vllm-flash-next`](../vllm-flash-next/README.md): transformers' Qwen3-VL vision model in FP32, outside vLLM's
+  [`../vllm-flash-next-rtx3090`](../vllm-flash-next-rtx3090/README.md): transformers' Qwen3-VL vision model in FP32, outside vLLM's
   memory accounting, with the pixel values kept on the CPU and only the BF16 embeddings copied to the GPU. The vision
   tower takes no VRAM (peak 7360 MiB instead of 7322 MiB), and the text speed is unchanged (chat 15.4 t/s, 15.3 t/s at
   16k tokens). The sizes are limited as on agx-z2e: images to 1 megapixel (`max_pixels`), videos to 64 frames sampled
