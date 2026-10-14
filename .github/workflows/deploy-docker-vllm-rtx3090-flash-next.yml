@@ -1,15 +1,15 @@
 name: Publish vLLM Qwen3.8-Flash-Next Docker image
 # The Qwen3.8-Flash-Next runtime of DominikBucko/qwen38-flash-next-3090 with image and video input (vision tower on the CPU),
-# see ../../vllm-flash-next-rtx3090/README.md.
+# see ../../vllm-rtx3090-flash-next/README.md.
 on:
   push:
     branches: [main]
     paths:
-      - "vllm-flash-next-rtx3090/Dockerfile"
-      - "vllm-flash-next-rtx3090/cpu_vision.py"
-      - "vllm-flash-next-rtx3090/flash-next.patch"
-      - "vllm-flash-next-rtx3090/vllm-mm.patch"
-      - ".github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml"
+      - "vllm-rtx3090-flash-next/Dockerfile"
+      - "vllm-rtx3090-flash-next/cpu_vision.py"
+      - "vllm-rtx3090-flash-next/flash-next.patch"
+      - "vllm-rtx3090-flash-next/vllm-mm.patch"
+      - ".github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml"
   workflow_dispatch:
 jobs:
   push_to_registry:
@@ -53,7 +53,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
           # The Dockerfile is in a subdirectory of the repository.
-          context: "{{defaultContext}}:vllm-flash-next-rtx3090"
+          context: "{{defaultContext}}:vllm-rtx3090-flash-next"
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
           provenance: mode=max

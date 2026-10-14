@@ -465,7 +465,7 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 +The model sets mm_encoder_inputs_on_cpu, so that the encoder runner leaves the pixel values on the CPU, and only the
 +embeddings (2560 values per token in BF16) are copied to the GPU. Zen 2 has no fast BF16, so FP32 is 3.5 times as fast
 +as BF16 there; the pixel values come from the processor in FP32 anyway. The same module is used by the
-+qwen38-flash-next-3090 runtime image of ../vllm-flash-next-rtx3090.
++qwen38-flash-next-3090 runtime image of ../vllm-rtx3090-flash-next.
 +"""
 +
 +from collections.abc import Iterable

@@ -5,7 +5,7 @@
 #
 # Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B entirely on the GPU, selected with the volume lines below.
 # Qwen3.8-Flash-Next, with its experts in RAM, runs on the same port from
-# ../vllm-flash-next-rtx3090/docker-compose.yml.
+# ../vllm-rtx3090-flash-next/docker-compose.yml.
 
 x-gpu: &gpu
   deploy:

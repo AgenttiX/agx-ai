@@ -4,7 +4,7 @@
 [DominikBucko/qwen38-flash-next-3090](https://github.com/DominikBucko/qwen38-flash-next-3090) (its
 [v0.1.0 release image](https://github.com/DominikBucko/qwen38-flash-next-3090/releases/tag/v0.1.0), pinned by digest),
 with image and video input added. Built by
-[`../.github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml`](../.github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml);
+[`../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml`](../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml);
 locally:
 
 ```sh

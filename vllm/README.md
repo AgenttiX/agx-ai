@@ -67,7 +67,7 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     conversation). On the RTX 3070 of [`../vllm-agx-ai`](../vllm-agx-ai), a 26616-token conversation evicted by two
     98k-token prompts came back in 2.2 s instead of 29 s (381 MB loaded), with the same greedy answer as before.
   - Image and video input for Qwen3.8-Flash-Next (Qwen4Exp) with the vision tower on the CPU, added on 2026-10-13 for
-    [`../vllm-agx-ai`](../vllm-agx-ai), ported from [`../vllm-flash-next-rtx3090`](../vllm-flash-next-rtx3090/README.md):
+    [`../vllm-agx-ai`](../vllm-agx-ai), ported from [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md):
     `models/qwen4_exp/nvidia/cpu_vision.py` (a new file, the same module as there) runs transformers' Qwen3-VL vision
     model in FP32 on the CPU when `QWEN38_VISION_DEVICE=cpu` (threads: `QWEN38_VISION_THREADS`), the model then
     creates it instead of vLLM's vision transformer and sets `mm_encoder_inputs_on_cpu`, and the encoder runner

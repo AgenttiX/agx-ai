@@ -19,7 +19,7 @@ services:
     <<: *gpu
     # The single-RTX-3090 runtime of https://github.com/DominikBucko/qwen38-flash-next-3090 (a vLLM build with
     # CPU expert kernels for Qwen3.8-Flash-Next) with image and video input, the vision tower on the CPU: the image of
-    # this directory, built by ../.github/workflows/deploy-docker-vllm-flash-next-rtx3090.yml. See README.md.
+    # this directory, built by ../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml. See README.md.
     image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
     container_name: vllm-flash-next
     # The runtime takes the API key from VLLM_API_KEY.
