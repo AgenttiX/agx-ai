@@ -7,21 +7,21 @@ GPU at a time. The image is [`aiinfos/vllm-gfx906-mobydick`](https://github.com/
 [`vllm-gfx906.patch`](vllm-gfx906.patch)), built by
 [`../.github/workflows/deploy-docker-vllm-radeon-vii.yml`](../.github/workflows/deploy-docker-vllm-radeon-vii.yml).
 The model is selected in [`docker-compose.yml`](docker-compose.yml). There are two configurations, both entirely on
-the GPU, text only, with an int8 KV cache, prefix caching and 8 GiB of CPU KV offloading:
+the GPU, text only, with an int8 KV cache, prefix caching and 8 GiB of CPU KV offloading (2026-10-14):
 
-| Configuration | Model | Context | Chat generation | Prompt processing |
-|---|---|---|---|---|
-| [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT, int4 bit-exact with Google's Q4_0 (built locally, see below) | 34816 | ~110 t/s, 61/43/31 t/s at 6.4k/16k/32k tokens of context | ~800 t/s at 6.4k, ~340 t/s at 32k |
-| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) | Qwen3.8-27B GPTQ int4 with int4 embedding and lm_head | 30720 | ~44 t/s, 35/26/19 t/s at 6.4k/16k/28k tokens of context | ~240 t/s at 6.4k, ~135 t/s at 28k |
+| Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
+|---|---|---|---|---|---|---|---|
+| [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT, int4 bit-exact with Google's Q4_0 (built locally, see below) | 47104 | 16280 MiB of 16368 | 11.2 GiB (8 GiB of it the KV offloading) | 110 t/s, chat 106 t/s; 69/58/45 t/s at 6.4k/16k/32k tokens of context | 804/532/342 t/s at 6.4k/16k/32k, 263 t/s for 45.6k | [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) is better for this model |
+| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) | Qwen3.8-27B GPTQ int4 with int4 embedding and lm_head | 33792 | 16285 MiB of 16368 | 11.0 GiB (8 GiB of it the KV offloading) | 44 t/s, chat 43 t/s; 37/30/25 t/s at 6.4k/16k/28k | 240/179/136 t/s at 6.4k/16k/28k, 125 t/s for 32.3k | faster than llama.cpp up to ~28k tokens of context, which fits more context |
 
 **Compared with the llama.cpp presets on this GPU:**
 
-- **Gemma: llama.cpp is better.** It fits 2.5 times the context (88064), generates 1.7-2.5 times as fast at 6-36k
+- **Gemma: llama.cpp is better.** It fits 1.9 times the context (88064), generates 1.5-1.7 times as fast at 6-36k
   tokens of context (101/91/78 t/s) and processes prompts 1.6-3 times as fast. Short chats are equally fast.
-- **Qwen: vLLM is faster for short contexts, llama.cpp for long ones.** vLLM generates 45 % faster in chat (43.5 vs
-  29.9 t/s, without speculative decoding vs llama.cpp's MTP) and 23 % faster at 6.4k tokens of context, about as fast
-  at 16k, and 20 % slower at 28-30k. llama.cpp fits 1.5 times the context (47104) and processes long prompts up to
-  1.7 times as fast.
+- **Qwen: vLLM is faster for short and medium contexts, llama.cpp for long ones.** vLLM generates 45 % faster in chat
+  (43.2 vs 29.9 t/s, without speculative decoding vs llama.cpp's MTP), 31 % faster at 6.4k tokens of context, 10 %
+  faster at 16k and as fast at 28-30k (24.7 vs 24.3 t/s). llama.cpp fits 1.4 times the context (47104) and processes
+  long prompts up to 1.7 times as fast.
 
 The reasons:
 
@@ -32,8 +32,9 @@ The reasons:
    needs ~20 KiB per token for Gemma (like llama.cpp's q8_0) and ~33 KiB for Qwen (llama.cpp: 44 KiB).
 2. **Attention.** The fast custom gfx906 flash attention of the image supports only head sizes up to 256 and only an
    fp16 KV cache. Gemma 4 has global layers with head size 512, so vLLM uses Triton attention for all of its layers,
-   and an fp16 KV cache for Qwen fits only ~11k tokens. Triton attention on gfx906 slows down much more with the
-   context length than llama.cpp's flash attention.
+   and an fp16 KV cache for Qwen fits only ~11k tokens. Triton attention on gfx906 (no matrix cores) slows down much
+   more with the context length than llama.cpp's flash attention, in prompt processing above all: at 32k tokens of
+   context, Gemma's 5 global layers take ~2 s per 512-token chunk.
 3. **Speculative decoding** (MTP) does not fit next to a useful context: Qwen's MTP head is another 15-28 % faster
    (51-56 t/s in chat) but leaves 4.6-9k tokens of context, and Gemma's separate MTP drafter (0.8 GB) does not fit at
    all.
@@ -127,6 +128,50 @@ the GPU without the vision tower. Its model card reports a mean KL divergence of
 checkpoints of this model are 19-21 GB, as they keep the embedding and the lm_head (2.4 GiB each) in BF16; none of them
 fit. The `mtp-int8` revision has the MTP head in int8 (0.4 GiB instead of 0.8).
 
+## Optimizations from the other configurations (2026-10-14)
+
+The configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e), [`../vllm-agx-ai`](../vllm-agx-ai) and
+[`../vllm`](../vllm) (vLLM 0.31 on NVIDIA) found several improvements since the measurements below. Tested here:
+
+| Change | Result | Used |
+|---|---|---|
+| `hf-overrides` with `max_position_embeddings` = the context (from Gemma 4 31B on the RTX 3090) | The rotary embedding caches are no longer allocated for 262144 positions: 0.33 GiB more for the KV cache with Gemma (two caches, head sizes 256 and 512), 0.11 GiB with Qwen | yes: Gemma 34816 -> 47104 tokens of context, Qwen 30720 -> 33792, at the same peak VRAM |
+| More split-KV segments in decoding (`VLLM_TRITON_ATTN_NUM_PAR_SOFTMAX_SEGMENTS`, default 16) | See below; the image's own comment suggests 64-128 for gfx906 | yes, 128 |
+| Split-KV kernel for the verification batches of speculative decoding (the Triton fix of [`../vllm/vllm.patch`](../vllm/vllm.patch)) | Already in this image (vLLM 0.30 with the gfx906 fork's changes) for the int8 cache | - |
+| Larger query blocks in prefill (the sm_86 tuning of [`../vllm/vllm.patch`](../vllm/vllm.patch)), tuned for gfx906 | See below: faster in isolation, but not in the server | no |
+| `int4_per_token_head` KV cache (from Gemma 4 31B on the RTX 3090) | Gemma fits 81920 tokens of context, but its kernels are 2-3 times as slow on gfx906 | no |
+| Gemma's MTP drafter, Gemma's int8 embedding | Do not fit in 16 GB | no |
+
+**Split-KV segments.** With one sequence, the decode kernel runs one program per KV head and segment: with the
+default of 16 segments, 32 programs for Gemma's global layers (2 KV heads) and 64 for Qwen (4 KV heads), on 60 CUs.
+More segments fill the GPU at long contexts; the extra buffers are a few MB (+20-40 MiB at the peak). Generation
+in t/s:
+
+| Segments | Gemma chat | Gemma 6.4k / 16k / 32k | Qwen chat | Qwen 6.4k / 16k / 28k |
+|---|---|---|---|---|
+| 16 (before) | 109.6 | 60.7 / 43.1 / 30.9 | 43.5 | 34.6 / 25.6 / 19.4 |
+| 64 | 108.3 | 72.8 / 56.6 / 40.8 | 43.3 | 37.3 / 29.5 / 23.9 |
+| **128 (current)** | 105.3-105.8 | 68.9-69.3 / 57.4-57.6 / 45.0-45.1 | 43.3 | 37.0 / 30.2 / 24.8 |
+
+128 segments are 4 % slower than 16 in Gemma's short chats and 13-46 % faster from 6.4k tokens of context on.
+
+**Prefill tuning.** A microbenchmark of the Triton attention kernels with the configurations' shapes
+([`triton_attention_bench.py`](triton_attention_bench.py): one 512-token chunk at the end of the context, random
+caches) found faster launch parameters for gfx906: 32 query rows per block
+and a KV tile of 32 (the image uses 16 and 16). In isolation, Gemma's attention took 15 % less time per chunk at 32k
+tokens of context (global layers 417 -> 361 ms, sliding-window layers 6.3 -> 4.4 ms), and Qwen's 30-50 % less with
+its block size of 1552. In the server, Gemma processed a 32k prompt more slowly (308-312 instead of 342 t/s, every
+variant of the two parameters), and one of the three requests of a depth test generated no tokens; Qwen was 7-19 %
+faster (213 instead of 179 t/s at 16k), but needed 70 MiB more VRAM at the peak. The change was dropped. A larger
+query block does not help on gfx906 as it does on sm_86: without matrix cores, the kernel is limited by its
+arithmetic (~1.3 TFLOPS for Gemma's global layers), not by reading the KV cache.
+
+**int4 KV cache** (`int4_per_token_head`, with a Hadamard rotation): ~12 KB per token instead of ~27 KB for Gemma, so
+81920 tokens of context fit in about the same memory. But its kernel has no gfx906 tuning: Gemma generated 37 instead
+of 106 t/s in chat and 14 instead of 45 t/s at 32k tokens of context, processed prompts at half the speed (176 instead
+of 342 t/s at 32k), and a prompt of 80400 tokens did not finish in 15 minutes. Its split-KV kernel also does not
+handle the verification batches of speculative decoding.
+
 ## Fixes in the image
 
 [`vllm-gfx906.patch`](vllm-gfx906.patch), applied by the [`Dockerfile`](Dockerfile):
@@ -153,7 +198,7 @@ fit. The `mtp-int8` revision has the MTP head in int8 (0.4 GiB instead of 0.8).
   pointers, and the KV cache is allocated once and never freed, so the patch exempts it. The alternative,
   `enable-cumem-allocator`, makes the engine exit without an error message after loading the weights.
 
-## Memory (2026-10-09)
+## Memory (2026-10-09, before the changes of 2026-10-14)
 
 The KV cache gets what remains of the 15.98 GiB that PyTorch sees after the weights, vLLM's runtime and the
 activations. Findings, with Qwen unless noted:
@@ -198,7 +243,7 @@ the sliding-window layers (`kv-cache-dtype-skip-layers: [sliding_window]`) with 
 need 4 times the memory per token. All layers therefore use Triton with the int8 cache, ~20 KiB per token plus ~0.4 GiB
 for the sliding windows.
 
-## Context size (2026-10-09)
+## Context size (2026-10-09, before the changes of 2026-10-14)
 
 Each configuration was started with `kv-cache-memory-bytes` and `max-model-len` set to the largest context that the
 KV cache holds, and then stress-tested with the full benchmark below, including a prompt of ctx-size - 1500 tokens;
@@ -215,7 +260,7 @@ Both configurations have ~80 MiB of headroom at the peak, like the llama.cpp pre
 of memory, lower `kv-cache-memory-bytes` and `max-model-len` together (~2.9k tokens per 0.1 GB for Qwen, ~5k for
 Gemma). Before the chunking fix, which leaves Qwen's 340 MiB MLP scratch buffer unchunked, Qwen fit 40960 tokens.
 
-## Speed (2026-10-09)
+## Speed (2026-10-09, before the changes of 2026-10-14)
 
 The current configurations, measured with the full command below (Gemma in the production container, Qwen on a test
 server with the same image, configuration and environment), with the llama.cpp presets for comparison (from
@@ -286,15 +331,16 @@ vs 111.5 t/s, the depth tests within 1 %). The offloading takes no GPU memory an
 cd ../benchmark
 # Serving speed: generation, a prompt of ctx-size - 1500 tokens, chat, depth
 ./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
-    --tests generation prompt chat depth --prompt-tokens 33300 --depth 6400 16000 32000 --repeat 1 --chat-n-predict 256 \
+    --tests generation prompt chat depth --prompt-tokens 45600 --depth 6400 16000 32000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # The same for Qwen (config-qwen3.8-27b.yaml)
 ./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
-    --tests generation prompt chat depth --prompt-tokens 29200 --depth 6400 16000 28000 --repeat 1 --chat-n-predict 256 \
+    --tests generation prompt chat depth --prompt-tokens 32300 --depth 6400 16000 28000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (stop the production container first)
 docker compose -f ../vllm-radeon-vii/docker-compose.yml stop
-DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
+GPUS=amd DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0 \
+    -e VLLM_TRITON_ATTN_NUM_PAR_SOFTMAX_SEGMENTS=128" \
     ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
     ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \

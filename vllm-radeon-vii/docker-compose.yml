@@ -18,6 +18,9 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       # The V2 model runner crashes with KV offloading (memory fault in _gather_block_tables_kernel).
       - VLLM_USE_V2_MODEL_RUNNER=0
+      # Split the KV cache over 128 programs per KV head in single-token decoding (default 16), so that the few KV
+      # heads of a single sequence fill the 60 CUs: 23-46 % faster generation at 16-32k tokens of context.
+      - VLLM_TRITON_ATTN_NUM_PAR_SOFTMAX_SEGMENTS=128
       # Keep the Triton and Inductor caches, so that a restart takes ~2 min instead of ~6 min.
       - TRITON_CACHE_DIR=/root/.cache/vllm/triton
       - TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/inductor

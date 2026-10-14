@@ -114,6 +114,7 @@ project-includes = [
     "structure",
     "vllm",
     "vllm-agx-ai",
+    "vllm-radeon-vii",
     "vllm-rtx3090-flash-next"
 ]
 # The scripts are not installed as packages, so their directories have to be added as import roots.

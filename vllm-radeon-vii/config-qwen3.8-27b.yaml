@@ -8,11 +8,14 @@ served-model-name: Qwen/Qwen3.8-27B
 dtype: float16
 # Do not load the vision tower (0.9 GiB), which would leave little room for the KV cache.
 language-model-only: true
-# The maximum with the KV cache below. Peak 16286 MiB of 16368 in the stress test (a 29200-token prompt).
-max-model-len: 30720
+# The rotary embedding cache is allocated for max_position_embeddings (262144 tokens); limiting it to the context frees
+# 0.11 GiB for the KV cache, ~3k tokens.
+hf-overrides: {"text_config": {"max_position_embeddings": 33792}}
+# The maximum with the KV cache below. Peak 16285 MiB of 16368 in the stress test (a 32300-token prompt).
+max-model-len: 33792
 # Set explicitly instead of gpu-memory-utilization, whose profiling leaves ~0.8 GiB unused on this GPU.
 # 0.32 GiB of it is the recurrent state of the 48 Gated DeltaNet layers, the rest ~33 KiB per token.
-kv-cache-memory-bytes: 1400000000
+kv-cache-memory-bytes: 1520000000
 # The custom gfx906 flash attention supports only an fp16 KV cache, which allows only ~11k tokens of context.
 # int8 with a scale per token and head (the format closest to llama.cpp's q8_0) needs the Triton attention, which is
 # ~8 % slower at 6.4k tokens of context and faster in short chats (see README.md).
@@ -35,7 +38,8 @@ tool-call-parser: qwen3_coder
 # Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as recommended by Qwen.
 
 # MTP (speculative decoding with the model's own MTP head) is 15-18 % faster, but the MTP head and the recurrent
-# states of the drafted positions leave room for much less context (see README.md). With one drafted token:
+# states of the drafted positions leave room for much less context (see README.md). With one drafted token
+# (measured before the hf-overrides above, which would allow ~3k tokens more):
 # max-model-len: 9216
 # kv-cache-memory-bytes: 900000000
 # compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [2]}

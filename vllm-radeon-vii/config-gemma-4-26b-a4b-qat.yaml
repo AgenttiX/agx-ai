@@ -7,12 +7,16 @@ served-model-name: google/gemma-4-26b-a4b-qat
 dtype: float16
 # Do not load the vision tower (1.1 GiB in fp16), which would leave no room for the KV cache.
 language-model-only: true
-# The maximum with the KV cache below. Peak 16263 MiB of 16368 in the stress test (a 33300-token prompt).
-max-model-len: 34816
+# The rotary embedding caches are allocated for max_position_embeddings (262144 tokens: 0.38 GiB for the head sizes
+# 256 and 512); limiting it to the context frees 0.33 GiB for the KV cache, ~12k tokens.
+hf-overrides: {"text_config": {"max_position_embeddings": 47104}}
+# The maximum with the KV cache below. Peak 16280 MiB of 16368 in the stress test (a 45600-token prompt).
+max-model-len: 47104
 # Set explicitly instead of gpu-memory-utilization, whose profiling leaves ~0.8 GiB unused on this GPU.
-kv-cache-memory-bytes: 950000000
+kv-cache-memory-bytes: 1280000000
 # vLLM uses Triton attention for Gemma 4 (head sizes 256 and 512), which supports quantized KV caches.
 # int8 with a scale per token and head is the format closest to llama.cpp's q8_0. fp16 would halve the context.
+# int4_per_token_head fits 81920 tokens, but its kernels are 2-3 times as slow on gfx906 (see README.md).
 kv-cache-dtype: int8_per_token_head
 # One request at a time, like parallel = 1 of the llama.cpp preset: every additional sequence needs its own
 # sliding-window KV cache (~0.2 GiB).

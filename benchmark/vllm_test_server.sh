@@ -12,7 +12,8 @@
 # CACHE_VOLUME, default that of ../vllm-radeon-vii) are mounted like in the compose files.
 # Extra docker arguments: DOCKER_ARGS="-e VAR=..."
 # On NVIDIA (nvidia-smi exists), the GPUs are given with --gpus "device=$GPUS" (default: all), e.g. GPUS=1.
-# GPUS=none gives no GPUs, for the CPU image of vLLM.
+# GPUS=none gives no GPUs, for the CPU image of vLLM. GPUS=amd gives the AMD GPUs even when nvidia-smi exists (a
+# machine with both, e.g. agx-z2e with the Radeon VII and the RTX 3090).
 # Container name: NAME=... (default vllm-test). Stop the production container first, and remove this one afterwards:
 #   docker rm -f vllm-test
 #
@@ -42,7 +43,7 @@ args=(--name "$name" -p "$port:8000" --ipc host
       -v "$config:/etc/vllm/config.yaml:ro")
 if [[ ${GPUS:-} == none ]]; then
     :  # a CPU image: with the GPUs (and libcuda), Triton would select its CUDA driver instead of the CPU one
-elif command -v nvidia-smi >/dev/null; then
+elif [[ ${GPUS:-} != amd ]] && command -v nvidia-smi >/dev/null; then
     args+=(--gpus "\"device=${GPUS:-all}\"")
 else
     args+=(--device /dev/dri --group-add video)
