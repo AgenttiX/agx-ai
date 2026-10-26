@@ -15,7 +15,7 @@ Benchmarks a *running* `llama-server` through its API, so the numbers reflect th
 router presets, slot count, KV cache, speculative decoding, tensor split. Needs only Python 3.11+.
 
 ```sh
-./llama_cpp_bench_http.py --env-file ../llama-cpp-big-machine/llama-cpp.env --label "what was changed"
+./llama_cpp_bench_http.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "what was changed"
 ./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --no-embedding     # another server
 ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192  # heavier settings
 ./llama_cpp_bench_http.py --mixed   # embedding batches concurrently with the concurrent requests (PaperQA2-like load)
@@ -75,7 +75,7 @@ The vLLM counterpart of `llama_cpp_test_server.sh` below: starts a container nam
 YAML file for `vllm serve --config`, mounted like in [`../vllm-radeon-vii`](../vllm-radeon-vii), and waits until it
 answers. Extra `vllm serve` arguments go after `--`, extra docker arguments in `DOCKER_ARGS`. On NVIDIA, the GPUs are
 selected with `GPUS` (default all; `GPUS=none` for the CPU image), and the compile cache volume with `CACHE_VOLUME`
-(see [`../vllm-big-machine/README.md`](../vllm-big-machine/README.md#commands)).
+(see [`../vllm-rtx-a4000/README.md`](../vllm-rtx-a4000/README.md#commands)).
 
 ```sh
 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
@@ -111,8 +111,8 @@ Which embedding model finds the right excerpts for PaperQA2? An LLM writes one q
 corpus (once), then each embedding model ranks all chunks for each question, and the script reports how often the
 source chunk is among the top 1, 5 and 10 (and the MRR). The results go to `results/<host>-embedding.jsonl`. Works with
 llama.cpp and vLLM servers; the commands, including exporting the chunks of a PaperQA2 index, are in
-[`../vllm-big-machine/README.md`](../vllm-big-machine/README.md#commands), and the results for the PaperQA2 corpus in
-[its embedding section](../vllm-big-machine/README.md#embedding-models).
+[`../vllm-rtx-a4000/README.md`](../vllm-rtx-a4000/README.md#commands), and the results for the PaperQA2 corpus in
+[its embedding section](../vllm-rtx-a4000/README.md#embedding-models).
 
 ## `llama_cpp_bench_container.py`: llama.cpp's own `llama bench` in the running container
 
@@ -123,7 +123,7 @@ first (they reload on the next request), runs the benchmark with `docker exec`, 
 appends JSON lines to `results/<host>-llama-bench.jsonl`.
 
 ```sh
-./llama_cpp_bench_container.py --env-file ../llama-cpp-big-machine/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
+./llama_cpp_bench_container.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
 ./llama_cpp_bench_container.py --container llama-cpp-gpu --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
 ./llama_cpp_bench_container.py --help   # all options
 ```
@@ -221,7 +221,7 @@ benchmark, remind Mika of this; `docker ps` on the benchmarked machine will not 
 
 | Date | Host | Setup | Generation | Prompt | 4 concurrent | Embeddings |
 |---|---|---|---|---|---|---|
-| 2026-09-21 | Big Machine (2x RTX A4000) | Qwen3.8-27B UD-Q4_K_M, tensor split, MTP, ctx 55296, 4 slots; Qwen3-Embedding-8B Q6_K, 1 slot | 62 tokens/s (draft acceptance 67 %) | 1016 tokens/s (4096 tokens) | 86 tokens/s in total, 39-42 per request | 2220 tokens/s |
+| 2026-09-21 | 2x RTX A4000 | Qwen3.8-27B UD-Q4_K_M, tensor split, MTP, ctx 55296, 4 slots; Qwen3-Embedding-8B Q6_K, 1 slot | 62 tokens/s (draft acceptance 67 %) | 1016 tokens/s (4096 tokens) | 86 tokens/s in total, 39-42 per request | 2220 tokens/s |
 
 Peak GPU memory in that run: 15619 MiB and 15482 MiB of 16376 MiB.
 

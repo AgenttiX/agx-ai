@@ -13,7 +13,7 @@
   - [RTX 3070 (8 GB) + EPYC config of agx-ai (Gemma 4 26B-A4B on the GPU and the CPU, Qwen3.8-Flash-Next with experts in RAM), with the GPU power limit and measurements](llama-cpp-rtx3070/README.md)
   - [RTX 3090 config of agx-z2e, with KV cache, context size and MTP measurements, and Qwen3.8-Flash-Next with experts in RAM](llama-cpp-agx-z2e/README.md)
   - [Custom container for Radeon VII with ROCm, with measurements](llama-cpp-radeon-vii/README.md)
-  - [Dual RTX A4000 configs for PaperQA2 RAG (Qwen3.8-27B, Gemma 4 26B-A4B on 2 GPUs or 1 GPU + CPU), with VRAM, context size and speed measurements](llama-cpp-big-machine/README.md)
+  - [Dual RTX A4000 configs for PaperQA2 RAG (Qwen3.8-27B, Gemma 4 26B-A4B on 2 GPUs or 1 GPU + CPU), with VRAM, context size and speed measurements](llama-cpp-rtx-a4000/README.md)
   - [NVIDIA T550 Laptop GPU (4 GB) config for Docker Desktop on Windows](llama-cpp-t550/README.md)
   - [Scripts for running llama.cpp natively on Windows](llama-cpp-windows/README.md)
   - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU config](llama-cpp-agx-l14/README.md)
@@ -30,7 +30,7 @@
   - [RTX 3090 configs of agx-z2e (Qwen3.8-27B, Gemma 4 26B-A4B and 31B, Qwen3.8-Flash-Next with experts in RAM and its vision tower on the CPU), with a Triton attention fix for MTP and a comparison to llama.cpp](vllm-agx-z2e/README.md)
   - [RTX 3090 config of agx-z2e for agentic coding with HyperQwen (Qwen3.8-27B with the DFlash2 drafter and CPU KV offloading), with a comparison of its modes and of the combinations with this repository's optimizations](vllm-rtx3090-hyperqwen/README.md)
   - [RTX 3070 (8 GB) configs of agx-ai (Gemma 4 26B-A4B and Qwen3.8-Flash-Next with their experts in RAM over UVA), with fixes for UVA weight offloading, a re-quantized Flash-Next checkpoint and a comparison to llama.cpp](vllm-rtx3070/README.md)
-  - [Dual RTX A4000 configs for PaperQA2 RAG: 8 LLM and embedding model configurations on 1-2 GPUs and the CPU, an embedding model retrieval test, and a PaperQA2 comparison to llama.cpp](vllm-big-machine/README.md)
+  - [Dual RTX A4000 configs for PaperQA2 RAG: 8 LLM and embedding model configurations on 1-2 GPUs and the CPU, an embedding model retrieval test, and a PaperQA2 comparison to llama.cpp](vllm-rtx-a4000/README.md)
 - [Open Terminal](https://github.com/open-webui/open-terminal)
   - Docker container for LLM terminal access
 - [Open WebUI](https://openwebui.com/)

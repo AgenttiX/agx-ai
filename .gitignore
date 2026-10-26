@@ -1,6 +1,6 @@
 *.env
 # The configuration selection of vLLM, which has no secrets
-!vllm-big-machine/.env
+!vllm-rtx-a4000/.env
 *.pdf
 *.png
 *.rmp

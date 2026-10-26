@@ -14,13 +14,13 @@ This script measures how often that happens for a given embedding model, on the 
    as they are, without an instruction prefix, as PaperQA2 does.
 
 The input chunks are a JSON lines file with a ``text`` field per line. For a PaperQA2 index, they can be exported from
-the pickled documents in ``<index>/docs/`` (see ``../vllm-big-machine/README.md``).
+the pickled documents in ``<index>/docs/`` (see ``../vllm-rtx-a4000/README.md``).
 
 Examples:
     ./embedding_retrieval_eval.py questions --chunks chunks.jsonl --out questions.jsonl --n 200 \
-        --url http://localhost:9932 --env-file ../llama-cpp-big-machine/llama-cpp.env
+        --url http://localhost:9932 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env
     ./embedding_retrieval_eval.py eval --chunks chunks.jsonl --questions questions.jsonl \
-        --url http://localhost:9934 --env-file ../llama-cpp-big-machine/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
+        --url http://localhost:9934 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
 
 The results are appended to ``results/<hostname>-embedding.jsonl``.
 """

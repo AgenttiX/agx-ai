@@ -1,11 +1,11 @@
-# vLLM for PaperQA2 on the Big Machine (2 x RTX A4000, 16 GB each). See README.md for the configurations and results.
+# vLLM for PaperQA2 on 2x RTX A4000 (16 GB each). See README.md for the configurations and results.
 # The configuration (which models run where) is selected in .env, so that a plain "docker compose up -d" (which
 # ../../phd-research/phd_code/tools/paperqa_ask.py also runs) starts it:
 # - COMPOSE_PROFILES: llm, embedding (GPU) and/or embedding-cpu
 # - LLM_CONFIG, LLM_GPUS: the vllm serve --config file of the LLM and its GPUs
 # - EMBEDDING_CONFIG, EMBEDDING_GPUS: the same for the embedding model on the GPU
 # vLLM serves one model per server: the LLM is on port 9932 and the embedding model on port 9934, both with the
-# API key of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp-big-machine/llama-cpp.env), so that clients work
+# API key of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp-rtx-a4000/llama-cpp.env), so that clients work
 # with both.
 
 x-vllm: &vllm
@@ -15,7 +15,7 @@ x-vllm: &vllm
   # The API key is that of the llama.cpp server, so that clients work with both.
   entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
   env_file:
-    - ../llama-cpp-big-machine/llama-cpp.env
+    - ../llama-cpp-rtx-a4000/llama-cpp.env
   ipc: host
   restart: unless-stopped
   healthcheck:
@@ -87,7 +87,7 @@ services:
     profiles: [embedding-cpu]
     entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
     env_file:
-      - ../llama-cpp-big-machine/llama-cpp.env
+      - ../llama-cpp-rtx-a4000/llama-cpp.env
     environment:
       HF_HUB_OFFLINE: "1"
       # The machine runs other users' simulations (one thread each), so the threads are not pinned to cores

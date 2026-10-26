@@ -63,7 +63,7 @@ services:
     depends_on:
       - litellm-claude
       - litellm-db
-      - ssh-big-machine
+      - ssh-rtx-a4000
     healthcheck:
       test:
         - CMD-SHELL
@@ -142,7 +142,7 @@ services:
       - ./open-webui/data:/app/backend/data
     depends_on:
       - litellm
-  ssh-big-machine:
+  ssh-rtx-a4000:
     build: ./ssh
     command: ["-N", "-F", "/ssh/config", "-L", "0.0.0.0:9931:127.0.0.1:9931", "remote"]
     restart: unless-stopped

@@ -24,7 +24,7 @@ on the same GGUF. The running server's models are still unloaded first if the se
 container instead if it has other models on the GPU.
 
 Examples (arguments after ``--`` go to ``llama bench``; match the server preset's device flags for comparability):
-    ./llama_cpp_bench_container.py --env-file ../llama-cpp-big-machine/llama-cpp.env --label "UD-Q4_K_M" \\
+    ./llama_cpp_bench_container.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "UD-Q4_K_M" \\
         -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
     ./llama_cpp_bench_container.py --container llama-cpp-gpu \\
         --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048

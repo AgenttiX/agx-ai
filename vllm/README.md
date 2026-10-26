@@ -8,7 +8,7 @@ locally:
 docker build -t ghcr.io/agenttix/agx-ai/vllm:latest .
 ```
 
-Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vllm-agx-z2e) and
+Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-agx-z2e`](../vllm-agx-z2e) and
 [`../vllm-rtx3070`](../vllm-rtx3070). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
@@ -23,7 +23,7 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     rejects for all KV connectors, because RDMA connectors register GPU memory that the VMM allocator could remap.
     The native offloading copies with device pointers, and the KV cache is allocated once and never freed. The
     alternative, `enable-cumem-allocator`, works on CUDA but needs more memory: the single-GPU Gemma 4 26B-A4B of
-    [`../vllm-big-machine`](../vllm-big-machine) ran out of it.
+    [`../vllm-rtx-a4000`](../vllm-rtx-a4000) ran out of it.
   - Triton attention (`triton_unified_attention.py`), added on 2026-10-12 and measured on the RTX 3090 of
     [`../vllm-agx-z2e`](../vllm-agx-z2e) with Qwen3.8-27B, an int8 KV cache and MTP:
     - The split-KV ("3D") kernel is also used for the verification batches of speculative decoding (up to 8 query
@@ -118,7 +118,7 @@ of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
   (~2.5 GB of it, downloaded with HTTP range requests). The embedding and the lm_head are untied and quantized with
   round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). The reasons are in
   [`../vllm-radeon-vii/README.md`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09). Used by the Gemma 4 26B-A4B
-  configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-big-machine`](../vllm-big-machine),
+  configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-rtx-a4000`](../vllm-rtx-a4000),
   [`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-agx-z2e`](../vllm-agx-z2e).
 - [`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) quantizes only the embedding and the lm_head
   of an existing compressed-tensors checkpoint (`--repo`: Google's `google/gemma-4-31B-it-qat-w4a16-ct` by default,

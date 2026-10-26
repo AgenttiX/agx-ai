@@ -1,7 +1,7 @@
-# vLLM on the Big Machine
+# vLLM on 2x RTX A4000
 
-vLLM for [PaperQA2](https://github.com/Future-House/paper-qa) RAG on the Big Machine (2 x RTX A4000, 16 GB each),
-as an alternative to [`../llama-cpp-big-machine`](../llama-cpp-big-machine). The LLM is served on port 9932 and the
+vLLM for [PaperQA2](https://github.com/Future-House/paper-qa) RAG on a workstation with 2x RTX A4000 (16 GB each),
+as an alternative to [`../llama-cpp-rtx-a4000`](../llama-cpp-rtx-a4000). The LLM is served on port 9932 and the
 embedding model on port 9934, with the API key of the llama.cpp server, so both can run at the same time on different
 GPUs. [`../../phd-research/phd_code/tools/paperqa_ask.py`](../../phd-research/phd_code/tools/paperqa_ask.py) uses
 them with `PAPERQA_BACKEND=vllm`.
@@ -69,7 +69,7 @@ docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingfac
     --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest \
     --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
 # Select the configuration in .env, stop the llama.cpp server if it uses the same GPUs, and start
-docker compose -f ../llama-cpp-big-machine/docker-compose.yml down
+docker compose -f ../llama-cpp-rtx-a4000/docker-compose.yml down
 docker compose up -d
 ```
 
@@ -247,7 +247,7 @@ Findings:
 
 ## Comparison with llama.cpp
 
-The llama.cpp presets of [`../llama-cpp-big-machine`](../llama-cpp-big-machine) on the same machine (build b11541,
+The llama.cpp presets of [`../llama-cpp-rtx-a4000`](../llama-cpp-rtx-a4000) on the same machine (build b11541,
 see its README), with the same benchmark and the same PaperQA2 questions:
 
 | | llama.cpp | vLLM |
@@ -316,17 +316,17 @@ at long contexts), or for switching between many models on one port.
 cd ../benchmark
 # Serving speed of the LLM, with the embedding server (--mixed: embedding batches during the concurrent requests)
 ./llama_cpp_bench_http.py --url http://localhost:9932 --embedding-url http://localhost:9934 \
-    --env-file ../llama-cpp-big-machine/llama-cpp.env --tests generation prompt concurrency embedding chat depth \
+    --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --tests generation prompt concurrency embedding chat depth \
     --prompt-tokens 16000 --concurrency 1 4 8 --concurrent-prompt-tokens 8000 --depth 6400 32000 --repeat 1 \
-    --chat-n-predict 256 --mixed --server-config ../vllm-big-machine/config-qwen3.8-27b-tp2.yaml --label "..."
+    --chat-n-predict 256 --mixed --server-config ../vllm-rtx-a4000/config-qwen3.8-27b-tp2.yaml --label "..."
 # A configuration variant on a test server (port 9933); stop the production containers first
-CACHE_VOLUME=vllm-big-machine_vllm-cache GPUS=0,1 DOCKER_ARGS="--memory 40g -e NCCL_P2P_DISABLE=1 \
+CACHE_VOLUME=vllm-rtx-a4000_vllm-cache GPUS=0,1 DOCKER_ARGS="--memory 40g -e NCCL_P2P_DISABLE=1 \
     -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" ./vllm_test_server.sh \
-    ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp-big-machine/llama-cpp.env
+    ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp-rtx-a4000/llama-cpp.env
 # The CPU image (no GPUs, see docker-compose.yml)
 GPUS=none NAME=vllm-cpu DOCKER_ARGS="--cpus 16 -e VLLM_CPU_OMP_THREADS_BIND=nobind -e OMP_NUM_THREADS=16" \
-    ./vllm_test_server.sh vllm/vllm-openai-cpu:v0.31.0 ../vllm-big-machine/config-embedding-cpu.yaml \
-    ../llama-cpp-big-machine/llama-cpp.env 9935
+    ./vllm_test_server.sh vllm/vllm-openai-cpu:v0.31.0 ../vllm-rtx-a4000/config-embedding-cpu.yaml \
+    ../llama-cpp-rtx-a4000/llama-cpp.env 9935
 # Embedding retrieval test: export the chunks of a PaperQA2 index, write the questions once, then test each model
 cd ../../phd-research && .venv/bin/python -c 'import glob, json, pickle, zlib, pathlib
 for f in sorted(glob.glob("literature/index/pqa_index_*/docs/*")):
@@ -336,7 +336,7 @@ for f in sorted(glob.glob("literature/index/pqa_index_*/docs/*")):
     for t in pickle.loads(d).texts: print(json.dumps({"name": t.name, "text": t.text}))' > /tmp/chunks.jsonl
 cd ../agx-ai/benchmark
 uv run ./embedding_retrieval_eval.py questions --chunks /tmp/chunks.jsonl --out /tmp/questions.jsonl --n 300 \
-    --url http://localhost:9932 --env-file ../llama-cpp-big-machine/llama-cpp.env --concurrency 8
+    --url http://localhost:9932 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --concurrency 8
 uv run ./embedding_retrieval_eval.py eval --chunks /tmp/chunks.jsonl --questions /tmp/questions.jsonl \
-    --url http://localhost:9934 --env-file ../llama-cpp-big-machine/llama-cpp.env --label "..."
+    --url http://localhost:9934 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "..."
 ```

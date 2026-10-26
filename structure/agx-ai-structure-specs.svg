@@ -71,7 +71,7 @@
 <circle cx="874" cy="354" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
 <path d="M882,354 L898.8,354 M894,354 L894,360.8 M889.2,354 L889.2,359.2" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
 <text x="914" y="351" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH tunnel</text>
-<text x="914" y="370" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">ssh-big-machine</text>
+<text x="914" y="370" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">ssh-rtx-a4000</text>
 <rect x="1160" y="64" width="410" height="62" rx="10" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
 <use href="#logo-claude-symbol" x="1172" y="77" width="36" height="36"/>
 <text x="1220" y="92" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Claude</text>
@@ -80,7 +80,7 @@
 <circle cx="1184" cy="181.333" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
 <path d="M1192,181.333 L1208.8,181.333 M1204,181.333 L1204,188.133 M1199.2,181.333 L1199.2,186.533" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
 <text x="1224" y="178.333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH jump host</text>
-<text x="1224" y="197.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">to the network of the Big Machine</text>
+<text x="1224" y="197.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">to the network of the RTX A4000 server</text>
 <rect x="24" y="269" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
 <use href="#logo-tavily" x="34" y="275" width="24" height="24"/>
 <text x="68" y="293" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Tavily</text>
@@ -240,7 +240,7 @@
 <circle cx="1514" cy="614" r="3.2" fill="#ff8236"/>
 <rect x="1440" y="521" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
 <use href="#logo-ubuntu" x="1446" y="551.5" width="46" height="46"/>
-<text x="1452" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Big Machine</text>
+<text x="1452" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">RTX A4000 server</text>
 <text x="1452" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper PRO 3975WX</text>
 <text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">192 GB RAM</text>
 <text x="1452" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>

@@ -1,4 +1,4 @@
-# llama.cpp router server for PaperQA2 on the Big Machine (2x RTX A4000, 16 GB each).
+# llama.cpp router server for PaperQA2 on 2x RTX A4000 (16 GB each).
 # Models and their settings are in the preset-*.ini files (selected below), server-wide settings in config.ini,
 # and the VRAM, context size and speed notes in README.md.
 services:
@@ -13,7 +13,7 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       # The image sets LLAMA_ARG_PORT=8080 (since ~b11500), which overrides the port of config.ini.
       - LLAMA_ARG_PORT=9931
-      # Peer-to-peer copies between the GPUs return corrupted data on this machine (../vllm-big-machine/README.md).
+      # Peer-to-peer copies between the GPUs return corrupted data on this machine (../vllm-rtx-a4000/README.md).
       # Since ~b11500, the tensor split reduces with NCCL, which fails with "unhandled cuda error" in ncclGroupEnd
       # unless it communicates through host memory.
       - NCCL_P2P_DISABLE=1

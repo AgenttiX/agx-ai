@@ -421,9 +421,9 @@ def build(specs: bool) -> str:
                 # (depth test); benchmark/results/agx-ai.jsonl
                 [(gemma_moe, "55", "1547"), ("Qwen3.8-Flash-Next", "15.5", "377")], ["proxmox.svg", "ubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, experts in RAM")]),
-        Machine("server", 1452, spec("Big Machine"),
+        Machine("server", 1452, spec("RTX A4000 server"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
-                # vllm-big-machine/README.md, configurations 3 (Qwen3.8-27B) and 2 (Gemma 4 26B-A4B);
+                # vllm-rtx-a4000/README.md, configurations 3 (Qwen3.8-27B) and 2 (Gemma 4 26B-A4B);
                 # benchmark/results/big-machine.jsonl: 4096-token prompt (Qwen), 6.4k-token prompt (Gemma, depth test)
                 [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "65", "1495"), (gemma_moe, "254", "4760"),
                  ("Qwen3-Embedding-0.6B", "", "")],
@@ -491,14 +491,15 @@ def build(specs: bool) -> str:
     pg_y = (rows[1] + rows[2]) / 2
     f.card(col_d, rows[0], cw, ch, "claude-symbol.svg", "LiteLLM Claude", "subscription → API", logo_size=36)
     f.card(col_d, pg_y, cw, ch, "postgresql.svg", "PostgreSQL", "LiteLLM database", logo_size=40)
-    f.card(col_d, rows[3], cw, ch, f.key_icon, "SSH tunnel", "ssh-big-machine" if specs else "to the remote server",
+    f.card(col_d, rows[3], cw, ch, f.key_icon, "SSH tunnel", "ssh-rtx-a4000" if specs else "to the remote server",
            logo_size=40)
 
     # Internet
     f.card(1160, rows[0], 410, ch, "claude-symbol.svg", "Claude", "Anthropic, Pro/Max subscription", logo_size=36,
            stroke=CLOUD_STROKE)
     f.card(1160, rows[1], 410, ch, f.key_icon, "SSH jump host",
-           f"to the network of the {'Big Machine' if specs else 'remote server'}", logo_size=40, stroke=CLOUD_STROKE)
+           f"to the network of the {'RTX A4000 server' if specs else 'remote server'}", logo_size=40,
+           stroke=CLOUD_STROKE)
 
     # Services used by GPT Researcher
     for i, logo in enumerate(("tavily.svg", "arxiv.svg", "gemini-icon.svg")):
@@ -561,7 +562,7 @@ def build(specs: bool) -> str:
     f.add(f'<circle cx="{litellm_x}" cy="{bus_y}" r="4" fill="{LINE}"/>')
     for m in machines[:-1]:
         f.arrow([(m.cx, bus_y), (m.cx, top - 4)])
-    # The Big Machine is in another network behind the SSH jump host.
+    # The RTX A4000 server is in another network behind the SSH jump host.
     big = machines[-1]
     f.arrow([(big.cx, rows[1] + ch), (big.cx, top - 4)], dashed=True)
     f.text(big.cx + 10, (rows[1] + ch + hw_top) / 2 + 5, "SSH tunnel", size=13, color=MUTED, style="italic")

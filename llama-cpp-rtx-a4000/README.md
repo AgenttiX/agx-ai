@@ -1,6 +1,6 @@
-# llama.cpp on the Big Machine
+# llama.cpp on 2x RTX A4000
 
-llama.cpp for [PaperQA2](https://github.com/Future-House/paper-qa) RAG on the Big Machine.
+llama.cpp for [PaperQA2](https://github.com/Future-House/paper-qa) RAG on a workstation with 2x RTX A4000 (16 GB each).
 One `llama-server` router ([`docker-compose.yml`](docker-compose.yml), [`config.ini`](config.ini) and a preset)
 serves an LLM and an embedding model on port 9931. Both models are loaded at the same time.
 They are unloaded from VRAM after 10 minutes of inactivity and reloaded on the next request.
@@ -16,7 +16,7 @@ The preset is selected in [`docker-compose.yml`](docker-compose.yml):
 | | `Qwen/Qwen3-Embedding-4B` Q6_K | ctx 4096, 1 slot | GPU 0 |
 
 The same models and configurations on vLLM, and the comparison with these presets for PaperQA2 (vLLM answers
-1.6-2.5 times as fast with the same model), are in [`../vllm-big-machine`](../vllm-big-machine/README.md).
+1.6-2.5 times as fast with the same model), are in [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md).
 
 ## Hardware
 
@@ -42,14 +42,14 @@ three changes in [`docker-compose.yml`](docker-compose.yml), without which the d
   listened on 8080 and the published port 9931 reset every connection.
 - `NCCL_P2P_DISABLE=1` and `shm_size: 2g`: the tensor split now reduces with NCCL
   (`ggml_backend_cuda_comm_allreduce_nccl`). Peer-to-peer copies between the GPUs return corrupted data on this
-  machine (see [`../vllm-big-machine`](../vllm-big-machine/README.md#peer-to-peer-copies-between-the-gpus-are-broken)),
+  machine (see [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md#peer-to-peer-copies-between-the-gpus-are-broken)),
   so NCCL failed with `unhandled cuda error` in `ncclGroupEnd`; without peer-to-peer copies, it communicates through
   `/dev/shm`, whose default of 64 MiB was too small (`unhandled system error`).
 
 The NCCL buffers take more VRAM than the previous all-reduce, so the default preset no longer fit with
 Qwen3-Embedding-8B. It now uses Qwen3-Embedding-4B, which retrieved as well as the 8B model on the PaperQA2 corpus
 (the right chunk among the top 10 for 92.2 vs 91.4 % of the questions) at 1.6 times the speed, see
-[the embedding test](../vllm-big-machine/README.md#embedding-models). This frees 1.5 GiB per GPU, which also made room for
+[the embedding test](../vllm-rtx-a4000/README.md#embedding-models). This frees 1.5 GiB per GPU, which also made room for
 50 % more context for Qwen3.8-27B (98304 instead of 65536). The model id changed, so PaperQA2 builds a new index
 (~12 min).
 
@@ -126,7 +126,7 @@ tg = token generation, pp = prompt processing. Measured with
 | 8 x (8000-token prompt + 256 generated), with embeddings | 187.7 s | 58.3 s | 55.6 s |
 | Embeddings, 16 x 2048 tokens | 3368 | 3380 | 3307 |
 
-PaperQA2 (the three questions of [`../vllm-big-machine`](../vllm-big-machine/README.md#paperqa2)), time per
+PaperQA2 (the three questions of [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md#paperqa2)), time per
 question: Qwen3.8-27B 89-103 s with thinking at "low" and 47-50 s without; Gemma without thinking 25-29 s on 2 GPUs
 and 34-40 s on 1 GPU + CPU. Building the index of the 71 papers with Qwen3-Embedding-4B: 702 s.
 
