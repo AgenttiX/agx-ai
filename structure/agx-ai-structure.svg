@@ -161,7 +161,7 @@
 <circle cx="1000" cy="645" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
 <text x="925" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
 <text x="925" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (110 | 1160)</tspan></text>
+<text x="925" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1220)</tspan></text>
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (30 | 1650)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>

@@ -6,19 +6,23 @@ revision: mtp-int8
 served-model-name: Qwen/Qwen3.8-27B
 # Do not load the vision tower (0.9 GiB), which would cost ~25k tokens of context.
 language-model-only: true
-# The maximum with the KV cache below (158480 tokens, 1.07 times the context: the scheduler needs some extra blocks
-# for the recurrent states). Peak 20976 MiB with a 145000-token prompt, with the desktop using 2.7 GiB.
-max-model-len: 147456
+# The maximum with the KV cache below (168848 tokens, 1.07 times the context: the scheduler needs some extra blocks
+# for the recurrent states). Peak 21036 MiB with a 153000-token prompt.
+max-model-len: 155648
 # Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
 # startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
 kv-cache-memory-bytes: 6400000000
 gpu-memory-utilization: 0.8
-# int8 with a scale per token and head (the format closest to llama.cpp's q8_0) fits twice the context of BF16. It
-# needs the Triton attention: FlashAttention 2 supports no quantized KV cache, and the FP8 cache of FlashInfer allows
-# no full CUDA graphs with MTP (chat 51 instead of 81 t/s). With the split-KV fix of ../vllm/vllm.patch, the Triton
-# attention is also the fastest at long contexts (see README.md).
+# int8 with a scale per token and head (the format closest to llama.cpp's q8_0) fits twice the context of BF16. It is
+# read by the pth-flash-attn kernel of ../vllm (CUSTOM, from HyperQwen, see ../vllm-rtx3090-hyperqwen/README.md),
+# which is faster at long contexts than the Triton attention with the split-KV fix of ../vllm/vllm.patch (100k tokens
+# of context: 66-69 instead of 41 t/s). FlashAttention 2 supports no quantized KV cache, and the FP8 cache of
+# FlashInfer allows no full CUDA graphs with MTP (chat 51 instead of 81 t/s).
 kv-cache-dtype: int8_per_token_head
-attention-backend: TRITON_ATTN
+attention-backend: CUSTOM
+# The recurrent state of the 48 Gated DeltaNet layers in FP16 instead of FP32 (as in HyperQwen): 6.5 % more tokens in
+# the KV cache.
+mamba-ssm-cache-dtype: float16
 # The prefill chunk. 4096 was not faster.
 max-num-batched-tokens: 2048
 # Full CUDA graphs for decoding, for up to 4 sequences with 3 tokens each (MTP).
@@ -26,7 +30,8 @@ compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_si
 # Every sequence needs its own recurrent state for the 48 Gated DeltaNet layers.
 max-num-seqs: 4
 # MTP with the model's own MTP head: 2 drafted tokens. 3 were not clearly faster and leave less context.
-speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+# The drafter takes its attention backend from here.
+speculative-config: {"method": "mtp", "num_speculative_tokens": 2, "attention_backend": "CUSTOM"}
 enable-prefix-caching: true
 # Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM, so that a returning conversation needs
 # no new prompt processing (a 25k-token prompt: 4.0 s instead of 25.8 s). It takes no GPU memory.

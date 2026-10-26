@@ -12,22 +12,28 @@ and port (9931). Only one of them fits on the GPU at a time. There are two Docke
   third-party vLLM runtime and its vision tower on the CPU for images and videos (see
   [Qwen3.8-Flash-Next](#qwen38-flash-next)).
 
+For Qwen3.8-27B, [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md) (the HyperQwen image, with the
+DFlash2 drafter) is faster for one to three users or agents on the same GPU and port: chat 136 vs 83 t/s, 128 / 110 /
+80 t/s at 6.4k / 32k / 100k tokens of context, and 290 t/s when the model copies code, with 139264 tokens of context.
+The configuration here stays the stock-vLLM alternative, and is faster for 4 concurrent agents.
+
 All use the API key of the llama.cpp servers. Like the llama.cpp presets, each configuration keeps vLLM at ≤ 21 GiB of
 VRAM (peaks 20804-20988 MiB with full-context prompts). The desktop used 2.7 GiB during these measurements, which
 left 0.8-1.0 GiB free:
 
 | Configuration | Model | KV cache | Context | Chat | Generation at 6.4k / 32k / 100k tokens | Prompt processing |
 |---|---|---|---|---|---|---|
-| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2 | int8 | 147456 | 77-86 t/s | 83 / 68 / 45 t/s | 1160 t/s at 6.4k, 450 t/s at 145k |
+| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2, pth-flash-attn | int8 | 155648 | 81-86 t/s | 83 / 79 / 66 t/s, 60 t/s at 153k | 1210 t/s at 6.4k, 690 t/s at 153k |
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
 | [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 26.5 t/s | 27 / 28 / 28 t/s | 1650 t/s at 6.4k, 2090 t/s at 260k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#results-of-the-current-presets)):
 
-- **Qwen3.8-27B: vLLM is better.** It fits 44 % more context (147456 vs 102400) and generates 50-75 % faster at
-  every context length (chat 77-86 vs 49 t/s, 68 t/s at 32k vs 42 t/s at 36.5k, 45 vs 26 t/s at 100k). llama.cpp processes long
-  prompts faster (100k tokens: 776 vs 553 t/s).
+- **Qwen3.8-27B: vLLM is better.** It fits 52 % more context (155648 vs 102400) and generates 65-155 % faster at
+  every context length (chat 81-86 vs 49 t/s, 79 t/s at 32k vs 42 t/s at 36.5k, 66 vs 26 t/s at 100k), and processes
+  long prompts about as fast (100k tokens: 812 vs 776 t/s). With
+  [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md), even faster.
 - **Gemma 4 26B-A4B: it depends on the context length.** vLLM is faster in chats and short contexts (255 vs 216 t/s,
   6.4k: 196 vs 183 t/s), llama.cpp at long ones (32-36k: 169 vs 130 t/s, 100k: 121 vs 84 t/s) and in prompt processing
   of long prompts (2 times as fast). The context is about the same (163840 vs 165888).
@@ -133,11 +139,20 @@ with the MTP head, without the vision tower. The other int4 checkpoints keep the
 | Triton, int8 KV, unpatched | 98304 | 81.0 | 58.6 | 23.7 | - / 399 (96k) | 19196 MiB |
 | FlashInfer, FP8 KV, unpatched | 98304 | 51.5 | 54.0 | 55.0 | - / 807 (96k) | 19886 MiB |
 | FlashAttention 2, BF16 KV, unpatched | 49152 | 85.0 | 60.7 | 30.1 | - | 19116 MiB |
-| **Triton, int8 KV, patched (current)** | 147456 | 76.5-86.3 | 83.4 | 68.3-68.6 | 934 / 450 (145k) | 20976 MiB |
+| Triton, int8 KV, patched (until 2026-10-26) | 147456 | 76.5-86.3 | 83.4 | 68.3-68.6 | 934 / 450 (145k) | 20976 MiB |
 | The same with MTP 3 | 147456 | 88.0 | 83.4 | 71.1 | 919 / - | 21036 MiB |
 | The same with 4096-token prefill chunks | 139264 | 81.9 | 84.9 | 64.0 | 926 / - | 20938 MiB |
+| **pth-flash-attn, int8 KV, FP16 recurrent state (current, 2026-10-26)** | 155648 | 82.8 | 83.4 | 79.4 | 1054 / 693 (153k) | 21036 MiB |
 
-- The context is the maximum for the 21 GiB: the KV cache of 6.4 GB holds 158480 tokens (~40 KiB per token including the
+On 2026-10-26, the attention moved to the pth-flash-attn kernel of [`../vllm`](../vllm/README.md) (`attention-backend:
+CUSTOM`, also for the MTP drafter), and the recurrent state to FP16, both from
+[HyperQwen](../vllm-rtx3090-hyperqwen/README.md#combining-the-optimizations). Measured that day with the same tests
+(the Triton row again for comparison: chat 86.3, 79.6 / 66.7 / 40.5 t/s at 6.4k / 32k / 100k): 83.4 / 79.4 / 66.3 t/s,
+prompt processing 1209 / 1054 / 812 instead of 1143 / 867 / 544 t/s. The FP16 state gives 6.5 % more tokens in the
+same KV cache (168848 instead of 158480), with no measurable effect on the speed. The notes below are from 2026-10-12
+with the Triton attention.
+
+- The context was the maximum for the 21 GiB: the KV cache of 6.4 GB holds 158480 tokens (~40 KiB per token including the
   recurrent states), and vLLM needs 1.05-1.07 times the context. 163840 tokens (6.9 GB) ran out of memory on the
   first request with the desktop using 2.7 GiB.
 - MTP 3 was 2-4 % faster than MTP 2 (within the run-to-run variation of 76-86 t/s in chat) and leaves less context.

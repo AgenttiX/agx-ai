@@ -28,6 +28,7 @@
   - For running local models
   - [Radeon VII config with a patched gfx906 container and a bit-exact Gemma 4 QAT checkpoint, with a comparison to llama.cpp](vllm-radeon-vii/README.md)
   - [RTX 3090 configs of agx-z2e (Qwen3.8-27B, Gemma 4 26B-A4B and 31B, Qwen3.8-Flash-Next with experts in RAM and its vision tower on the CPU), with a Triton attention fix for MTP and a comparison to llama.cpp](vllm-agx-z2e/README.md)
+  - [RTX 3090 config of agx-z2e for agentic coding with HyperQwen (Qwen3.8-27B with the DFlash2 drafter and CPU KV offloading), with a comparison of its modes and of the combinations with this repository's optimizations](vllm-rtx3090-hyperqwen/README.md)
   - [RTX 3070 (8 GB) configs of agx-ai (Gemma 4 26B-A4B and Qwen3.8-Flash-Next with their experts in RAM over UVA), with fixes for UVA weight offloading, a re-quantized Flash-Next checkpoint and a comparison to llama.cpp](vllm-agx-ai/README.md)
   - [Dual RTX A4000 configs for PaperQA2 RAG: 8 LLM and embedding model configurations on 1-2 GPUs and the CPU, an embedding model retrieval test, and a PaperQA2 comparison to llama.cpp](vllm-big-machine/README.md)
 - [Open Terminal](https://github.com/open-webui/open-terminal)

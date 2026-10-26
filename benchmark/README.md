@@ -32,6 +32,7 @@ What it measures (LLM speeds come from the server's own `timings`, so they exclu
 | Embeddings (`--embed-texts` x `--embed-tokens`) | tokens/s over the wall time, single-text latency, dimension |
 | Chat (`--tests chat`): six varied real requests, `--repeat` times each, up to `--chat-n-predict` tokens | mean, median and range of generation tokens/s, mean draft acceptance |
 | Depth (`--tests depth`): about `--depth` tokens of real Python source as context and a question, three times | mean prompt processing and generation tokens/s at that depth, draft acceptance |
+| Edit (`--tests edit`): a 2.2k-token file of the client's Python standard library (`graphlib.py`) after about `--edit-depth` tokens of code context, output again with one identifier renamed, without thinking, three times | mean prompt processing and generation tokens/s: the speed of copying code, as in the edits of a coding agent, where drafting from the context (e.g. DFlash2's lookup) helps most |
 | Image (`--tests image`): a chat request with a synthetic `--image-size` PNG (default 1280x960), `--repeat` times | prompt processing time including the vision encoder (mmproj), and the wall time of the request; shows the cost of `no-mmproj-offload` |
 | GPU memory (if `nvidia-smi` or `amd-smi` is available on the client machine) | peak MiB per GPU during the run; with `nvidia-smi` also the peak of the llama-server processes alone, which excludes a desktop session on the same GPU |
 
@@ -83,6 +84,25 @@ DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test
+```
+
+## `vllm_prefix_return.py` and `vllm_concurrent_agents.py`: several coding agents on one vLLM server
+
+Two tests for vLLM servers of coding agents (they use `cache_salt`, so vLLM only), with the functions of
+`llama_cpp_bench_http.py`:
+
+- `vllm_prefix_return.py`: the time to the first token of a conversation (`--tokens`) cold, again from the GPU's
+  prefix cache, and after other prompts (`--evict` x `--evict-tokens`) have evicted it from the GPU, e.g. to check
+  that the CPU KV offloading (`kv-offloading-size`) brings it back. The greedy answers are compared with the cold one.
+- `vllm_concurrent_agents.py`: `--agents` agents at once, each with its own code context of `--depth` tokens already
+  in the prefix cache (as for an agent's next turn): the generation speed per agent and in total, and each agent's
+  time to the first token.
+
+```sh
+./vllm_prefix_return.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+    --tokens 25000 --evict 2 --evict-tokens 100000
+./vllm_concurrent_agents.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+    --depth 32000 --agents 1 2 3
 ```
 
 ## `embedding_retrieval_eval.py`: retrieval quality of embedding models on your own corpus

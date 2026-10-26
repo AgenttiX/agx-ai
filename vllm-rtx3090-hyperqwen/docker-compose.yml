@@ -1,0 +1,87 @@
+# HyperQwen (https://github.com/syv-ai/HyperQwen): Qwen3.8-27B on the RTX 3090 of agx-z2e, tuned for agentic coding
+# with one user and one or a few agents. See README.md for the settings and the measurements behind them.
+# The same port as ../vllm-agx-z2e and ../llama-cpp-agx-z2e (9931): only one of them fits on the GPU at a time.
+#
+#   docker compose run --rm prepare   # once: download and requantize the model into ~/.cache/vllm-models/hyperqwen
+#   docker compose up -d
+#
+# The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp-radeon-vii/llama-cpp.env), so that
+# clients work with all of them.
+
+x-hyperqwen: &hyperqwen
+  # HyperQwen's image of its commit ce9615c (2026-10-22, vLLM 0.31.0), pinned by digest. It was published as
+  # ghcr.io/syv-ai/qwen38-27b-rtx3090 before the project was renamed.
+  image: ghcr.io/syv-ai/hyperqwen@sha256:0cf71b42d3017f9af0f7a46ef5817eedc5a39b6cc9c789ccd8a54138d9292ea0
+  volumes:
+    - /home/mika/.cache/vllm-models/hyperqwen:/app/models
+    - cache:/cache
+
+services:
+  prepare:
+    <<: *hyperqwen
+    profiles: [prepare]
+    command: prepare
+
+  vllm:
+    <<: *hyperqwen
+    container_name: vllm-rtx3090-hyperqwen
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: all
+    # The CPU KV cache (KV_OFFLOAD_GB) is a file in /dev/shm. The container has its own /dev/shm instead of the host's
+    # (ipc: host), as the launcher deletes the offload files of /dev/shm that no process of its container maps,
+    # which would include those of other vLLM containers.
+    shm_size: 36gb
+    env_file:
+      - ../llama-cpp-radeon-vii/llama-cpp.env
+    environment:
+      # The torch.compile, Triton and FlashInfer caches are in $HOME (the cache volume).
+      HOME: /cache
+      PORT: "8000"
+      # The model was prepared with `docker compose run --rm prepare`.
+      PREPARE: "0"
+      # The DFlash2 block drafter (7 drafted tokens per step) with lookup drafting from the context, an int8 KV cache
+      # read by the pth-flash-attn kernel (PTH_FA, the default of this mode on an RTX 3090) and up to 4 sequences.
+      SPEC: dflash2
+      CTX: long
+      PTH_FA: "1"
+      # A KV cache of 5.95 GB (the mode's default: 5.58 GB, 131072 tokens of context) holds 146461 tokens; vLLM needs
+      # 1.05 times the context. Peak 21466 MiB with a 136k-token prompt and with 4 agents at once.
+      KV_MEM: "5950000000"
+      MAX_LEN: "139264"
+      # The token embedding in pinned RAM instead of VRAM (1.2 GiB), no measurable cost in speed.
+      EMBED_UVA: "1"
+      # CPU KV cache of 32 GiB for the prefixes evicted from the GPU, e.g. of another agent's conversation. Each block
+      # carries a recurrent-state snapshot, so it holds ~330k tokens. The launcher refuses it with PTH_FA=1 as
+      # untested; the entrypoint below removes that refusal (tested: see README.md).
+      KV_OFFLOAD_GB: "32"
+      # vLLM checks at startup that this share of the GPU is free; the KV cache has a fixed size (KV_MEM of the
+      # launcher). The default of 0.93 would fail next to the desktop.
+      GPU_UTIL: "0.85"
+      # The same model name as ../vllm-agx-z2e, so that the clients work with both.
+      EXTRA_ARGS: "--served-model-name Qwen/Qwen3.8-27B"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        sed -i '/untested on this backend; refusing. Use PTH_FA=0 for a CPU KV tier./{n;s/exit 1 ;;/;;/}'
+        single-user/start_qwen.sh
+        && VLLM_API_KEY="$$LLAMA_API_KEY" exec bash docker/entrypoint.sh single
+    ports:
+      - "9931:8000"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start compiles kernels for several minutes; later ones take ~4.5 min.
+      start_period: 15m
+
+volumes:
+  cache:

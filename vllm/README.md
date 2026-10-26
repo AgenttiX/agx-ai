@@ -84,6 +84,18 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     15.9 ms (BF16 cache: 14.6 ms). The cache is written by vLLM's CUDA `reshape_and_cache`, which supports FP8 on
     Ampere. As the hybrid model's attention pages are as large as its Gated DeltaNet state pages, the FP8 cache doubles
     the tokens per page, which roughly halves the memory per token of all cache groups.
+- The [pth-flash-attn](https://github.com/noon-at-cgn/pth-flash-attn) kernel (v0.1.0, the commit that
+  [HyperQwen](https://github.com/syv-ai/HyperQwen) vendors), added on 2026-10-26 on x86-64 only (built from its source
+  by the [`Dockerfile`](Dockerfile) in ~1 min; under QEMU for ARM64 it would take long, and it has no kernels for the
+  sm_90+ GPUs of the ARM64 machines). It is an attention backend plugin for an `int8_per_token_head` KV cache on
+  sm_80/86/89, selected with `attention-backend: CUSTOM`, and for an MTP drafter also with `"attention_backend":
+  "CUSTOM"` in the `speculative-config` (the drafter takes its backend from there). It serves causal attention with
+  head size 256 and sliding-window or non-causal attention with head size 128 (e.g. Qwen3.5/3.8, DFlash2), and refuses
+  the others at startup; vLLM never selects it on its own, so the other configurations are unchanged. With
+  Qwen3.8-27B, MTP 2 and the native CPU KV offloading on the RTX 3090 of [`../vllm-agx-z2e`](../vllm-agx-z2e), it is
+  much faster at long contexts than the patched Triton attention above: 69.1 instead of 40.5 t/s at 100k tokens of
+  context, 80.4 instead of 66.7 t/s at 32k, and 794 instead of 544 t/s prompt processing at 100k (see
+  [`../vllm-rtx3090-hyperqwen/README.md`](../vllm-rtx3090-hyperqwen/README.md#combining-the-optimizations)).
 
 
 ## Checkpoint scripts

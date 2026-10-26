@@ -95,6 +95,19 @@ DEPTH_QUESTIONS = [
     "Propose a refactoring plan for the largest module above, with example code.",
 ]
 
+# The edit test: a file of the client's Python standard library after the code context, with a request to output it
+# with a small change, which is mostly a verbatim copy, like the edits of a coding agent. Without thinking, so that
+# the generation is the copy.
+EDIT_FILE = "graphlib.py"
+EDIT_REQUESTS = [
+    "Rename the class `TopologicalSorter` to `DependencySorter` everywhere in the file graphlib.py above, and output "
+    "the complete modified file in a single Python code block, with no other text.",
+    "Rename the method `static_order` to `iter_static_order` everywhere in the file graphlib.py above, and output "
+    "the complete modified file in a single Python code block, with no other text.",
+    "Rename the exception `CycleError` to `GraphCycleError` everywhere in the file graphlib.py above, and output "
+    "the complete modified file in a single Python code block, with no other text.",
+]
+
 
 # ---------------------------------------------------------------------------
 # HTTP helpers
@@ -156,15 +169,17 @@ class Server:
         }
         return self.request("/completion", payload)
 
-    def chat(self, model: str, content: str, max_tokens: int) -> dict[str, Any]:
+    def chat(self, model: str, content: str, max_tokens: int, thinking: bool = True) -> dict[str, Any]:
         """Chat completion with the chat template and the server's sampling settings; returns the server's timings."""
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
             "seed": 42,
             "cache_prompt": False,
         }
+        if not thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         return self.request("/v1/chat/completions", payload)
 
     def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
@@ -235,9 +250,12 @@ class VllmServer(Server):
         return draft, accepted
 
     def stream(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Send a streamed request and return client-measured ``timings`` and the ``usage``."""
-        payload = {**payload, "stream": True, "stream_options": {"include_usage": True},
-                   "cache_salt": os.urandom(8).hex()}
+        """Send a streamed request and return client-measured ``timings``, the ``usage`` and the generated ``text``.
+
+        Each request gets a random ``cache_salt`` (no prefix cache hits), unless the payload has one.
+        """
+        payload = {"cache_salt": os.urandom(8).hex(), **payload, "stream": True,
+                   "stream_options": {"include_usage": True}}
         draft0, accepted0 = self.spec_counters()
         req = urllib.request.Request(self.url + path, data=json.dumps(payload).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
@@ -246,6 +264,7 @@ class VllmServer(Server):
         start = time.perf_counter()
         first = last = None
         usage: dict[str, Any] = {}
+        text: list[str] = []
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 for raw in resp:
@@ -256,6 +275,7 @@ class VllmServer(Server):
                     usage = chunk.get("usage") or usage
                     for choice in chunk.get("choices", []):
                         delta = choice.get("delta") or {}
+                        text.append(choice.get("text") or delta.get("content") or "")
                         if (choice.get("text") or delta.get("content")
                                 or delta.get("reasoning_content") or delta.get("reasoning")):
                             last = time.perf_counter()
@@ -277,17 +297,19 @@ class VllmServer(Server):
         if draft1 > draft0:
             timings["draft_n"] = draft1 - draft0
             timings["draft_n_accepted"] = accepted1 - accepted0
-        return {"timings": timings, "usage": usage}
+        return {"timings": timings, "usage": usage, "text": "".join(text)}
 
     def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
         """Raw completion of exactly ``n_predict`` tokens; returns the client-measured timings."""
         payload = {"model": model, "prompt": prompt, "max_tokens": n_predict, "temperature": 0.0, "ignore_eos": True}
         return self.stream("/v1/completions", payload)
 
-    def chat(self, model: str, content: str, max_tokens: int) -> dict[str, Any]:
+    def chat(self, model: str, content: str, max_tokens: int, thinking: bool = True) -> dict[str, Any]:
         """Chat completion with the chat template; returns the client-measured timings."""
-        payload = {"model": model, "messages": [{"role": "user", "content": content}], "max_tokens": max_tokens,
-                   "seed": 42}
+        payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": content}],
+                                   "max_tokens": max_tokens, "seed": 42}
+        if not thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         return self.stream("/v1/chat/completions", payload)
 
     def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
@@ -547,6 +569,36 @@ def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[
     return out
 
 
+def test_edit(server: Server, model: str, depth: int) -> dict[str, Any]:
+    """A code context of about ``depth`` tokens and a file to output with a small change: mostly a verbatim copy."""
+    source = (Path(sysconfig.get_paths()["stdlib"]) / EDIT_FILE).read_text(encoding="utf-8")
+    max_tokens = len(server.tokenize(model, source)) + 256
+    runs = [
+        timings_summary(server.chat(
+            model,
+            (build_code_context(server, model, depth, rotate=7 * i) if depth else "")
+            + f"\n\n### {EDIT_FILE}\n{source}\n\n{q}",
+            max_tokens,
+            thinking=False,
+        )["timings"])
+        for i, q in enumerate(EDIT_REQUESTS)
+    ]
+    tps = [r["generation_tps"] for r in runs]
+    out = {
+        "depth": depth,
+        "prompt_tokens": runs[0]["prompt_tokens"],
+        "generated_tokens_mean": round(statistics.mean(r["generated_tokens"] or 0 for r in runs)),
+        "prompt_tps_mean": round(statistics.mean(r["prompt_tps"] for r in runs), 1),
+        "generation_tps_mean": round(statistics.mean(tps), 1),
+        "generation_tps_min": min(tps),
+        "generation_tps_max": max(tps),
+    }
+    acc = [r["draft_acceptance"] for r in runs if "draft_acceptance" in r]
+    if acc:
+        out["draft_acceptance_mean"] = round(statistics.mean(acc), 1)
+    return out
+
+
 def synthetic_png(width: int, height: int, seed: int) -> bytes:
     """A deterministic RGB test image (colour gradients and a grid of shapes), encoded as PNG with the stdlib."""
     rows = []
@@ -736,7 +788,7 @@ def server_args(models: list[dict[str, Any]], model: str) -> list[str] | None:
     return None
 
 
-ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth", "image"]
+ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth", "edit", "image"]
 DEFAULT_TESTS = ["generation", "prompt", "concurrency", "embedding"]
 
 
@@ -774,6 +826,8 @@ def main() -> int:
                         help="maximum tokens per request in the chat and depth tests (default %(default)s)")
     parser.add_argument("--depth", type=int, nargs="+", default=[16000],
                         help="context lengths in tokens for the depth test (default %(default)s)")
+    parser.add_argument("--edit-depth", type=int, nargs="+", default=[0],
+                        help="code context lengths in tokens before the file of the edit test (default %(default)s)")
     parser.add_argument("--image-size", default="1280x960",
                         help="width x height of the test image of the image test (default %(default)s)")
     parser.add_argument("--repeat", type=int, default=3,
@@ -856,6 +910,11 @@ def main() -> int:
                 print(f"depth: {len(DEPTH_QUESTIONS)} x {d}-token code context, up to {args.chat_n_predict} tokens...",
                       file=sys.stderr)
                 result["depth"].append(test_depth(server, chat_model, d, args.chat_n_predict))
+        if "edit" in args.tests:
+            result["edit"] = []
+            for d in args.edit_depth:
+                print(f"edit: {len(EDIT_REQUESTS)} x {EDIT_FILE} after a {d}-token code context...", file=sys.stderr)
+                result["edit"].append(test_edit(server, chat_model, d))
         if "image" in args.tests:
             size = tuple(int(v) for v in args.image_size.lower().split("x"))
             print(f"image: {args.image_size} image x{args.repeat}...", file=sys.stderr)
@@ -910,6 +969,12 @@ def main() -> int:
         acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
         print(f"| Code context of {d['prompt_tokens']} tokens, up to {d['max_tokens']} generated "
               f"| prompt **{d['prompt_tps_mean']} tokens/s**, "
+              f"generation **{d['generation_tps_mean']} tokens/s** "
+              f"({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
+    for d in result.get("edit", []):
+        acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
+        print(f"| Edit: {EDIT_FILE} copied with a change ({d['generated_tokens_mean']} tokens) after "
+              f"{d['prompt_tokens']} prompt tokens | prompt **{d['prompt_tps_mean']} tokens/s**, "
               f"generation **{d['generation_tps_mean']} tokens/s** "
               f"({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
     for c in result["concurrency"]:
