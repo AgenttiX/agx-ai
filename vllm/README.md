@@ -9,7 +9,7 @@ docker build -t ghcr.io/agenttix/agx-ai/vllm:latest .
 ```
 
 Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vllm-agx-z2e) and
-[`../vllm-agx-ai`](../vllm-agx-ai). For gfx906 (Radeon VII), see
+[`../vllm-rtx3070`](../vllm-rtx3070). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
 - `vllm/vllm-openai:latest` is v0.31.0 with CUDA 13.0 and PyTorch 2.13 (the `-cu129` tags are the CUDA 12.9
@@ -39,7 +39,7 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
       The greedy outputs diverge after 35 % of their length on average, as the floating-point sums are reordered;
       changing only the prefill chunk size of the unpatched image (2048 -> 1024) gives a similar divergence (49 %).
   - UVA weight offloading (`offload-backend: uva` with `cpu-offload-params`), added on 2026-10-13 for
-    Qwen3.8-Flash-Next with its experts in RAM on the 8 GB RTX 3070 of [`../vllm-agx-ai`](../vllm-agx-ai):
+    Qwen3.8-Flash-Next with its experts in RAM on the 8 GB RTX 3070 of [`../vllm-rtx3070`](../vllm-rtx3070):
     - Pinned host memory is allocated with exactly its size (`empty_pinned` and `pin_memory_exact` in
       `utils/torch_utils.py`: an anonymous memory mapping registered with `cudaHostRegister`, unregistered when it
       is freed). `pin_memory=True` uses PyTorch's caching host allocator, which rounds every block up to the next
@@ -64,17 +64,17 @@ Used by [`../vllm-big-machine`](../vllm-big-machine), [`../vllm-agx-z2e`](../vll
     ending one chunk earlier. For Gemma 4 with MTP (5 sliding-window groups, and the full-attention group as the
     drafter group), no window was ever complete, so nothing was loaded and every evicted conversation was computed
     again. The sliding-window tail is now also kept for the boundary one chunk earlier (one more 16-token block per
-    conversation). On the RTX 3070 of [`../vllm-agx-ai`](../vllm-agx-ai), a 26616-token conversation evicted by two
+    conversation). On the RTX 3070 of [`../vllm-rtx3070`](../vllm-rtx3070), a 26616-token conversation evicted by two
     98k-token prompts came back in 2.2 s instead of 29 s (381 MB loaded), with the same greedy answer as before.
   - Image and video input for Qwen3.8-Flash-Next (Qwen4Exp) with the vision tower on the CPU, added on 2026-10-13 for
-    [`../vllm-agx-ai`](../vllm-agx-ai), ported from [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md):
+    [`../vllm-rtx3070`](../vllm-rtx3070), ported from [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md):
     `models/qwen4_exp/nvidia/cpu_vision.py` (a new file, the same module as there) runs transformers' Qwen3-VL vision
     model in FP32 on the CPU when `QWEN38_VISION_DEVICE=cpu` (threads: `QWEN38_VISION_THREADS`), the model then
     creates it instead of vLLM's vision transformer and sets `mm_encoder_inputs_on_cpu`, and the encoder runner
     (`v1/worker/gpu/mm/encoder_runner.py`) leaves the pixel values of such a model on the CPU, so that they never take
     VRAM. The separate pixel budget for videos of `vllm-mm.patch` is not needed in vLLM 0.31, which takes
     per-modality processor settings (`mm-processor-kwargs: {"max_pixels": ..., "videos_kwargs": {"max_pixels": ...}}`).
-  - FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-agx-ai`](../vllm-agx-ai)
+  - FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-rtx3070`](../vllm-rtx3070)
     (`models/qwen4_exp/nvidia/ops/qsa.py`): the sparse attention kernel reads the e4m3 cache through Triton's FP8 type,
     which Triton does not support before sm_89 (`type fp8e4nv not supported in this architecture`). Below sm_89, the
     cache is now read as uint8 and converted to FP16 with bit operations: the sign, exponent and mantissa bits shifted
@@ -119,7 +119,7 @@ of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
   round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). The reasons are in
   [`../vllm-radeon-vii/README.md`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09). Used by the Gemma 4 26B-A4B
   configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-big-machine`](../vllm-big-machine),
-  [`../vllm-agx-ai`](../vllm-agx-ai) and [`../vllm-agx-z2e`](../vllm-agx-z2e).
+  [`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-agx-z2e`](../vllm-agx-z2e).
 - [`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) quantizes only the embedding and the lm_head
   of an existing compressed-tensors checkpoint (`--repo`: Google's `google/gemma-4-31B-it-qat-w4a16-ct` by default,
   or a directory built by `repack_gemma4_qat.py`), with the functions of `repack_gemma4_qat.py`, and copies all other

@@ -1,7 +1,7 @@
-# vLLM on agx-ai (RTX 3070)
+# vLLM on RTX 3070
 
 vLLM on the RTX 3070 (8 GB) of the `agx-ai` LXC container, as an alternative to
-[`../llama-cpp-agx-ai`](../llama-cpp-agx-ai) on the same GPU and port (9931). Only one of the two fits on the GPU at a
+[`../llama-cpp-rtx3070`](../llama-cpp-rtx3070) on the same GPU and port (9931). Only one of the two fits on the GPU at a
 time. [`docker-compose.yml`](docker-compose.yml) uses the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`,
 CUDA 13.0, with the fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch)) and the API key of the llama.cpp server.
 The model is selected by commenting the config volume lines in or out.
@@ -11,7 +11,7 @@ The model is selected by commenting the config volume lines in or out.
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2 | 98304 | 32 t/s | 30 / 27 t/s | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k |
 | [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts and n-gram table in RAM, FP8 KV cache, no MTP, image and video input (vision tower on the CPU) | 57344 | 15.4 t/s | 15.4 / 15.4 (at 32k) t/s | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k |
 
-**Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md)): **llama.cpp is
+**Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)): **llama.cpp is
 clearly better for Gemma 4 26B-A4B.** It generates 1.7 times as fast (chat ~55 vs 32 t/s, 45-49 vs 27 t/s at 36-70k
 tokens), processes long prompts twice as fast (~1220 t/s at 119k vs 580 t/s at 96k) and fits 25 % more context
 (122880 vs 98304). Neither fits the model in 8 GB, but they keep the experts in RAM differently: llama.cpp computes
@@ -36,15 +36,15 @@ no display, and 7839 MiB of its 8192 MiB are usable.
 | | |
 |---|---|
 | OS | Ubuntu 26.04.1 LTS in an LXC container on Proxmox VE (kernel 7.0.14-14-pve), host `agx-h12` (Supermicro H12SSL-i) |
-| CPU | AMD EPYC 7302 (Zen 2, 16 cores, 32 threads; AVX2, no AVX-512), of which the container gets 24 threads (see [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md)) |
+| CPU | AMD EPYC 7302 (Zen 2, 16 cores, 32 threads; AVX2, no AVX-512), of which the container gets 24 threads (see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)) |
 | RAM | Registered DDR4 in 8 channels (16 GB ranks according to EDAC), 144 GiB available to the container (128 GiB until 2026-10-13); the frequency needs root on the host to read (`dmidecode`). ~60 GB/s copy bandwidth in the container (PyTorch, 16 threads) |
 | NPU | none |
-| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../llama-cpp-agx-ai/gpu-power-limit`](../llama-cpp-agx-ai/gpu-power-limit), PCIe 4.0 x16 |
+| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../llama-cpp-rtx3070/gpu-power-limit`](../llama-cpp-rtx3070/gpu-power-limit), PCIe 4.0 x16 |
 | GPU architecture | Ampere (GA104, sm_86) |
 | VRAM | 8 GB GDDR6 (8192 MiB) |
 
 **The 1600 MHz clock lock (or the 170 W power limit) is required**, as for llama.cpp: without it, long prompts can
-crash the GPU (Xid 79), see [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md#xid-79-crashes). During these
+crash the GPU (Xid 79), see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md#xid-79-crashes). During these
 tests, the clock lock was active (1590 MHz at ~125 W under full load) and the power limit was the default 240 W,
 which is now also the default of the script.
 
@@ -69,7 +69,7 @@ docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingfac
     -v "$PWD":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest /src/quantize_flash_next_dense.py \
     --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense-int8-head4 --bits 8 --lm-head-bits 4
 # Stop llama.cpp on this GPU and start vLLM
-docker compose -f ../llama-cpp-agx-ai/docker-compose.yml stop
+docker compose -f ../llama-cpp-rtx3070/docker-compose.yml stop
 docker compose up -d
 ```
 
@@ -100,7 +100,7 @@ every token.
 
 **Prompt processing** reads all experts of every layer over PCIe for every 2048-token chunk, so it is 2-2.5 times
 slower than in llama.cpp, which also moves all expert weights over PCIe for every batch of a prompt (see
-[its README](../llama-cpp-agx-ai/README.md#xid-79-crashes)), but with bulk copies instead of the zero-copy reads of
+[its README](../llama-cpp-rtx3070/README.md#xid-79-crashes)), but with bulk copies instead of the zero-copy reads of
 the MoE kernel.
 
 | Variant (all with an int8 KV cache, one sequence) | Context | Chat | Gen. 6.4k | Gen. 36.5k | Prompt processing | Peak VRAM |
@@ -306,7 +306,7 @@ is lower than that.
   - Without prefix caching, the Gated DeltaNet groups would need no pages per block, but every turn would process
     the whole conversation again.
 
-**Compared with llama.cpp** ([`../llama-cpp-agx-ai`](../llama-cpp-agx-ai/README.md#qwen38-flash-next)): vLLM generates
+**Compared with llama.cpp** ([`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md#qwen38-flash-next)): vLLM generates
 13 % faster (15.4 vs 13.6 t/s in chat, 15.4 vs 12.1 t/s at 32-36.5k tokens) and processes prompts ~15 % faster at
 6.4k tokens (377 vs 328 t/s), as the GPU reads the experts over PCIe faster than the 16 cores decode llama.cpp's IQ
 types. Both run their vision encoder on the CPU: a 1280x960 image takes ~15 s until the first token with vLLM
@@ -319,14 +319,14 @@ image. Its GGUF was removed on 2026-10-13 to free disk space.
 ```sh
 cd ../benchmark
 # Serving speed (the configuration of docker-compose.yml)
-./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp-agx-ai/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp-rtx3070/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 96000 --depth 6400 36500 --repeat 1 \
-    --server-config ../vllm-agx-ai/config-gemma-4-26b-a4b-qat.yaml --label "..."
+    --server-config ../vllm-rtx3070/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)
-docker compose -f ../vllm-agx-ai/docker-compose.yml stop
-CACHE_VOLUME=vllm-agx-ai_vllm-cache DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+docker compose -f ../vllm-rtx3070/docker-compose.yml stop
+CACHE_VOLUME=vllm-rtx3070_vllm-cache DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     -e TORCHINDUCTOR_COMPILE_THREADS=1 -e VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=128" ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml
 ./llama_cpp_bench_http.py --url http://localhost:9933 --no-embedding --tests chat depth --repeat 1 --depth 6400 \
     --server-config /tmp/config-variant.yaml --label "..."
-docker rm -f vllm-test && docker compose -f ../vllm-agx-ai/docker-compose.yml start
+docker rm -f vllm-test && docker compose -f ../vllm-rtx3070/docker-compose.yml start
 ```

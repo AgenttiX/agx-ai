@@ -1,4 +1,4 @@
-# llama.cpp on agx-ai
+# llama.cpp on RTX 3070
 
 llama.cpp for the `agx-ai` LXC container on the Proxmox host `agx-h12`:
 NVIDIA GeForce RTX 3070 (8 GB), AMD EPYC 7302 (16 cores, 32 threads), 128 GB RAM, Supermicro H12SSL-i.
@@ -18,7 +18,7 @@ so each is tuned for running alone.
 Qwen3.8-Flash-Next was a third model of the router from 2026-10-13 until its GGUF was removed to free disk space the
 same day (its section in [`preset.ini`](preset.ini) is commented out); it now runs with vLLM on this GPU, see
 [Qwen3.8-Flash-Next](#qwen38-flash-next) for the llama.cpp measurements.
-The same GPU can also run vLLM instead, see [`../vllm-agx-ai`](../vllm-agx-ai/README.md).
+The same GPU can also run vLLM instead, see [`../vllm-rtx3070`](../vllm-rtx3070/README.md).
 
 Both models reuse the prompt cache of a continuing conversation, so only the new part of the conversation is
 processed, see [Prompt cache](#prompt-cache).
@@ -111,7 +111,7 @@ are practically identical, so the clock lock alone prevents the crashes (for com
 any limits crashed on the 5th prompt). [`gpu-power-limit/`](gpu-power-limit) originally set both, the power limit as
 a safety net against spikes. Since 2026-10-13, it locks only the clock by default, as the power limit made no
 difference in these tests, and the tests of 2026-10-12 and -13 (e.g. a 119k-token prompt with the Gemma GPU model,
-80k with Qwen3.8-Flash-Next and the vLLM tests of [`../vllm-agx-ai`](../vllm-agx-ai) with prompts of up to 96k tokens)
+80k with Qwen3.8-Flash-Next and the vLLM tests of [`../vllm-rtx3070`](../vllm-rtx3070) with prompts of up to 96k tokens)
 ran with the clock lock at the default 240 W without problems. `POWER_LIMIT_W` can still add it. A higher clock (e.g. 1700 MHz) could win back some of the 6 % of prompt processing speed, but 1600 MHz
 was kept, as it is more power-efficient and keeps the GPU coolest.
 
@@ -374,7 +374,7 @@ the previous CPU-only container.
 ### Qwen3.8-Flash-Next
 
 Added on 2026-10-13, with build b11552, and removed the same day to free disk space (84 GB): the model runs with vLLM
-on this GPU instead, which generates faster ([`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next)). The
+on this GPU instead, which generates faster ([`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next)). The
 section in [`preset.ini`](preset.ini) is commented out and can be enabled again. Qwen3.8-Flash-Next is a 125B MoE (512 experts of which 10 are active, 48
 layers, 12 of them with a KV cache and 36 with a fixed-size Gated DeltaNet state) with a 51B-parameter n-gram
 embedding table, see also [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
@@ -440,7 +440,7 @@ compute buffer). `ubatch-size = 1024` (1213 MiB) would leave room for ~130k toke
 | Image 1280x960, prompt processing | 18.4 s |
 | Peak VRAM of llama-server | 7460 MiB |
 
-The same model runs with vLLM in [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next).
+The same model runs with vLLM in [`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next).
 
 ### Prompt cache
 

@@ -4,7 +4,7 @@
 # model has loaded, then prints the GPU memory use. Benchmark it with llama_cpp_bench_http.py --url.
 #
 # Usage: ./llama_cpp_test_server.sh IMAGE PRESET [CONFIG] [ENV_FILE] [PORT]
-#   CONFIG    server config.ini (default ../llama-cpp-agx-ai/config.ini)
+#   CONFIG    server config.ini (default ../llama-cpp-rtx3070/config.ini)
 #   ENV_FILE  env file with LLAMA_API_KEY (default: none)
 #   PORT      host port (default 9933)
 # Extra environment for the container: DOCKER_ARGS="-e GGML_VK_VISIBLE_DEVICES=0 ..." (for a CUDA image: "--gpus all")
@@ -14,7 +14,7 @@
 #
 # Example (Vulkan on the Radeon VII with a preset variant):
 #   ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan /tmp/preset-variant.ini \
-#       ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
+#       ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 #   ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
 #       --no-embedding --tests chat depth --repeat 2 --depth 6400 16000 36500 --label "Vulkan"
 set -euo pipefail
@@ -22,7 +22,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 image=$1
 preset=$(realpath "$2")
-config=$(realpath "${3:-$here/../llama-cpp-agx-ai/config.ini}")
+config=$(realpath "${3:-$here/../llama-cpp-rtx3070/config.ini}")
 env_file=${4:-}
 port=${5:-9933}
 name=${NAME:-llama-test}

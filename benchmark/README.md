@@ -160,7 +160,7 @@ container name and port (`NAME=llama-test-cuda ... 9934`).
 
 ```sh
 ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
-    ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
+    ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --label "Vulkan"
 docker rm -f llama-test

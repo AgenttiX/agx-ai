@@ -14,7 +14,7 @@ docker build -t ghcr.io/agenttix/agx-ai/vllm-flash-next:latest .
 [`docker-compose.yml`](docker-compose.yml) runs it on the RTX 3090 of agx-z2e (`docker compose up -d`, after stopping
 [`../vllm-agx-z2e`](../vllm-agx-z2e) or [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) on the same GPU and port);
 its settings and the measurements behind them are in
-[`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-agx-ai`](../vllm-agx-ai) runs the
+[`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-rtx3070`](../vllm-rtx3070) runs the
 model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner change in
 [`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
 (`--language-model-only`), although its model code supports images and videos. This image adds image and video
@@ -101,7 +101,7 @@ at the time (20 hot experts, 135168 tokens of context):
 
 [`docker-compose.yml`](docker-compose.yml) uses the checkpoint with the Gated DeltaNet and attention projections in
 int8 instead of BF16 (round-to-nearest, group size 128, Marlin kernels; -2.6 GiB of VRAM and less to read per decode
-step), built in 30 s by [`../vllm-agx-ai/quantize_flash_next_dense.py`](../vllm-agx-ai/quantize_flash_next_dense.py)
+step), built in 30 s by [`../vllm-rtx3070/quantize_flash_next_dense.py`](../vllm-rtx3070/quantize_flash_next_dense.py)
 as a "view": a directory with one new 2.6 GB shard of the quantized tensors, symbolic links to the original shards
 and the other files, and an index and a config for the quantized layers. The runtime's loader honors the index at
 the tensor level, so it skips the BF16 originals that are still in the original shards. The shared experts (which
@@ -109,7 +109,7 @@ the runtime fuses into the MoE) and the lm_head (created without a quantization 
 
 ```sh
 docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro -v ~/.cache/vllm-models:/out \
-    -v "$PWD/../vllm-agx-ai":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest \
+    -v "$PWD/../vllm-rtx3070":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest \
     /src/quantize_flash_next_dense.py --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense8-view --bits 8 \
     --lm-head-bits 16 --separate-shard --keep-shared-experts
 ```

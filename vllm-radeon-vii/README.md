@@ -130,7 +130,7 @@ fit. The `mtp-int8` revision has the MTP head in int8 (0.4 GiB instead of 0.8).
 
 ## Optimizations from the other configurations (2026-10-14)
 
-The configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e), [`../vllm-agx-ai`](../vllm-agx-ai) and
+The configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e), [`../vllm-rtx3070`](../vllm-rtx3070) and
 [`../vllm`](../vllm) (vLLM 0.31 on NVIDIA) found several improvements since the measurements below. Tested here:
 
 | Change | Result | Used |

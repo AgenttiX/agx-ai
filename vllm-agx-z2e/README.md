@@ -268,7 +268,7 @@ KV cache needs less per token. What takes the 21 GiB (llama.cpp's weights estima
 
 The main difference is the precision of the dense weights: the checkpoint has everything but the routed experts and
 the n-gram table in BF16 (9.15 GiB, ~5.4 GiB more than llama.cpp's quantization), and the MTP module. Quantizing the
-dense weights to int8 like [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next) would save ~3.3 GiB, but it
+dense weights to int8 like [`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next) would save ~3.3 GiB, but it
 needs a re-quantized 65 GB checkpoint and int8 support in the runtime's custom kernels. Not needed here, as the two
 cheaper steps were enough:
 
@@ -326,7 +326,7 @@ Not applicable here (checked on 2026-10-26):
   (Flash-Next has Qwen Sparse Attention with its own kernels), DFlash2 and its lookup drafting need a DFlash2 drafter,
   which does not exist for Flash-Next, and HyperQwen's image has no Flash-Next support. The FP16 recurrent state would
   only save VRAM (one sequence), and more hot experts on the GPU made little difference (see above).
-- **Stock vLLM** ([`../vllm`](../vllm)'s image, as in [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next))
+- **Stock vLLM** ([`../vllm`](../vllm)'s image, as in [`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next))
   reads the cold experts over PCIe (~25 GB/s, ~2.4 GB per decode step with MTP 3) instead of computing them on the
   CPU, which reads ~41 GB/s. In this runtime, a larger GPU share (more PCIe reads) did not help either, as both read the
   same RAM.
@@ -393,7 +393,7 @@ Ideas not tried yet:
   divisible by tokens_per_hash=3200`). The ring needs no offloading (vLLM's GPU prefix cache already excludes it and
   gives each request a fresh one), but skipping it would mean patching the per-group bookkeeping of the offloading
   connector's scheduler and worker. Stock vLLM's implementation of the model, which has no such group, offloads
-  fine (see [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next)). The startup check also rejects KV
+  fine (see [`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next)). The startup check also rejects KV
   connectors with `expandable_segments`, as in [`../vllm/vllm.patch`](../vllm/vllm.patch). Without offloading, the
   GPU prefix cache of ~287k tokens still serves a returning conversation as long as other prompts have not evicted it.
 - **MTP 1** (with `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`, as the runtime only accepts multiples of 3200 tokens,

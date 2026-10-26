@@ -10,7 +10,7 @@ q8_0 K and V caches:
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 88064 | ~114 t/s, 54-78 t/s at 36-85k tokens of context | ~1180 t/s at 16k, ~740 t/s at 85k |
 | [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` | 47104 | ~30 t/s, ~24 t/s at 30-43k tokens of context | ~240 t/s at 16k, ~210 t/s at 45k |
 
-The Gemma context is larger than the 77824 of [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai), so that the same agentic
+The Gemma context is larger than the 77824 of [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070), so that the same agentic
 workloads can be split between the two. Qwen3.8-27B is a dense model, so it is 4 times slower than the
 mixture-of-experts Gemma; see [Qwen3.8-27B](#qwen38-27b-2026-10-09). This file has the benchmarks behind the
 settings. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
@@ -444,7 +444,7 @@ cd ../benchmark
 docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
 # (for a preset variant, edit a copy of the preset and pass it instead)
 ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
-    ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
+    ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --depth 6400 16000 36500 70000 --label "..."
 docker rm -f llama-test && docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start

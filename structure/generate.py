@@ -416,8 +416,8 @@ def build(specs: bool) -> str:
                  ("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
         Machine("server", 1210, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
-                # Gemma 4 26B-A4B with llama-cpp-agx-ai/README.md, which is 1.7 times as fast as vLLM for it:
-                # 36.5k-token prompt (depth test); Qwen3.8-Flash-Next: vllm-agx-ai/README.md, 6.4k-token prompt
+                # Gemma 4 26B-A4B with llama-cpp-rtx3070/README.md, which is 1.7 times as fast as vLLM for it:
+                # 36.5k-token prompt (depth test); Qwen3.8-Flash-Next: vllm-rtx3070/README.md, 6.4k-token prompt
                 # (depth test); benchmark/results/agx-ai.jsonl
                 [(gemma_moe, "55", "1547"), ("Qwen3.8-Flash-Next", "15.5", "377")], ["proxmox.svg", "ubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, experts in RAM")]),

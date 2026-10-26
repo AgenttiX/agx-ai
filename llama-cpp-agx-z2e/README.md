@@ -5,7 +5,7 @@ server, see [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii).
 
 [`docker-compose.yml`](docker-compose.yml) runs `ghcr.io/ggml-org/llama.cpp:server-cuda13` (build b10689) on port 9931
 as a router with one of the presets below, which is selected by commenting the volume lines in or out. It uses the
-server-wide settings of [`../llama-cpp-agx-ai/config.ini`](../llama-cpp-agx-ai/config.ini), which is identical to
+server-wide settings of [`../llama-cpp-rtx3070/config.ini`](../llama-cpp-rtx3070/config.ini), which is identical to
 [`config.ini`](config.ini) here, and the API key of [`../llama-cpp-radeon-vii/llama-cpp.env`](../llama-cpp-radeon-vii).
 
 All models except Qwen3.8-Flash-Next run entirely on the GPU with flash attention and MTP speculative decoding.
@@ -390,7 +390,7 @@ cd ../benchmark
 # Stop the production server, then start a test server on port 9934 with a preset or a variant of it
 docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
 NAME=llama-test-cuda DOCKER_ARGS="--gpus all" ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:server-cuda13 \
-    ../llama-cpp-agx-z2e/preset-qwen3.8-27b.ini ../llama-cpp-agx-ai/config.ini ../llama-cpp-radeon-vii/llama-cpp.env 9934
+    ../llama-cpp-agx-z2e/preset-qwen3.8-27b.ini ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env 9934
 # Serving speed with a full-context prompt, chat, depth and an image
 ./llama_cpp_bench_http.py --url http://localhost:9934 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth image --prompt-tokens 100900 --repeat 2 --depth 6400 16000 36500 60000 100000 \

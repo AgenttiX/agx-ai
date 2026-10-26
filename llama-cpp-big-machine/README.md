@@ -37,7 +37,7 @@ The machine is shared with other users' jobs, so the container has a memory limi
 three changes in [`docker-compose.yml`](docker-compose.yml), without which the default preset did not start:
 
 - `NVIDIA_DISABLE_REQUIRE=1`: the image requires CUDA >= 13.4, but the driver provides 13.3 (as in
-  [`../llama-cpp-agx-ai`](../llama-cpp-agx-ai)).
+  [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070)).
 - `LLAMA_ARG_PORT=9931`: the image sets `LLAMA_ARG_PORT=8080`, which overrides the port of `config.ini`, so the server
   listened on 8080 and the published port 9931 reset every connection.
 - `NCCL_P2P_DISABLE=1` and `shm_size: 2g`: the tensor split now reduces with NCCL
@@ -99,7 +99,7 @@ GPUs, with the embedding model.
 - Peak 15949 / 13128 MiB, also with a prompt of 250000 tokens (1223 t/s).
 
 **1 GPU** ([`preset-gemma-4-26b-a4b-qat-1gpu.ini`](preset-gemma-4-26b-a4b-qat-1gpu.ini)), like
-[`../llama-cpp-agx-ai`](../llama-cpp-agx-ai): Gemma on GPU 1 with the experts of 19 layers on the CPU (~8 GB;
+[`../llama-cpp-rtx3070`](../llama-cpp-rtx3070): Gemma on GPU 1 with the experts of 19 layers on the CPU (~8 GB;
 the container used 12.4 GiB of RAM; 16 threads), the embedding model on GPU 0. Variants, all with ctx 262144 and 4 slots:
 
 | Experts on the CPU | ubatch-size | KV cache | Result |

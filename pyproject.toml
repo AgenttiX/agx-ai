@@ -113,7 +113,7 @@ project-includes = [
     "open-webui",
     "structure",
     "vllm",
-    "vllm-agx-ai",
+    "vllm-rtx3070",
     "vllm-radeon-vii",
     "vllm-rtx3090-flash-next"
 ]
