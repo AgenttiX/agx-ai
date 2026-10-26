@@ -9,7 +9,7 @@ cache. The models and their settings are in [preset.ini](preset.ini), and the se
 
 | Model | Context | VRAM = RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|
-| Gemma 4 E4B QAT UD-Q4_K_XL (default) | 32768 | 4.5 GiB (model 3.9 GiB, vision/audio encoder, KV cache) | 9.0 t/s, chat 8.9 t/s; 8.7 t/s at 4k context | 53 t/s (2048 tokens); 42 t/s at 4k context | The CPU generates faster in short chats (12.6 t/s), but processes prompts at half the speed |
+| Gemma 4 E4B QAT UD-Q4_K_XL (default) | 32768 | 4.8 GiB (model 3.9 GiB, vision/audio encoder, MTP drafter, KV cache) | 9.6 t/s, chat 9.5 t/s with MTP (draft acceptance 56 %); 8.7 t/s at 4k context without MTP | 52 t/s (2048 tokens); 42 t/s at 4k context | The CPU generates faster in short chats (12.6 t/s), but processes prompts at half the speed |
 | Gemma 4 E2B QAT UD-Q4_K_XL | 32768 | 2.4 GiB | 13.7 t/s | 106 t/s (1024 tokens) | The CPU generates 26 t/s with a short context |
 | Gemma 4 12B QAT UD-Q4_K_XL | 16384 | 6.8 GiB | 4.2 t/s | 19 t/s (1024 tokens) | `ubatch-size = 128` (512 hangs the GPU); leaves only 3.2 GiB free |
 | Qwen3.5-9B Q4_0 | 16384 | 5.4 GiB | 6.1 t/s | 32 t/s (1024 tokens) | |
@@ -33,6 +33,7 @@ loaded. All results are in `../benchmark/results/agx-frame*.jsonl`.
 - Generation on the GPU is not limited by the memory bandwidth: the CPU generates faster from the same memory, and
   the GPU is about as fast with a 2.4 GiB model as with a 3.9 GiB one (~9 t/s). The Adreno 750 has no matrix
   cores or accelerated int8 dot products in Turnip, so llama.cpp uses its scalar shaders.
+  MTP speculative decoding gives E4B another 6-7 %.
 
 ## Installation
 
@@ -88,9 +89,9 @@ build instead of a container.
 
 In desktop mode with Steam, the SteamVR services and Plasma running (no VR game):
 
-| | Without llama.cpp | With E4B loaded (Vulkan, 32k context, vision/audio encoder) |
+| | Without llama.cpp | With E4B loaded (Vulkan, 32k context, vision/audio encoder, MTP) |
 |---|---|---|
-| `MemAvailable` | 10.0 GiB | 5.4 GiB |
+| `MemAvailable` | 10.0 GiB | 5.2 GiB (5.5 GiB without MTP) |
 | Vulkan heap budget | 9.38 GiB of 14.34 GiB | - |
 | Swap | 7.6 GiB free | 7.3 GiB free |
 
@@ -143,11 +144,12 @@ Measured with [llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py) (r
 
 | Configuration | Generation (256 tokens) | Prompt processing (2048 tokens) | Chat (6 prompts, up to 512 tokens) |
 |---|---|---|---|
-| Vulkan (preset.ini) | 9.0 t/s | 52.7 t/s | 8.9 t/s |
-| Vulkan, MTP 2 (`spec-type = draft-mtp`) | 9.5 t/s (acceptance 56 %) | - | 9.5 t/s (8.7-11.4, acceptance 56 %) |
+| Vulkan, MTP 2 (`spec-type = draft-mtp`, preset.ini) | 9.6 t/s (acceptance 56 %) | 51.6 t/s | 9.5 t/s (8.7-11.5, acceptance 56 %) |
+| Vulkan, no MTP | 9.0 t/s | 52.7 t/s | 8.9 t/s |
 | CPU, `threads = 4`, `threads-batch = 8` | **12.8 t/s** | 26.1 t/s | **12.6 t/s** (12.5-12.8) |
 
-MTP is only ~6 % faster on the GPU and costs memory, so it is not enabled.
+MTP (Unsloth's 57 MB drafter, 2 draft tokens) makes generation 6-7 % faster for ~0.3 GiB of memory and a 2 % slower
+prompt processing, so it is enabled.
 The CPU is 40 % faster in short chats, but processes the 2048-token prompt at half the speed of the GPU (a 2k-token
 prompt takes 78 s instead of 39 s), and with a longer context it falls behind in generation too (see above).
 For short chats without a system prompt, the CPU configuration in the comment of [preset.ini](preset.ini) is faster.
@@ -176,6 +178,7 @@ cmake -B build-vk -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$HOME/
 variation, so there is no reason to build locally. GCC's `-march=native`/`-mcpu=native` would detect the CPU as
 `cortex-a520` (a little core), so a local build should not use `GGML_NATIVE=ON`.
 KleidiAI found I8MM kernels for Q4_0 and Q8_0 but none for F32 or Q4_K.
+The local builds were deleted afterwards.
 
 ## Backends that do not work here
 
