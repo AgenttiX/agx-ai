@@ -152,6 +152,19 @@ prompt processing 1209 / 1054 / 812 instead of 1143 / 867 / 544 t/s. The FP16 st
 same KV cache (168848 instead of 158480), with no measurable effect on the speed. The notes below are from 2026-10-12
 with the Triton attention.
 
+Checked on 2026-10-26 with the current settings:
+
+- **MTP 3 instead of 2** (with CUDA graphs for up to 16 tokens): only edits are faster (125.6 / 119.3 instead of
+  112.2 / 102.9 t/s, short / after 32k tokens), everything else slower: chat 76.7 instead of 82.8 t/s, 77.9 / 72.6 /
+  61.3 instead of 83.4 / 79.4 / 66.3 t/s at 6.4k / 32k / 100k tokens of context, prompt processing 1038 / 909 / 699
+  instead of 1209 / 1054 / 812 t/s. MTP 2 stays.
+- **The CPU KV offloading** of 16 GiB is large enough: a 25030-token conversation that two 100k-token prompts had
+  evicted from the GPU came back in 1.7 s instead of 25.0 s, with the same greedy answer
+  ([`../benchmark/vllm_prefix_return.py`](../benchmark/vllm_prefix_return.py)). This image stores ~36 KB per token
+  (8.1 GB for the 225k tokens of the test), much less than HyperQwen's ~100 KB with its recurrent-state snapshots
+  (see [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#cpu-kv-offloading)), so 16 GiB holds ~470k
+  tokens.
+
 - The context was the maximum for the 21 GiB: the KV cache of 6.4 GB holds 158480 tokens (~40 KiB per token including the
   recurrent states), and vLLM needs 1.05-1.07 times the context. 163840 tokens (6.9 GB) ran out of memory on the
   first request with the desktop using 2.7 GiB.
@@ -374,6 +387,23 @@ which has the kernel measurements; in the server (one run each, MTP 3):
   for 260000 tokens, peak 20238 MiB. Compared with the settings of 2026-10-14 measured the same day (24 FP32
   threads): chat +27 %, generation +22-31 %, edits +31 %.
 
+Tested afterwards, not better (2026-10-26, one run each, the current configuration otherwise):
+
+- **GPU share** 0.15 / 0.3 (current) / 0.45: edits 52.2 / 52.3 / 52.5 t/s, CPU 52 / 51 / 50 ms and GPU 14 / 14 /
+  17 ms per step: no difference.
+- **28 hot experts**: edits 49.8 t/s (24: 52.3), as the GPU part grows (16 instead of 14 ms per step) by more than
+  the CPU part shrinks; peak 21286 MiB.
+- **An int8 lm_head** (1.2 GB of BF16 read in every step) does not start: the MTP drafter computes its reduced draft
+  vocabulary with the target's lm_head, which the runtime requires to be unquantized (`reduced draft vocabulary
+  requires an unquantized LM head`). It would also need the model to pass its quantization config to the lm_head.
+- **More tokens per step for edits** (a step verifies at most 4 tokens, and copying code accepts 98 % of the 3 MTP
+  drafts): not attempted. Batches of more than 4 tokens leave the runtime's CUDA-graph decode path for the CPU
+  experts and fall back to its prefill paths (all cold experts streamed through the GPU, or the CPU without CUDA
+  graphs). It would need a larger request slot in the CPU kernel, the GPU bridge kernel and the GPU share, CUDA
+  graphs for the larger batches, and a drafter that copies from the context in addition to MTP, which vLLM does not
+  combine (one method at a time; its `ngram` and `suffix` methods alone would lose MTP's ~2 accepted tokens per step
+  in normal text).
+
 Ideas not tried yet:
 
 1. **The CPU frequency policy** `performance` instead of `powersave`/`balance_performance` (a system-wide setting,
@@ -382,7 +412,6 @@ Ideas not tried yet:
    its compute limit, so it should gain from faster RAM almost proportionally (measure with
    [`../vllm-rtx3090-flash-next/cpu_moe_bench/run.sh`](../vllm-rtx3090-flash-next/cpu_moe_bench/run.sh) first, then
    retune the thread count). The rest of a step (GPU ~14 ms, tail ~5.6 ms of ~70 ms) does not change.
-3. 28 hot experts (the peak would be ~21.1 GiB, between the measured 24 and 32).
 
 ### Other settings (2026-10-14)
 

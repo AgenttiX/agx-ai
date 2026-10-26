@@ -104,11 +104,26 @@ draft acceptance change), the depth test at 32k by about as much.
 - `SPEC=mtp CTX=long` (150000 tokens of context) has no fixed KV cache size by default; `GPU_UTIL=0.85` gave 6.37 GiB.
   `GPU_UTIL` is set to 0.85 in all variants: vLLM checks at startup that this share of the GPU is free, and the default
   of 0.93 would fail next to the desktop. With a fixed KV cache (`KV_MEM`), it has no other effect.
+- **`INT8_ACT=int8`** (2026-10-26; W4A8 Marlin GEMMs with int8 activations for all linear layers): prompt
+  processing is much faster, but generation slower, as the DFlash2 verify batches of 8 tokens are slower with the
+  int8 GEMMs. It also needs ~0.7 GiB more VRAM (21274 MiB after loading with the mode's default KV cache, 131072
+  tokens of context, against 20584 MiB without it), so the configuration's 5.95 GB KV cache would exceed the 21 GiB
+  (a first run with it ran out of memory in a prompt, while a video player may also have taken VRAM), and HyperQwen
+  measured +4 % perplexity (prose; code about the same). Not used: an agent's turn usually processes a few thousand new tokens after a cached prefix and
+  then generates. One run:
+
+  | | Chat | Gen. 6.4k / 32k / 100k | Edit | Prompt 6.4k / 32k / 100k |
+  |---|---|---|---|---|
+  | Current configuration | 136.4 | 128.4 / 109.7 / 79.9 | 290.3 | 1223 / 1066 / 822 |
+  | `INT8_ACT=int8`, 131072 tokens of context | 40.4 (5.3-87.0) | 95.9 / 87.3 / 85.7 | 235.4 | 1504 / 1737 / 1136 |
+
 - Not tested: `DFLASH_TOKENS=15` ("reproduction mode", 16 instead of 8 verified tokens per step while the lookup
   drafting fires: HyperQwen measured +50 % when reproducing a document, but -3 to -20 % in mixed long-context work),
   which needs the FlashAttention-2 FP8 or Triton int8 KV cache instead of pth-flash-attn and leaves less context;
-  `CTX=huge` (KVarN 4/2-bit KV cache, 240k tokens, about half the speed past 100k); `INT8_ACT=int8` (W4A8 prefill,
-  +20-30 % prompt processing, +4 % perplexity).
+  `CTX=huge` (KVarN 4/2-bit KV cache, 240k tokens, about half the speed past 100k); `PREFILL_ATTN=int8` (HyperQwen:
+  within a few percent either way without `INT8_ACT`).
+- **Other programs on the GPU**: the configuration leaves ~1-2 GiB free next to the desktop. Opening a video player
+  crashed a test server of this image (2026-10-26); the container restarts by itself.
 
 ## Concurrent agents
 
