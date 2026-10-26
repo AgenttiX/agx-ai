@@ -14,9 +14,9 @@ docker build -t ghcr.io/agenttix/agx-ai/vllm-flash-next:latest .
 [`docker-compose.yml`](docker-compose.yml) runs it on the RTX 3090 of agx-z2e (`docker compose up -d`, after stopping
 [`../vllm-rtx3090`](../vllm-rtx3090) or [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090) on the same GPU and port);
 its settings and the measurements behind them are in
-[`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#qwen38-flash-next). [`../vllm-rtx3070`](../vllm-rtx3070) runs the
-model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner change in
-[`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
+[`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#qwen38-flash-next). [`../vllm-rtx3070`](../vllm-rtx3070) runs this image
+on an 8 GB RTX 3070 too (without MTP, with an int4 lm_head and one hot expert per layer), and also the model with
+stock vLLM, with the same `cpu_vision.py` and encoder runner change in [`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
 (`--language-model-only`), although its model code supports images and videos. This image adds image and video
 input and a faster CPU expert kernel:
 
@@ -42,9 +42,13 @@ input and a faster CPU expert kernel:
       frames (default 12582912, ~6000 tokens). The model's own default (25 M pixels) would take ~1 min of CPU time
       and ~3 GiB of RAM for a 30-s 1080p video,
     - no encoder profiling: a dummy input of the maximum size would take minutes on the CPU,
-  - and it sets `gpu-memory-utilization` (`GPU_MEMORY_UTILIZATION`, default 0.8): vLLM checks at startup that this
+  - it sets `gpu-memory-utilization` (`GPU_MEMORY_UTILIZATION`, default 0.8): vLLM checks at startup that this
     share of the GPU is free, and the runtime's default of 0.92 fails next to a desktop. The KV cache size is set
-    explicitly anyway.
+    explicitly anyway,
+  - and, for the 8 GB RTX 3070 of [`../vllm-rtx3070`](../vllm-rtx3070/README.md#cpu-experts-2026-10-26) (added on
+    2026-10-26): the lm_head is created with the checkpoint's quantization config, so that an int4 or int8 lm_head
+    loads (a BF16 one, as in the checkpoint here, is unaffected), and the serve script requires the MTP drafter only
+    with `MTP_DEPTH` > 0.
 - [`cpu-moe.patch`](cpu-moe.patch) (the runtime's `cpu_moe.cpp`, which computes the cold experts on the CPU during
   decode; compiled at startup), added on 2026-10-26:
   - integer activations, selected at startup (the default stays FP32): `QWEN38_CPU_EXPERTS_INT8=1` quantizes each

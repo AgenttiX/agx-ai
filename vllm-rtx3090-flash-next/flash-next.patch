@@ -1,7 +1,18 @@
 diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
---- a/usr/local/bin/qwen38-serve	2026-09-30 05:31:33.000000000 +0300
-+++ b/usr/local/bin/qwen38-serve	2026-10-13 18:06:13.956663978 +0300
-@@ -51,14 +51,33 @@
+--- a/usr/local/bin/qwen38-serve	2026-10-26 19:55:26.627351851 +0000
++++ b/usr/local/bin/qwen38-serve	2026-10-26 19:55:26.639974534 +0000
+@@ -13,7 +13,9 @@
+ rankings=/opt/qwen38-3090/configs/static_hot_cache_rankings.json
+ 
+ [[ -f "$model/model.safetensors.index.json" ]] || { echo "model checkpoint not found at $model" >&2; exit 2; }
+-[[ -f "$mtp_model/model.safetensors.index.json" ]] || { echo "MTP draft not found at $mtp_model" >&2; exit 2; }
++# agx-ai: the MTP draft is only needed with MTP_DEPTH > 0 (vllm-rtx3070 has no VRAM for it).
++(( ${MTP_DEPTH:-3} == 0 )) || [[ -f "$mtp_model/model.safetensors.index.json" ]] || {
++  echo "MTP draft not found at $mtp_model" >&2; exit 2; }
+ [[ -f "$rankings" ]] || { echo "missing expert rankings: $rankings" >&2; exit 2; }
+ 
+ # The CPU decode path takes one request with up to 4 tokens per step (MTP depth <= 3).
+@@ -51,14 +53,33 @@
  done < <(python3 "$host_py" --env)
  python3 "$host_py" | sed 's/^/[qwen38-3090] /'
  
@@ -37,8 +48,8 @@ diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
    --safetensors-load-strategy lazy \
    --max-parallel-loading-workers "$MAX_PARALLEL_LOADING_WORKERS" \
 diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
---- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-09-29 10:11:58.000000000 +0300
-+++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-10-13 18:06:13.956590800 +0300
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-10-26 19:55:26.627587255 +0000
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py	2026-10-26 19:55:26.639852092 +0000
 @@ -80,6 +80,7 @@
  from .low_latency_gemm import enable_qwen38next_low_latency_gemm
  from .ple_layer import Qwen3_8FlashNextPLELayer
@@ -47,7 +58,16 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
  
  
  def without_modelopt_fp4(
-@@ -928,12 +929,18 @@
+@@ -679,6 +680,8 @@
+             self.lm_head = ParallelLMHead(
+                 config.vocab_size,
+                 config.hidden_size,
++                # agx-ai: an int4/int8 lm_head of the checkpoint (vllm-rtx3070); a BF16 one is unaffected.
++                quant_config=vllm_config.quant_config,
+                 prefix=maybe_prefix(prefix, "lm_head"),
+             )
+         else:
+@@ -928,12 +931,18 @@
              self._tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
  
              with self._mark_tower_model(vllm_config, {"image", "video"}):

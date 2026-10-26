@@ -3,8 +3,13 @@
 # The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that
 # clients work with both.
 #
-# Gemma 4 26B-A4B or Qwen3.8-Flash-Next, selected with the volume lines below.
-# Start: docker compose -f ../llama-cpp-rtx3070/docker-compose.yml stop && docker compose up -d
+# Two services, of which only one runs at a time:
+# - vllm: stock vLLM (../vllm's image) with Gemma 4 26B-A4B or Qwen3.8-Flash-Next, selected with its volume lines.
+#   Start: docker compose -f ../llama-cpp-rtx3070/docker-compose.yml stop && docker compose up -d
+# - flash-next: Qwen3.8-Flash-Next with the runtime of ../vllm-rtx3090-flash-next, which computes most experts on the
+#   CPU: 1.6 times as fast as stock vLLM with the same context (README.md).
+#   Start: docker compose -f ../llama-cpp-rtx3070/docker-compose.yml stop && docker compose stop vllm &&
+#   docker compose up -d flash-next
 
 x-gpu: &gpu
   deploy:
@@ -64,5 +69,92 @@ services:
       # The first start compiles kernels for a few minutes; Qwen3.8-Flash-Next takes ~13 min to load.
       start_period: 25m
 
+  flash-next:
+    <<: *gpu
+    # Qwen3.8-Flash-Next with the single-GPU runtime of https://github.com/DominikBucko/qwen38-flash-next-3090 and the
+    # changes of ../vllm-rtx3090-flash-next (images and videos with the vision tower on the CPU, int8 CPU expert
+    # kernel, quantized lm_head), built by ../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml. Only
+    # started when named (docker compose up -d flash-next), as it takes the same GPU and port as vllm.
+    profiles: [flash-next]
+    image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
+    container_name: vllm-rtx3070-flash-next
+    # The runtime takes the API key from VLLM_API_KEY. The checkpoint: albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE with
+    # its Gated DeltaNet and attention projections in int8 and its lm_head in int4 (README.md: a view of the
+    # checkpoint in ~/.cache/vllm-models with one new shard and links to the original shards). No MTP drafter: it
+    # does not fit (the second argument is only a placeholder).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        VLLM_API_KEY="$$LLAMA_API_KEY" exec /usr/local/bin/qwen38-serve
+        /models/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense8-head4-view
+        /models/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense8-head4-view
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    # Overrides of the runtime's defaults (configs/3090-64gb-128k.env of the runtime repository, for a 24 GB GPU).
+    # Measurements: README.md#cpu-experts-2026-10-26
+    environment:
+      SERVED_MODEL_NAME: Qwen/Qwen3.8-Flash-Next
+      PORT: "8000"
+      # The same context as stock vLLM. The int8 KV cache holds 73910 tokens (~16.5 KB per token); the runtime needs
+      # ~1.05 times the context. Peak 7658 MiB with a 55k-token prompt.
+      MAX_MODEL_LEN: "57344"
+      KV_CACHE_MEMORY_BYTES: "1220000000"
+      GPU_MEMORY_UTILIZATION: "0.9"
+      # MTP does not fit: its module takes 1.65 GiB, and its attention layer would make the KV cache ~1.5 times as
+      # large per token.
+      MTP_DEPTH: "0"
+      # The token embedding in pinned RAM (looked up over PCIe), -1.18 GiB of VRAM.
+      QWEN38_EMBED_UVA: "1"
+      # One hot expert per layer on the GPU (the minimum; 0 would put all experts on the GPU), ~116 MiB. All other
+      # experts are computed by the CPU during decode (and ~22 % of them by the GPU over PCIe, the default share) and
+      # streamed to the GPU during prefill.
+      QWEN38_HOT_ONLY: "1"
+      # Prefill streams the cold experts in groups of 32 instead of 80: smaller GPU buffers (~300 MiB less than with
+      # 64), with no measurable effect on the speed. The prefill chunk stays at 2048 tokens, as in the
+      # stock vLLM configuration.
+      QWEN38_STREAM_GROUP: "32"
+      MAX_NUM_BATCHED_TOKENS: "2048"
+      # The CPU experts with int8 activations (../vllm-rtx3090-flash-next/README.md), with the runtime's automatic
+      # pool of 8 threads, one per 2-core CCX of the EPYC 7302: 16 threads (one per core) and a GPU share of 0.4
+      # were slower.
+      QWEN38_CPU_EXPERTS_INT8: "1"
+      # Log CPU and GPU decode step times every N steps (0 = off).
+      QWEN38_CPU_EXPERTS_STATS: "0"
+      # Images and videos with the vision tower on the CPU, 16 threads as for stock vLLM (the 24 threads of the
+      # container include SMT siblings). The image's defaults limit images to 1 megapixel and videos to 64 frames
+      # with 12 megapixels over all frames.
+      QWEN38_VISION_THREADS: "16"
+    ipc: host
+    cap_add:
+      - SYS_PTRACE
+    # memlock: -1 of the runtime's compose file is not permitted in the LXC container (and not needed).
+    ulimits:
+      stack: 67108864
+    # The runtime sizes its RAM arena for the cold experts from this limit (limit - 10 GiB, at most all 24528 cold
+    # experts, 57.9 GiB), and reads the FP8 n-gram table (47.6 GiB) from the checkpoint (through the host's ZFS
+    # cache). The container used 69.5 GiB with a 72 GiB limit; the vision tower takes up to ~1.5 GiB more while a
+    # video is encoded, so the limit leaves ~6.5 GiB of headroom.
+    mem_limit: 76g
+    memswap_limit: 76g
+    ports:
+      - "9931:8000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+      # The checkpoint view, see above
+      - /home/mika/.cache/vllm-models:/models:ro
+      # Kernel caches (Humming, Triton): the first start compiles kernels, later starts reuse them.
+      - flash-next-cache:/root/.humming
+      - flash-next-triton-cache:/root/.triton
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20m
+
 volumes:
   vllm-cache:
+  flash-next-cache:
+  flash-next-triton-cache:

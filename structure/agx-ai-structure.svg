@@ -201,10 +201,10 @@
 <use href="#logo-ubuntu" x="1207" y="614.5" width="40" height="40"/>
 <text x="1210" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
 <text x="1210" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
-<text x="1210" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (15.5 | 377)</tspan></text>
-<rect x="1088.75" y="799" width="242.5" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
-<use href="#logo-vllm" x="1094.75" y="803" width="22" height="22"/>
-<text x="1122.75" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts in RAM</tspan></text>
+<text x="1210" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
+<rect x="1073.35" y="799" width="273.3" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
+<use href="#logo-vllm" x="1079.35" y="803" width="22" height="22"/>
+<text x="1107.35" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts on the CPU</tspan></text>
 <rect x="1372" y="555" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
 <rect x="1378" y="561" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
 <rect x="1386" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>

@@ -1,34 +1,44 @@
 # vLLM on RTX 3070
 
 vLLM on the RTX 3070 (8 GB) of the `agx-ai` LXC container, as an alternative to
-[`../llama-cpp-rtx3070`](../llama-cpp-rtx3070) on the same GPU and port (9931). Only one of the two fits on the GPU at a
-time. [`docker-compose.yml`](docker-compose.yml) uses the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`,
-CUDA 13.0, with the fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch)) and the API key of the llama.cpp server.
-The model is selected by commenting the config volume lines in or out.
+[`../llama-cpp-rtx3070`](../llama-cpp-rtx3070) on the same GPU and port (9931). Only one of them fits on the GPU at a
+time. All use the API key of the llama.cpp server. [`docker-compose.yml`](docker-compose.yml) has two services:
 
-| Configuration | Model | Context | Chat | Generation at 6.4k / 36.5k tokens | Prompt processing |
-|---|---|---|---|---|---|
-| [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2 | 98304 | 32 t/s | 30 / 27 t/s | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k |
-| [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts and n-gram table in RAM, FP8 KV cache, no MTP, image and video input (vision tower on the CPU) | 57344 | 15.4 t/s | 15.4 / 15.4 (at 32k) t/s | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k |
+- `vllm` (`docker compose up -d`): stock vLLM, the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`, CUDA
+  13.0, with the fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch)), with Gemma 4 26B-A4B or Qwen3.8-Flash-Next,
+  selected by commenting the config volume lines in or out. The GPU reads the experts from RAM over PCIe.
+- `flash-next` (`docker compose up -d flash-next`, after stopping `vllm`): Qwen3.8-Flash-Next with the runtime of
+  [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) (a vLLM build by DominikBucko for one RTX 3090), which
+  computes most experts on the CPU instead, see [CPU experts](#cpu-experts-2026-10-26).
 
-**Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)): **llama.cpp is
-clearly better for Gemma 4 26B-A4B.** It generates 1.7 times as fast (chat ~55 vs 32 t/s, 45-49 vs 27 t/s at 36-70k
-tokens), processes long prompts twice as fast (~1220 t/s at 119k vs 580 t/s at 96k) and fits 25 % more context
-(122880 vs 98304). Neither fits the model in 8 GB, but they keep the experts in RAM differently: llama.cpp computes
-them on the 16-core EPYC, while vLLM has no CPU kernels for them, so the GPU reads the selected experts from RAM over
-PCIe for every token.
+## Current configuration
 
-**Qwen3.8-Flash-Next: vLLM is faster, llama.cpp had more context.** vLLM generates 13 % faster (15.4 vs 13.6 t/s,
-15.4 vs 12.1 t/s at 32-36.5k tokens) and processes prompts ~15-20 % faster, as the GPU reads the experts over PCIe
-faster than the CPU decodes llama.cpp's IQ quantization types, and it also takes videos. llama.cpp fitted 81920 tokens
-of context instead of 57344, started in 1.5 min instead of 13 and needed neither the re-quantized checkpoint nor the
-patched image; its GGUF was removed on 2026-10-13 to free disk space, see [Qwen3.8-Flash-Next](#qwen38-flash-next).
+| Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
+|---|---|---|---|---|---|---|---|
+| `vllm`: [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2, int8 KV cache | 98304 | 7582 MiB | ~12 GiB pinned weights, 16 GiB CPU KV cache | chat 32 t/s; 30 / 27 t/s at 6.4k / 36.5k | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k | **llama.cpp is 1.7 times as fast** for this model on this GPU (see below) |
+| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 57344 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 t/s at 6.4k / 55k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k | images and videos (vision tower on the CPU); no CPU KV offloading; prefix cache blocks of 1600 tokens |
+| `vllm`: [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | The same model with stock vLLM (the GPU reads the experts over PCIe), FP8 KV cache | 57344 | 7342 MiB | ~107 GiB pinned weights, 8 GiB CPU KV cache | chat 15.4 t/s; 15.4 / 15.4 t/s at 6.4k / 32k | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k | images and videos; CPU KV offloading (an evicted conversation comes back from RAM); prefix cache blocks of 3136 tokens |
 
-The rest of this file has the measurements behind the settings. They were made on 2026-10-12 and 2026-10-13 with the
-tools in [`../benchmark`](../benchmark/README.md), on test servers
+**Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with the same
+context, and processes long prompts faster (581 vs ~410-455 t/s), but short ones slightly slower (353 vs 377 t/s at
+6.4k tokens). It also reprocesses less of a returning conversation, as its prefix cache blocks are half as large. Stock
+vLLM keeps evicted conversations in its CPU KV cache, which the runtime does not support, and its answers were
+slightly closer to those of the reference in the quality test (see [CPU experts](#cpu-experts-2026-10-26)).
+llama.cpp was slower than both (13.6 t/s) and its GGUF was removed on 2026-10-13, see
+[Qwen3.8-Flash-Next](#qwen38-flash-next).
+
+**Gemma 4 26B-A4B: llama.cpp is clearly better** ([`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)). It
+generates 1.7 times as fast (chat ~55 vs 32 t/s, 45-49 vs 27 t/s at 36-70k tokens), processes long prompts twice as
+fast (~1220 t/s at 119k vs 580 t/s at 96k) and fits 25 % more context (122880 vs 98304). Neither fits the model in
+8 GB, but they keep the experts in RAM differently: llama.cpp computes them on the 16-core EPYC, while stock vLLM has
+no CPU kernels for them, so the GPU reads the selected experts from RAM over PCIe for every token. The runtime of the
+`flash-next` service does the same as llama.cpp, but only for Qwen3.8-Flash-Next.
+
+The rest of this file has the measurements behind the settings. They were made on 2026-10-12 to 2026-10-14 and on
+2026-10-26 with the tools in [`../benchmark`](../benchmark/README.md), on test servers
 ([`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh), port 9933) with the production containers
 stopped. The results are in [`../benchmark/results/agx-ai.jsonl`](../benchmark/results/agx-ai.jsonl) (labels starting
-with "agx-ai vLLM"). VRAM figures are those of the vLLM processes (`nvidia-smi --query-compute-apps`); the GPU has
+with "agx-ai vLLM" and "agx-ai flash-next runtime"). VRAM figures are those of the vLLM processes (`nvidia-smi --query-compute-apps`); the GPU has
 no display, and 7839 MiB of its 8192 MiB are usable.
 
 ## Hardware
@@ -68,15 +78,30 @@ docker run --rm -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub python:
 docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro -v ~/.cache/vllm-models:/out \
     -v "$PWD":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest /src/quantize_flash_next_dense.py \
     --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense-int8-head4 --bits 8 --lm-head-bits 4
+# The same for the flash-next service, as a view with one new 3.1 GB shard and links to the source shards (~1 min;
+# the runtime fuses the shared experts in BF16)
+docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro -v ~/.cache/vllm-models:/out \
+    -v "$PWD":/src:ro --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm:latest /src/quantize_flash_next_dense.py \
+    --out /out/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense8-head4-view --bits 8 --lm-head-bits 4 --separate-shard \
+    --keep-shared-experts
 # Stop llama.cpp on this GPU and start vLLM
 docker compose -f ../llama-cpp-rtx3070/docker-compose.yml stop
 docker compose up -d
+# Or Qwen3.8-Flash-Next with its experts on the CPU instead (image: ../vllm-rtx3090-flash-next, built by
+# ../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml)
+docker compose stop vllm
+docker compose up -d flash-next
 ```
 
 The Qwen3.8-Flash-Next configuration needs the fixes of 2026-10-13 in [`../vllm/vllm.patch`](../vllm/vllm.patch)
 (UVA weight offloading), which are in the image once the workflow has rebuilt it after the push. Until then, build
 it locally with `docker build -t ghcr.io/agenttix/agx-ai/vllm:latest ../vllm` (done on agx-ai on 2026-10-13). The
 Gemma configuration works with and without them.
+
+The `flash-next` service needs the quantized lm_head and the optional MTP drafter of
+[`../vllm-rtx3090-flash-next/flash-next.patch`](../vllm-rtx3090-flash-next/flash-next.patch) (2026-10-26), which are
+in its image once the workflow has rebuilt it after the push (built locally on agx-ai on 2026-10-26). It starts in
+5-11 min (reading the checkpoint and filling its RAM arena with the experts).
 
 The first start compiles kernels for a few minutes; later starts of Gemma take ~3 min (the caches are in the `vllm-cache`
 volume), most of it for loading the 15 GiB checkpoint and pinning 12 GiB of it in RAM.
@@ -150,7 +175,9 @@ the image including the fixes of 2026-10-13):
 Qwen3.8-Flash-Next is a 125B MoE (512 experts, 10 active per token, 48 layers, 12 of them with Qwen Sparse Attention
 and 36 with Gated DeltaNet) with a 51B-parameter n-gram embedding table. On agx-z2e it runs with the single-RTX-3090
 runtime of DominikBucko/qwen38-flash-next-3090 (see [`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-flash-next)),
-which needs 9.8 GB of VRAM for its BF16 dense weights alone and has no option for smaller GPUs. Stock vLLM 0.31 runs
+which needs 9.8 GB of VRAM for its BF16 dense weights and embedding. Since 2026-10-26, it runs here too, with int8 dense
+layers, an int4 lm_head and the embedding in RAM (the `flash-next` service, see
+[CPU experts](#cpu-experts-2026-10-26)). Stock vLLM 0.31 runs
 the model with the experts read from RAM over UVA as for Gemma, but only with six fixes and a re-quantized
 checkpoint (and two more fixes for images and videos and for the FP8 KV cache). The vLLM CPU backend is no alternative: it would need the whole model in RAM, the model has no CPU
 implementation in vLLM, and the fast paths need AVX-512.
@@ -314,6 +341,82 @@ types. Both run their vision encoder on the CPU: a 1280x960 image takes ~15 s un
 more context (81920 vs 57344), started in 1.5 min instead of 13-23, and needed no re-quantized checkpoint or patched
 image. Its GGUF was removed on 2026-10-13 to free disk space.
 
+### CPU experts (2026-10-26)
+
+[`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md) is the single-RTX-3090 runtime of
+DominikBucko/qwen38-flash-next-3090 that agx-z2e uses (see
+[`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-flash-next)): the GPU keeps the dense weights and a few "hot"
+experts per layer, an AVX2 thread pool computes the other ("cold") experts from RAM during decode while the GPU
+computes a share of them over PCIe, and prefill streams the cold experts through the GPU. With the int8 CPU expert
+kernel of 2026-10-26 (`cpu-moe.patch`), decode is bound by the CPU's memory bandwidth, and the EPYC 7302 reads its
+8 channels faster than the GPU reads RAM over PCIe. It did not fit in 8 GB with its defaults (32 hot experts, BF16
+dense weights, the MTP drafter, 8192-token prefill chunks, all for a 24 GB GPU). What made it fit:
+
+- The checkpoint view of agx-z2e with the Gated DeltaNet and attention projections in int8, plus the lm_head in
+  int4 (`quantize_flash_next_dense.py --separate-shard --keep-shared-experts --lm-head-bits 4`; the runtime fuses
+  the shared experts in BF16). The runtime created the lm_head without the quantization config, which
+  [`../vllm-rtx3090-flash-next/flash-next.patch`](../vllm-rtx3090-flash-next/flash-next.patch) now passes, as
+  [`../vllm/vllm.patch`](../vllm/vllm.patch) does for stock vLLM. With the BF16 lm_head, the loading ran out of GPU
+  memory (6.24 GiB in use before the 1.19 GiB lm_head).
+- The token embedding in pinned RAM (`QWEN38_EMBED_UVA=1`), one hot expert per layer (the minimum, ~116 MiB), no MTP
+  (1.65 GiB; the serve script now accepts a missing drafter with `MTP_DEPTH=0`), 2048-token prefill chunks and
+  prefill groups of 32 instead of 80 experts. The weights then take 5.58 GiB on the GPU (stock vLLM: 4.83 GiB, with
+  int8 shared experts and without a hot expert).
+- The memory limit of the container: `ulimits: memlock: -1` of the agx-z2e compose file is not permitted in the LXC
+  container (`error setting rlimit type 8`), and not needed.
+
+The runtime picked 8 pool threads by itself, one per 2-core CCX of the EPYC. Speed (one run each; the chat test varies
+by ~±5 %), with `QWEN38_CPU_EXPERTS_STATS=64` for the decode step times (CPU experts, the GPU between the MoE layers,
+the end of the step):
+
+| Variant (int8 CPU experts, 1 hot expert, int4 lm_head) | KV cache | Context | Chat | Gen. 6.4k / long | Prompt 6.4k / long | CPU / GPU / tail per token | Peak VRAM |
+|---|---|---|---|---|---|---|---|
+| 8 threads (automatic), GPU share 0.22 (default), prefill groups of 64 | 0.75 GiB, 40353 tokens | 28672 | 24.3 | 24.7 / 24.8 (24k) | 337 / 581 (24k) t/s | 20 / 17 / 1.7 ms | 7574 MiB |
+| 16 threads, one per core | 0.75 GiB | 28672 | 22.8 | 23.4 / - | 430 / - t/s | 23 / 18 / 1.7 ms | 7574 MiB |
+| 8 threads, GPU share 0.4 | 0.75 GiB | 28672 | 23.6 | 23.5 / - | 358 / - t/s | 20 / 20.5 / 1.8 ms | 7574 MiB |
+| 8 threads, prefill groups of 48 | 0.98 GiB | 49152 | 24.6 | 23.9 / 26.1 (46k) | 343 / 593 (46k) t/s | 19 / 18 / 1.7 ms | 7674 MiB |
+| **8 threads, prefill groups of 32 (current)** | 1.14 GiB, 73910 tokens | 57344 | 24.6 | 24.5 / 24.3 (55k) | 353 / 581 (55k) t/s | 20-24 / 18 / 1.7 ms | 7658 MiB |
+| The same with int16 activations (practically exact) | 1.14 GiB | 57344 | 19.6 | | | 27-37 / 20 / 1.7 ms | |
+
+- **Generation: 1.6 times as fast as stock vLLM** (24.5 vs 15.4 t/s), and as fast at 55k tokens of context.
+  A token takes ~40 ms: ~20 ms for ~340 cold experts on the CPU (~0.85 GB, ~43 GB/s), ~18 ms on the GPU and ~2 ms at
+  the end; the CPU and the GPU parts do not overlap, as each layer waits for its cold experts. Stock vLLM reads
+  ~1.2 GB of experts per token over PCIe instead (~65 ms). In code edits (`edit` test, a file copied with one change)
+  and in generation without thinking: 24.2 and 23.8 t/s.
+- More pool threads or a larger GPU share made it slower, probably as the serving processes need the remaining cores
+  (as on agx-z2e), and as the PCIe reads of the GPU share compete with the CPU for the same RAM (the CPU took longer
+  per expert).
+- **Prompt processing** streams all cold experts through the GPU for every 2048-token chunk, as stock vLLM reads
+  them, but faster at long prompts (581 vs ~400-455 t/s) and slightly slower at 6.4k (353 vs 377 t/s).
+- **Context**: the same 57344 tokens as stock vLLM. The int8 KV cache needs ~16.5 KB per token (73910 tokens in 1.14 GiB), and its blocks
+  (and thus the prefix cache's granularity) are 1600 tokens instead of 3136. Smaller prefill groups saved ~300 MiB of
+  VRAM with no measurable effect on the speed.
+- **Images and videos** work as with stock vLLM: a 1280x960 image took 15.6 s until the first token (1033 tokens).
+- **RAM**: the container used 69.5 GiB (the 57.9 GiB arena with all cold experts, the vision tower, the pinned
+  embedding), with the n-gram table read from the checkpoint through the host's ZFS cache. The memory limit is
+  76 GiB, and 71 GiB of the 144 GiB stay available otherwise.
+- **No CPU KV offloading**: it does not work with this runtime (see
+  [`../vllm-rtx3090`](../vllm-rtx3090/README.md#other-settings-2026-10-14)), so a conversation evicted from the GPU
+  prefix cache (73910 tokens) is computed again. Stock vLLM keeps it in its CPU KV cache.
+
+**Quality** in the same retrieval test as above (44 questions in a 17360-token context, the top 5 token probabilities
+at every answer position), compared with stock vLLM (FP8 KV, int8 lm_head):
+
+| Variant | Score | Identical answers | Mean KL divergence | Top-token flips |
+|---|---|---|---|---|
+| Stock vLLM, FP8 KV, int8 lm_head (reference) | 39/44 | | | |
+| Stock vLLM, the same with 1024-token prefill chunks (noise floor) | 39/44 | 44/44 | 0.0020 | 0 |
+| Stock vLLM, FP8 KV, int4 lm_head (the stock configuration) | 39/44 | 42/44 | 0.0042 | 2 |
+| Runtime, int16 CPU experts, int8 KV, int4 lm_head | 38/44 | 42/44 | 0.0061 | 2 |
+| **Runtime, int8 CPU experts, int8 KV, int4 lm_head (current)** | 37/44 | 41/44 | 0.0094 | 3 |
+
+The runtime is a different implementation (its own MoE and attention kernels, an int8 instead of an FP8 KV cache, the
+shared experts in BF16), so even with the practically exact int16 activations it differs from stock vLLM about as
+much as stock vLLM's BF16 KV cache did (0.0056). The int8 activations add a little more; on agx-z2e (88 questions) they
+were not measurable. Both missed answers are two-step lookups (5/12 vs 7/12), which vary most between runs. The int8
+activations are kept for their speed (chat 24.6 instead of 19.6 t/s with 8 threads); `QWEN38_CPU_EXPERTS_INT16=1`
+instead would be practically exact.
+
 ## Commands
 
 ```sh
@@ -329,4 +432,11 @@ CACHE_VOLUME=vllm-rtx3070_vllm-cache DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=exp
 ./llama_cpp_bench_http.py --url http://localhost:9933 --no-embedding --tests chat depth --repeat 1 --depth 6400 \
     --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-rtx3070/docker-compose.yml start
+# The flash-next service: a variant as a test server on port 9933 (e.g. with -e QWEN38_CPU_EXPERTS_STATS=64)
+docker compose -f ../vllm-rtx3070/docker-compose.yml stop flash-next
+docker compose -f ../vllm-rtx3070/docker-compose.yml run -d --name flash-next-test -p 9933:8000 \
+    -e QWEN38_CPU_EXPERTS_STATS=64 flash-next
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+    --tests chat depth edit --depth 6400 55000 --repeat 1 --label "..."
+docker rm -f flash-next-test && docker compose -f ../vllm-rtx3070/docker-compose.yml start flash-next
 ```
