@@ -1,42 +1,49 @@
-# AgenttiX AI server configs
+# AgenttiX AI configs
 
 [Structure of the setup](structure/README.md) as an SVG figure
 
-## Software stack
+## Server software stack
 - [GPT Researcher](https://docs.gptr.dev/)
 - [LiteLLM](https://www.litellm.ai/)
   - Routes requests to multiple backends, including both cloud services and local models on multiple devices.
 - [LiteLLM Claude](https://github.com/cabinlab/litellm-claude-code)
   - Use Claude Pro or Max subscription instead of an API key
-- [llama.cpp](https://llama-cpp.com/)
-  - For running local models
-  - [Shared server settings (config.ini) and API key (llama-cpp.env) of the configurations](llama-cpp/README.md)
-  - [RTX 3070 (8 GB) + EPYC config of agx-ai (Gemma 4 26B-A4B on the GPU and the CPU, Qwen3.8-Flash-Next with experts in RAM), with the GPU power limit and measurements](llama-cpp-rtx3070/README.md)
-  - [RTX 3090 config of agx-z2e, with KV cache, context size and MTP measurements, and Qwen3.8-Flash-Next with experts in RAM](llama-cpp-rtx3090/README.md)
-  - [Custom container for Radeon VII with ROCm, with measurements](llama-cpp-radeon-vii/README.md)
-  - [Dual RTX A4000 configs for PaperQA2 RAG (Qwen3.8-27B, Gemma 4 26B-A4B on 2 GPUs or 1 GPU + CPU), with VRAM, context size and speed measurements](llama-cpp-rtx-a4000/README.md)
-  - [NVIDIA T550 Laptop GPU (4 GB) config for Docker Desktop on Windows](llama-cpp-t550/README.md)
-  - [Scripts for running llama.cpp natively on Windows](llama-cpp-windows/README.md)
-  - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU config](llama-cpp-l14/README.md)
-  - [ThinkPad L14 Gen 5 NPU config with OpenVINO Model Server](openvino-l14/README.md)
-  - [ThinkPad L14 Gen 5 NPU config for Gemma 4 E4B with a third-party server](openvino-l14-npu-e4b/README.md)
-  - [ThinkPad L14 Gen 5 NPU config for EmbeddingGemma 2 with OpenVINO Model Server and a converter](openvino-l14-npu-embeddinggemma2/README.md)
-  - [ThinkPad T480 (Intel Core i7-8550U, NVIDIA GeForce MX150 2 GB) CPU + dGPU config](llama-cpp-t480/README.md)
-  - [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
-- [LM Studio](https://lmstudio.ai/)
-  - For running local models
-- [vLLM](https://vllm.ai/)
-  - For running local models
-  - [Radeon VII config with a patched gfx906 container and a bit-exact Gemma 4 QAT checkpoint, with a comparison to llama.cpp](vllm-radeon-vii/README.md)
-  - [RTX 3090 configs of agx-z2e (Qwen3.8-27B, Gemma 4 26B-A4B and 31B, Qwen3.8-Flash-Next with experts in RAM and its vision tower on the CPU), with a Triton attention fix for MTP and a comparison to llama.cpp](vllm-rtx3090/README.md)
-  - [RTX 3090 config of agx-z2e for agentic coding with HyperQwen (Qwen3.8-27B with the DFlash2 drafter and CPU KV offloading), with a comparison of its modes and of the combinations with this repository's optimizations](vllm-rtx3090-hyperqwen/README.md)
-  - [RTX 3070 (8 GB) configs of agx-ai (Gemma 4 26B-A4B and Qwen3.8-Flash-Next with their experts in RAM over UVA), with fixes for UVA weight offloading, a re-quantized Flash-Next checkpoint and a comparison to llama.cpp](vllm-rtx3070/README.md)
-  - [Dual RTX A4000 configs for PaperQA2 RAG: 8 LLM and embedding model configurations on 1-2 GPUs and the CPU, an embedding model retrieval test, and a PaperQA2 comparison to llama.cpp](vllm-rtx-a4000/README.md)
 - [Open Terminal](https://github.com/open-webui/open-terminal)
   - Docker container for LLM terminal access
 - [Open WebUI](https://openwebui.com/)
   - User interface for chats
   - Android client: [Conduit](https://conduit.mobile/)
+
+
+## Backends
+These are the configurations that run the local LLMs.
+
+- [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
+- [llama.cpp](https://llama-cpp.com/)
+  - [Shared server settings (config.ini)](llama-cpp/README.md)
+  - [Native Windows config](llama-cpp-windows/README.md)
+  - [AMD Radeon VII (16 GB): custom ROCm container](llama-cpp-radeon-vii/README.md)
+  - [NVIDIA RTX A4000 (2x 16 GB): PaperQA2 RAG](llama-cpp-rtx-a4000/README.md)
+  - [NVIDIA RTX 3070 (8 GB)](llama-cpp-rtx3070/README.md)
+  - [NVIDIA RTX 3090 (24 GB)](llama-cpp-rtx3090/README.md)
+  - [NVIDIA T550 Laptop GPU (4 GB) with for Docker Desktop on Windows](llama-cpp-t550/README.md)
+  - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU](llama-cpp-l14/README.md)
+  - [ThinkPad T480 (Intel Core i7-8550U, NVIDIA GeForce MX150 2 GB) CPU + dGPU config](llama-cpp-t480/README.md)
+- [LM Studio](https://lmstudio.ai/)
+  - Much easier to set up than llama.cpp or vLLM, but not as optimized.
+    Depending on the hardware, you may get multiple times the performance (tokens/s)
+    using llama.cpp or vLLM with proper configuration.
+- [OpenVINO](https://github.com/openvinotoolkit/openvino)
+  - [ThinkPad L14 Gen 5 NPU (Intel Core Ultra 5 125U, Meteor Lake NPU 3720)](openvino-l14/README.md)
+  - [ThinkPad L14 Gen 5 NPU: EmbeddingGemma 2 with OpenVINO](openvino-l14-npu-embeddinggemma2/README.md)
+  - [ThinkPad L14 Gen 5 NPU: Gemma 4 E4B with a third-party server](openvino-l14-npu-e4b/README.md)
+- [vLLM](https://vllm.ai/)
+  - [AMD Radeon VII (16 GB): custom ROCm container](vllm-radeon-vii/README.md)
+  - [NVIDIA RTX 3070 (8 GB)](vllm-rtx3070/README.md)  
+  - [NVIDIA RTX 3090 (24 GB)](vllm-rtx3090/README.md)
+  - [NVIDIA RTX 3090 (24 GB): HyperQwen (Qwen3.8-27B)](vllm-rtx3090-hyperqwen/README.md)
+  - [NVIDIA RTX 3090 (24 GB): Qwen3.8-Flash-Next with custom container](vllm-rtx3090-flash-next)
+  - [NVIDIA RTX A4000 (2x 16 GB): PaperQA2 RAG](vllm-rtx-a4000/README.md)
 
 
 ## Cloud providers
@@ -47,22 +54,43 @@
 - [Claude Desktop for Linux](https://github.com/aaddrick/claude-desktop-debian)
 
 
+## The attitudes this setup is built with
+<a href="https://www.smbc-comics.com/comic/2011-02-17">
+<img src="https://www.smbc-comics.com/comics/20110217.gif" width="500">
+</a>
+<br>
+Image source:
+<a href="https://www.smbc-comics.com/comic/2011-02-17">SMBC</a>
+<br><br>
+<a href="https://www.reddit.com/r/BrandNewSentence/comments/1wgya3y/we_made_runes_so_complex_that_sand_started/">
+<img src="https://i.redd.it/r2ts99qzaoph1.jpeg" width="500">
+</a>
+<br>
+Image source:
+<a href="https://www.reddit.com/r/BrandNewSentence/comments/1wgya3y/we_made_runes_so_complex_that_sand_started/">Reddit</a>
+
+These images reflect quite well the duality of emotions when starting a local LLM for the first time.
+Witnessing your computer think in natural language can be both a humbling and a greatly rewarding experience,
+and even more so than with the cloud, as you get to physically see the thing doing the thinking.
+To be a bit poetic, these are both aliens, intricate clockwork, and children we are building in our own image.
+
+
 ## Notes
 - [Don't oversaturate the CPU with too many threads](https://github.com/ggml-org/llama.cpp/blob/master/docs/development/token_generation_performance_tips.md#verifying-that-the-cpu-is-not-oversaturated)
 
 
-### Connecting LiteLLM to a remote llama.cpp server over SSH
+### Connecting LiteLLM to a remote LLM backend server over SSH
 This can be done using the SSH sidecar container in [`docker-compose.yml`](./docker-compose.yml).
 First, create `./ssh/config/private.conf` based on `./ssh/config/private-template.conf`,
 and run `chown root:root ./ssh/config/private.conf`.
 Start the SSH container with `cd ./ssh && sudo docker compose run --rm ssh-debug`.
 Create an SSH key from within the container with `ssh-keygen -t ed25519 -C "YOUR_COMMENT"`.
 Your public key is now in `./ssh/config/id_ed25519.pub`.
-On the jump host, set in `~/.ssh/authorized_keys`:
+On the jump host, set in `~/.ssh/authorized_keys` to allow the SSH key to be used only for SSH JumpHost to the target server:
 ```
 restrict,port-forwarding,command="/bin/false",permitlisten="127.0.0.1:1",permitopen="LLAMA_HOSTNAME:22" YOUR_PUBLIC_KEY
 ```
-On the llama.cpp server, set in `~/.ssh/authorized_keys`:
+On the llama.cpp server, set in `~/.ssh/authorized_keys` to allow the SSH key to be used only for forwarding the LLM backend port:
 ```
 restrict,port-forwarding,command="/bin/false",permitlisten="127.0.0.1:1",permitopen="127.0.0.1:9931" YOUR_PUBLIC_KEY
 ```
