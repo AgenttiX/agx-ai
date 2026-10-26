@@ -407,13 +407,19 @@ def build(specs: bool) -> str:
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
-                # llama-cpp-agx-z2e/README.md and llama-cpp-radeon-vii/README.md (image v0.6.0):
-                # 6.4k-token prompt (depth test)
-                [("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
-                [(llama, "llama.cpp", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
+                # RTX 3090: vllm-agx-z2e/README.md (Qwen3.8-27B, Qwen3.8-Flash-Next with vllm-rtx3090-flash-next);
+                # Gemma 4 31B with llama-cpp-agx-z2e/README.md, which is twice as fast as vLLM for it.
+                # Radeon VII: llama-cpp-radeon-vii/README.md (image v0.6.0), which is faster than vllm-radeon-vii.
+                # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test)
+                [("Qwen3.8-27B", "110", "1160"), ("Qwen3.8-Flash-Next", "30", "1650"),
+                 ("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
+                [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
         Machine("server", 1198, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
-                # llama-cpp-agx-ai/README.md; benchmark/results/agx-ai.jsonl: 36.5k-token prompt (depth test)
-                [(gemma_moe, "55", "1547")], ["proxmox.svg", "ubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+                # Gemma 4 26B-A4B with llama-cpp-agx-ai/README.md, which is 1.7 times as fast as vLLM for it:
+                # 36.5k-token prompt (depth test); Qwen3.8-Flash-Next: vllm-agx-ai/README.md, 6.4k-token prompt
+                # (depth test); benchmark/results/agx-ai.jsonl
+                [(gemma_moe, "55", "1547"), ("Qwen3.8-Flash-Next", "15.5", "377")], ["proxmox.svg", "ubuntu.svg"],
+                [(vllm, "vLLM", "CUDA, experts in RAM")]),
         Machine("server", 1452, spec("Big Machine"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
                 # vllm-big-machine/README.md, configuration 3; benchmark/results/big-machine.jsonl: 4096-token prompt
