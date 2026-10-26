@@ -407,9 +407,9 @@ def build(specs: bool) -> str:
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
-                # RTX 3090: vllm-rtx3090-hyperqwen/README.md (Qwen3.8-27B), vllm-agx-z2e/README.md (Qwen3.8-Flash-Next
+                # RTX 3090: vllm-rtx3090-hyperqwen/README.md (Qwen3.8-27B), vllm-rtx3090/README.md (Qwen3.8-Flash-Next
                 # with vllm-rtx3090-flash-next);
-                # Gemma 4 31B with llama-cpp-agx-z2e/README.md, which is twice as fast as vLLM for it.
+                # Gemma 4 31B with llama-cpp-rtx3090/README.md, which is twice as fast as vLLM for it.
                 # Radeon VII: llama-cpp-radeon-vii/README.md (image v0.6.0), which is faster than vllm-radeon-vii.
                 # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test)
                 [("Qwen3.8-27B", "128", "1220"), ("Qwen3.8-Flash-Next", "33", "1750"),

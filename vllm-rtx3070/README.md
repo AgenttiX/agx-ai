@@ -84,7 +84,7 @@ volume), most of it for loading the 15 GiB checkpoint and pinning 12 GiB of it i
 ## Gemma 4 26B-A4B
 
 The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09) (all linear
-weights from Google's Q4_0 GGUF), with Google's QAT MTP drafter, as in [`../vllm-agx-z2e`](../vllm-agx-z2e). It does
+weights from Google's Q4_0 GGUF), with Google's QAT MTP drafter, as in [`../vllm-rtx3090`](../vllm-rtx3090). It does
 not fit in 8 GB: the experts alone take 11.2 GiB.
 
 **Experts in RAM.** vLLM 0.31 has no CPU kernels for the experts of a GPU model, and no expert offloading in the
@@ -131,7 +131,7 @@ the MoE kernel.
   ends one chunk earlier and needs blocks 1598-1661. No window was complete, so the lookup always returned 0 (without
   MTP, it came back in 0.3 s). [`../vllm/vllm.patch`](../vllm/vllm.patch) now also keeps the sliding-window tail for
   that boundary: the conversation came back in 2.2 s (381 MB loaded), with the same greedy answer as when it was
-  first computed. [`../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml`](../vllm-agx-z2e/config-gemma-4-26b-a4b-qat.yaml)
+  first computed. [`../vllm-rtx3090/config-gemma-4-26b-a4b-qat.yaml`](../vllm-rtx3090/config-gemma-4-26b-a4b-qat.yaml)
   uses the same combination and gets the fix with the image.
 
 Results of the configuration (`--tests generation prompt chat depth --prompt-tokens 96000 --depth 6400 36500`, with
@@ -149,7 +149,7 @@ the image including the fixes of 2026-10-13):
 
 Qwen3.8-Flash-Next is a 125B MoE (512 experts, 10 active per token, 48 layers, 12 of them with Qwen Sparse Attention
 and 36 with Gated DeltaNet) with a 51B-parameter n-gram embedding table. On agx-z2e it runs with the single-RTX-3090
-runtime of DominikBucko/qwen38-flash-next-3090 (see [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next)),
+runtime of DominikBucko/qwen38-flash-next-3090 (see [`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-flash-next)),
 which needs 9.8 GB of VRAM for its BF16 dense weights alone and has no option for smaller GPUs. Stock vLLM 0.31 runs
 the model with the experts read from RAM over UVA as for Gemma, but only with six fixes and a re-quantized
 checkpoint (and two more fixes for images and videos and for the FP8 KV cache). The vLLM CPU backend is no alternative: it would need the whole model in RAM, the model has no CPU
@@ -244,7 +244,7 @@ The KV cache on the GPU is described in [Context size](#context-size); MTP does 
 ### Context size
 
 Measured on 2026-10-13 and -14, following the steps that gave agx-z2e the full context (its token embedding in RAM
-and fewer experts on the GPU, see [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#context-size-2026-10-13)). Here, the
+and fewer experts on the GPU, see [`../vllm-rtx3090`](../vllm-rtx3090/README.md#context-size-2026-10-13)). Here, the
 embedding and all experts were already in RAM, so the room had to come from the KV cache itself and the dense weights.
 
 **Why the KV cache was so large.** It took ~45 KiB per token in BF16, although the attention of the 12 QSA layers

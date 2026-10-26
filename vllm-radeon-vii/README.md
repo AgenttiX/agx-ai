@@ -53,7 +53,7 @@ are at the end.
 | CPU | AMD Ryzen Threadripper 3970X (32 cores, 64 threads) |
 | RAM | 128 GB DDR4-2666 (8 x 16 GB Kingston 9965745-002.A00G unbuffered DIMMs, ECC), 125.6 GiB visible to the OS |
 | NPU | none |
-| GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)) |
+| GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090)) |
 | GPU architecture | GCN 5.1 (Vega 20, gfx906), 60 CUs, PCIe 3.0 x16 |
 | VRAM | 16 GB HBM2 (16368 MiB) |
 
@@ -130,7 +130,7 @@ fit. The `mtp-int8` revision has the MTP head in int8 (0.4 GiB instead of 0.8).
 
 ## Optimizations from the other configurations (2026-10-14)
 
-The configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e), [`../vllm-rtx3070`](../vllm-rtx3070) and
+The configurations of [`../vllm-rtx3090`](../vllm-rtx3090), [`../vllm-rtx3070`](../vllm-rtx3070) and
 [`../vllm`](../vllm) (vLLM 0.31 on NVIDIA) found several improvements since the measurements below. Tested here:
 
 | Change | Result | Used |

@@ -4,7 +4,7 @@
 with one user and one or a few agents. HyperQwen is a patch series for vLLM 0.31.0, a re-quantized checkpoint and two
 drafters (MTP and DFlash2). Its image is used as is, with the settings in the `environment` of
 [`docker-compose.yml`](docker-compose.yml), and the CPU KV offloading of this repository added. It replaces the
-Qwen3.8-27B configuration of [`../vllm-agx-z2e`](../vllm-agx-z2e) on the same GPU and port (9931), with the same model
+Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) on the same GPU and port (9931), with the same model
 name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at once.
 
 ## Current configuration
@@ -13,14 +13,14 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 |---|---|---|---|---|---|---|
 | Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1220 t/s at 6.4k, 820 t/s at 100k, 740 t/s at 136k | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s) |
 
-Compared with the Qwen3.8-27B configuration of [`../vllm-agx-z2e`](../vllm-agx-z2e) as it was before (stock vLLM 0.31
+Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
 with [`../vllm/vllm.patch`](../vllm/vllm.patch), GPTQ int4, MTP 2, Triton attention), measured on the same day with the
 same tests: chat 136 vs 86 t/s (+58 %), generation 128 / 110 / 80 vs 80 / 67 / 41 t/s at 6.4k / 32k / 100k tokens of
 context (+61 / +64 / +97 %), code edits 290 vs 107 t/s (2.7 times), prompt processing 822 vs 544 t/s at 100k (+51 %).
 That configuration now has two of HyperQwen's optimizations too (see
 [Combining the optimizations](#combining-the-optimizations)): 155648 tokens of context, chat 83 t/s, 83 / 79 / 66 t/s,
 edits 112 t/s, prompt processing 812 t/s at 100k. llama.cpp is slower for this model on this GPU (see
-[`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md)).
+[`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md)).
 
 For more than ~3 agents at once, `SPEC=mtp` is better (see [Concurrent agents](#concurrent-agents)).
 
@@ -37,12 +37,12 @@ For more than ~3 agents at once, `SPEC=mtp` is better (see [Concurrent agents](#
 | GPU architecture | Ampere (GA102, sm_86) |
 | VRAM | 24 GB GDDR6X (24576 MiB) |
 
-The motherboard and the other GPUs are in [`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#hardware).
+The motherboard and the other GPUs are in [`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#hardware).
 
 ## Setup
 
 ```sh
-docker compose -f ../vllm-agx-z2e/docker-compose.yml stop   # or ../llama-cpp-agx-z2e, on the same GPU and port
+docker compose -f ../vllm-rtx3090/docker-compose.yml stop   # or ../llama-cpp-rtx3090, on the same GPU and port
 docker compose run --rm prepare   # once: ~22 GB of downloads and a few minutes of re-quantization on the CPU
 docker compose up -d
 ```
@@ -72,7 +72,7 @@ configurations of this GPU use too (which leaves ~1 GB free next to a desktop of
 
 | Configuration | Context | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 100k | Peak VRAM |
 |---|---|---|---|---|---|---|
-| [`../vllm-agx-z2e`](../vllm-agx-z2e) (before) | 147456 | 86.3 | 79.6 / 66.7 / 40.5 | 107.1 / 89.0 | 1143 / 544 | 21056 MiB |
+| [`../vllm-rtx3090`](../vllm-rtx3090) (before) | 147456 | 86.3 | 79.6 / 66.7 / 40.5 | 107.1 / 89.0 | 1143 / 544 | 21056 MiB |
 | `SPEC=dflash2 CTX=long` (HyperQwen's defaults) | 131072 | 133.2 | 118.7 / 95.7 / 78.7 | 290.8 / 266.7 | 1208 / 818 | 22160 MiB |
 | The same with `EMBED_UVA=1` | 131072 | 133.1 | 118.6 / 95.5 / 78.5 | 290.0 / 266.3 | 1205 / 816 | 20960 MiB |
 | `SPEC=mtp CTX=long EMBED_UVA=1` | 150000 | 105.9 | 102.3 / 96.9 / 80.8 | 146.5 / 137.6 | 1182 / 801 | 20968 MiB |
@@ -166,7 +166,7 @@ held less than the 225k tokens of the test. The configuration uses 32 GiB (~330k
 compose file uses the host's `/dev/shm` (`ipc: host`), but its launcher deletes the offload files there that no
 process of its own container maps, which could include those of another vLLM container with offloading.
 
-As in [`../vllm-agx-z2e`](../vllm-agx-z2e), the offloading makes no measurable difference to the speed. The launcher
+As in [`../vllm-rtx3090`](../vllm-rtx3090), the offloading makes no measurable difference to the speed. The launcher
 sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` with it (vLLM rejects KV connectors with expandable segments;
 [`../vllm/vllm.patch`](../vllm/vllm.patch) allows them, HyperQwen does not), with no measurable difference to the VRAM
 use either.
@@ -178,7 +178,7 @@ Which optimizations of HyperQwen and of this repository could be combined:
 | Optimization | From | Combined | Result |
 |---|---|---|---|
 | pth-flash-attn kernel for the int8 KV cache | HyperQwen | **in [`../vllm`](../vllm)'s image** (built from its source, on x86-64) | our Qwen3.8-27B configuration: 100k tokens of context 40.5 -> 69.1 t/s, 32k 66.7 -> 80.4 t/s, prompt processing at 100k 544 -> 794 t/s |
-| Recurrent state in FP16 (`mamba-ssm-cache-dtype: float16`) | HyperQwen | **in [`../vllm-agx-z2e`](../vllm-agx-z2e)'s Qwen3.8-27B configuration** | 6.5 % more tokens in the same KV cache (158480 -> 168848), context 147456 -> 155648; the speed is unchanged within the noise |
+| Recurrent state in FP16 (`mamba-ssm-cache-dtype: float16`) | HyperQwen | **in [`../vllm-rtx3090`](../vllm-rtx3090)'s Qwen3.8-27B configuration** | 6.5 % more tokens in the same KV cache (158480 -> 168848), context 147456 -> 155648; the speed is unchanged within the noise |
 | CPU KV offloading | this repository | **in this configuration** | a 25k-token conversation evicted from the GPU: 1.8 s instead of 21 s |
 | Split-KV Triton attention for MTP and larger prefill blocks on sm_86 ([`../vllm/vllm.patch`](../vllm/vllm.patch)) | this repository | not needed | pth-flash-attn is faster at long contexts (69 vs 41 t/s at 100k with our configuration) |
 | Int4 embedding and lm_head (JRamirez-UAB's checkpoint) | this repository | not needed | HyperQwen has an int4 lm_head and keeps the int8 embedding in RAM (`EMBED_UVA`), which saves more VRAM |
@@ -186,7 +186,7 @@ Which optimizations of HyperQwen and of this repository could be combined:
 
 So the main optimizations of both sides combine: HyperQwen's DFlash2, lookup drafting and pth-flash-attn kernel
 with this repository's CPU KV offloading here, and HyperQwen's kernel and FP16 recurrent state in
-[`../vllm`](../vllm)'s image and [`../vllm-agx-z2e`](../vllm-agx-z2e)'s Qwen3.8-27B configuration. That configuration
+[`../vllm`](../vllm)'s image and [`../vllm-rtx3090`](../vllm-rtx3090)'s Qwen3.8-27B configuration. That configuration
 stays useful as the stock-vLLM alternative and for 4 agents at once (MTP, 4 sequences), but this one is faster for
 the use case. Our Qwen3.8-27B configuration with each step (same tests as above):
 
@@ -201,7 +201,7 @@ repository's CPU KV offloading in both images.
 
 ## Other notes
 
-- **Tool calls** work with the `qwen3_coder` parser, as in [`../vllm-agx-z2e`](../vllm-agx-z2e); HyperQwen also sets
+- **Tool calls** work with the `qwen3_coder` parser, as in [`../vllm-rtx3090`](../vllm-rtx3090); HyperQwen also sets
   `--tool-strict-level parameter`. HyperQwen's `prepare` makes the chat template accept tool-call arguments as JSON
   arrays (some clients send them) and the reasoning efforts `minimal`/`high`/`max` (mapped to the template's levels).
 - **Killing the container** (`docker rm -f`) leaves a zombie process for a minute or two while the 32 GiB of pinned RAM

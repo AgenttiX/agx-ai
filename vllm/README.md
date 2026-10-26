@@ -8,7 +8,7 @@ locally:
 docker build -t ghcr.io/agenttix/agx-ai/vllm:latest .
 ```
 
-Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-agx-z2e`](../vllm-agx-z2e) and
+Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rtx3090) and
 [`../vllm-rtx3070`](../vllm-rtx3070). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
@@ -25,7 +25,7 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-agx-z2e`](../vllm-ag
     alternative, `enable-cumem-allocator`, works on CUDA but needs more memory: the single-GPU Gemma 4 26B-A4B of
     [`../vllm-rtx-a4000`](../vllm-rtx-a4000) ran out of it.
   - Triton attention (`triton_unified_attention.py`), added on 2026-10-12 and measured on the RTX 3090 of
-    [`../vllm-agx-z2e`](../vllm-agx-z2e) with Qwen3.8-27B, an int8 KV cache and MTP:
+    [`../vllm-rtx3090`](../vllm-rtx3090) with Qwen3.8-27B, an int8 KV cache and MTP:
     - The split-KV ("3D") kernel is also used for the verification batches of speculative decoding (up to 8 query
       tokens per sequence), not only for single-token decoding. Without it, MTP decoding ran one program per KV head
       and sequence over the whole context and slowed down with it: 58.6 t/s at 6.4k and 23.7 t/s at 32k tokens of
@@ -92,7 +92,7 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-agx-z2e`](../vllm-ag
   "CUSTOM"` in the `speculative-config` (the drafter takes its backend from there). It serves causal attention with
   head size 256 and sliding-window or non-causal attention with head size 128 (e.g. Qwen3.5/3.8, DFlash2), and refuses
   the others at startup; vLLM never selects it on its own, so the other configurations are unchanged. With
-  Qwen3.8-27B, MTP 2 and the native CPU KV offloading on the RTX 3090 of [`../vllm-agx-z2e`](../vllm-agx-z2e), it is
+  Qwen3.8-27B, MTP 2 and the native CPU KV offloading on the RTX 3090 of [`../vllm-rtx3090`](../vllm-rtx3090), it is
   much faster at long contexts than the patched Triton attention above: 69.1 instead of 40.5 t/s at 100k tokens of
   context, 80.4 instead of 66.7 t/s at 32k, and 794 instead of 544 t/s prompt processing at 100k (see
   [`../vllm-rtx3090-hyperqwen/README.md`](../vllm-rtx3090-hyperqwen/README.md#combining-the-optimizations)).
@@ -119,9 +119,9 @@ of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
   round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). The reasons are in
   [`../vllm-radeon-vii/README.md`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09). Used by the Gemma 4 26B-A4B
   configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-rtx-a4000`](../vllm-rtx-a4000),
-  [`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-agx-z2e`](../vllm-agx-z2e).
+  [`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-rtx3090`](../vllm-rtx3090).
 - [`quantize_gemma4_ct_embedding.py`](quantize_gemma4_ct_embedding.py) quantizes only the embedding and the lm_head
   of an existing compressed-tensors checkpoint (`--repo`: Google's `google/gemma-4-31B-it-qat-w4a16-ct` by default,
   or a directory built by `repack_gemma4_qat.py`), with the functions of `repack_gemma4_qat.py`, and copies all other
   tensors unchanged. Used by the Gemma 4 26B-A4B (int8 embedding) and 31B (int4 embedding and lm_head)
-  configurations of [`../vllm-agx-z2e`](../vllm-agx-z2e) (see its README for the commands).
+  configurations of [`../vllm-rtx3090`](../vllm-rtx3090) (see its README for the commands).

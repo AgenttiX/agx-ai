@@ -1,6 +1,6 @@
-# vLLM on agx-z2e (RTX 3090)
+# vLLM on RTX 3090
 
-vLLM on the RTX 3090 of agx-z2e, as an alternative to [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) on the same GPU
+vLLM on the RTX 3090 of agx-z2e, as an alternative to [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090) on the same GPU
 and port (9931). Only one of them fits on the GPU at a time. There are two Docker Compose configurations:
 
 - [`docker-compose.yml`](docker-compose.yml) (`docker compose up -d`): Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B
@@ -28,7 +28,7 @@ left 0.8-1.0 GiB free:
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
 | [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 32.4 t/s | 33 / 33 / 32 t/s, 52 t/s in code edits | 1750 t/s at 6.4k, 2050 t/s at 260k |
 
-**Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#results-of-the-current-presets)):
+**Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#results-of-the-current-presets)):
 
 - **Qwen3.8-27B: vLLM is better.** It fits 52 % more context (155648 vs 102400) and generates 65-155 % faster at
   every context length (chat 81-86 vs 49 t/s, 79 t/s at 32k vs 42 t/s at 36.5k, 66 vs 26 t/s at 100k), and processes
@@ -45,7 +45,7 @@ left 0.8-1.0 GiB free:
   (llama.cpp: 20 t/s at 100k), processes prompts 2.4-2.8 times as fast (1650-2090 vs 600-780 t/s) and supports
   videos (~35 s for 30 s of 1080p). llama.cpp processes images faster (3.2 s vs ~8 s for 1280x960, as vLLM's vision
   tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. See
-  [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
+  [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#qwen38-flash-next).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
 [`../benchmark`](../benchmark/README.md), on test servers ([`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh),
@@ -93,7 +93,7 @@ uvx --from 'huggingface_hub[hf_xet]' hf download albucino/Qwen3.8-Flash-Next-W4A
     --revision ef554143369a706525336f6b42a09094835dc077
 docker pull ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
 # Stop llama.cpp on this GPU and start vLLM
-docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
+docker compose -f ../llama-cpp-rtx3090/docker-compose.yml stop
 docker compose up -d
 # Or Qwen3.8-Flash-Next instead
 docker compose stop && docker compose -f ../vllm-rtx3090-flash-next/docker-compose.yml up -d
@@ -269,7 +269,7 @@ the service in [`../vllm-rtx3090-flash-next/docker-compose.yml`](../vllm-rtx3090
 With the runtime's defaults, vLLM fitted 135168 tokens of context and llama.cpp the full 262144, although vLLM's int8
 KV cache needs less per token. What takes the 21 GiB (llama.cpp's weights estimated from its per-tensor types):
 
-| | vLLM (runtime defaults, 20 hot experts) | llama.cpp ([preset](../llama-cpp-agx-z2e/preset-qwen3.8-flash-next.ini)) |
+| | vLLM (runtime defaults, 20 hot experts) | llama.cpp ([preset](../llama-cpp-rtx3090/preset-qwen3.8-flash-next.ini)) |
 |---|---|---|
 | Dense weights (Gated DeltaNet, attention, shared experts, lm_head, hyper-connections, routers) | 7.97 GiB in BF16 | ~3.7 GiB in 4-6-bit types (Q4_K-Q6_K, IQ4) |
 | Token embedding | 1.18 GiB in BF16 on the GPU | IQ4_XS in RAM |
@@ -440,7 +440,7 @@ Ideas not tried yet:
 Results with the settings of 2026-10-14 (24 CPU pool threads; `--tests generation prompt chat depth --prompt-tokens
 260000`), with llama.cpp for comparison. For the current settings, see [CPU expert kernel](#cpu-expert-kernel-2026-10-26):
 
-| Test | vLLM | llama.cpp ([preset](../llama-cpp-agx-z2e/preset-qwen3.8-flash-next.ini)) |
+| Test | vLLM | llama.cpp ([preset](../llama-cpp-rtx3090/preset-qwen3.8-flash-next.ini)) |
 |---|---|---|
 | Context | 262144 | 262144 |
 | Generation, 256 tokens | 29.6 t/s (MTP acceptance 44 %) | 27.6 t/s |
@@ -460,15 +460,15 @@ cd ../benchmark
 # Serving speed with a full-context prompt, chat and depth (the configuration of docker-compose.yml)
 ./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 145000 --depth 6400 32000 100000 --repeat 1 \
-    --server-config ../vllm-agx-z2e/config-qwen3.8-27b.yaml --label "..."
+    --server-config ../vllm-rtx3090/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)
-docker compose -f ../vllm-agx-z2e/docker-compose.yml stop
-CACHE_VOLUME=vllm-agx-z2e_vllm-cache GPUS=0 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
+docker compose -f ../vllm-rtx3090/docker-compose.yml stop
+CACHE_VOLUME=vllm-rtx3090_vllm-cache GPUS=0 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
     ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp-radeon-vii/llama-cpp.env
 ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 1 --depth 6400 32000 --server-config /tmp/config-variant.yaml --label "..."
 # Long-context retrieval (output quality of a KV cache type or a patch)
 ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
     --tests retrieval --depth 16000 60000 --logprobs 0 --label "..."
-docker rm -f vllm-test && docker compose -f ../vllm-agx-z2e/docker-compose.yml start
+docker rm -f vllm-test && docker compose -f ../vllm-rtx3090/docker-compose.yml start
 ```

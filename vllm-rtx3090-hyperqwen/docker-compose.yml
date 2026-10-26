@@ -1,6 +1,6 @@
 # HyperQwen (https://github.com/syv-ai/HyperQwen): Qwen3.8-27B on the RTX 3090 of agx-z2e, tuned for agentic coding
 # with one user and one or a few agents. See README.md for the settings and the measurements behind them.
-# The same port as ../vllm-agx-z2e and ../llama-cpp-agx-z2e (9931): only one of them fits on the GPU at a time.
+# The same port as ../vllm-rtx3090 and ../llama-cpp-rtx3090 (9931): only one of them fits on the GPU at a time.
 #
 #   docker compose run --rm prepare   # once: download and requantize the model into ~/.cache/vllm-models/hyperqwen
 #   docker compose up -d
@@ -62,7 +62,7 @@ services:
       # vLLM checks at startup that this share of the GPU is free; the KV cache has a fixed size (KV_MEM of the
       # launcher). The default of 0.93 would fail next to the desktop.
       GPU_UTIL: "0.85"
-      # The same model name as ../vllm-agx-z2e, so that the clients work with both.
+      # The same model name as ../vllm-rtx3090, so that the clients work with both.
       EXTRA_ARGS: "--served-model-name Qwen/Qwen3.8-27B"
     entrypoint:
       - /bin/sh

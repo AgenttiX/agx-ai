@@ -1,9 +1,9 @@
 # Qwen3.8-Flash-Next with vLLM on one RTX 3090 (agx-z2e), with its experts in RAM and computed partly on the CPU, and
 # images and videos through the vision tower on the CPU. The image is built from this directory, see README.md; the
-# configuration and the measurements behind it are in ../vllm-agx-z2e/README.md#qwen38-flash-next.
-# The same port as ../vllm-agx-z2e and ../llama-cpp-agx-z2e (9931): only one of them fits on the GPU at a time.
+# configuration and the measurements behind it are in ../vllm-rtx3090/README.md#qwen38-flash-next.
+# The same port as ../vllm-rtx3090 and ../llama-cpp-rtx3090 (9931): only one of them fits on the GPU at a time.
 # The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp-radeon-vii/llama-cpp.env).
-# Start: docker compose -f ../vllm-agx-z2e/docker-compose.yml stop && docker compose up -d
+# Start: docker compose -f ../vllm-rtx3090/docker-compose.yml stop && docker compose up -d
 
 x-gpu: &gpu
   deploy:
@@ -36,13 +36,13 @@ services:
     env_file:
       - ../llama-cpp-radeon-vii/llama-cpp.env
     # Overrides of the runtime's defaults (configs/3090-64gb-128k.env of the runtime repository, see its
-    # docs/tuning.md). Benchmarks on agx-z2e: ../vllm-agx-z2e/README.md#qwen38-flash-next
+    # docs/tuning.md). Benchmarks on agx-z2e: ../vllm-rtx3090/README.md#qwen38-flash-next
     environment:
       SERVED_MODEL_NAME: Qwen/Qwen3.8-Flash-Next
       PORT: "8000"
       # The full trained context of 262144 tokens (the runtime's default: 135168), like llama.cpp. It fits because the
       # token embedding is in pinned RAM (QWEN38_EMBED_UVA, -1.18 GiB, looked up over PCIe) and fewer experts stay on
-      # the GPU (see ../vllm-agx-z2e/README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the
+      # the GPU (see ../vllm-rtx3090/README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the
       # context. Peak 20238 MiB with a 260000-token prompt.
       MAX_MODEL_LEN: "262144"
       KV_CACHE_MEMORY_BYTES: "5150000000"
@@ -54,12 +54,12 @@ services:
       QWEN38_HOT_ONLY: "24"
       # Share of each layer's cold experts that the GPU computes during decode, at most 8 per layer
       # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
-      # help (see ../vllm-agx-z2e/README.md).
+      # help (see ../vllm-rtx3090/README.md).
       QWEN38_GPU_SHARE_FRAC: "0.3"
       # The CPU experts with int8 activations (cpu-moe.patch, README.md): ~2.3 times as fast per thread as the
       # runtime's FP32 activations, so that 8 threads, 1 on each 4-core CCX of the Threadripper 3970X, reach the
       # memory bandwidth (the runtime's default: 24 threads), and the other cores are left to the serving processes
-      # that drive the GPU. No measurable quality loss (../vllm-agx-z2e/README.md#cpu-expert-kernel-2026-10-26).
+      # that drive the GPU. No measurable quality loss (../vllm-rtx3090/README.md#cpu-expert-kernel-2026-10-26).
       # QWEN38_CPU_EXPERTS_INT16=1 instead is practically exact and needs 16 threads (1-2,5-6,...,29-30).
       QWEN38_CPU_EXPERTS_INT8: "1"
       QWEN38_CPU_EXPERTS_CPUS: "1,5,9,13,17,21,25,29"

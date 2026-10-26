@@ -379,7 +379,7 @@ Added on 2026-10-13, with build b11552, and removed the same day to free disk sp
 on this GPU instead, which generates faster ([`../vllm-rtx3070`](../vllm-rtx3070/README.md#qwen38-flash-next)). The
 section in [`preset.ini`](preset.ini) is commented out and can be enabled again. Qwen3.8-Flash-Next is a 125B MoE (512 experts of which 10 are active, 48
 layers, 12 of them with a KV cache and 36 with a fixed-size Gated DeltaNet state) with a 51B-parameter n-gram
-embedding table, see also [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#qwen38-flash-next).
+embedding table, see also [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#qwen38-flash-next).
 [`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
 `IQ3_S`, like on agx-z2e: a quantization type per tensor (3.5 bits per weight on average, 54.8 GB) and the n-gram
 table in IQ4_NL (28.8 GB). It matches the BF16 model on AIME25, GPQA-Diamond and LiveCodeBench v6 according to the

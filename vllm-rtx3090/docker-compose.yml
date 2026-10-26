@@ -1,5 +1,5 @@
 # vLLM on the RTX 3090 of agx-z2e. See README.md for the configurations and results.
-# The same port as ../llama-cpp-agx-z2e (9931): only one of the two fits on the GPU at a time.
+# The same port as ../llama-cpp-rtx3090 (9931): only one of the two fits on the GPU at a time.
 # The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp-radeon-vii/llama-cpp.env), so that
 # clients work with both.
 #
@@ -22,7 +22,7 @@ services:
     # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with ../vllm/vllm.patch, see ../vllm/README.md.
     # Built by ../.github/workflows/deploy-docker-vllm.yml. Locally: docker build -t <the image> ../vllm
     image: ghcr.io/agenttix/agx-ai/vllm:latest
-    container_name: vllm-agx-z2e
+    container_name: vllm-rtx3090
     entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
     env_file:
       - ../llama-cpp-radeon-vii/llama-cpp.env

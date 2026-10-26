@@ -12,9 +12,9 @@ docker build -t ghcr.io/agenttix/agx-ai/vllm-flash-next:latest .
 ```
 
 [`docker-compose.yml`](docker-compose.yml) runs it on the RTX 3090 of agx-z2e (`docker compose up -d`, after stopping
-[`../vllm-agx-z2e`](../vllm-agx-z2e) or [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) on the same GPU and port);
+[`../vllm-rtx3090`](../vllm-rtx3090) or [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090) on the same GPU and port);
 its settings and the measurements behind them are in
-[`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#qwen38-flash-next). [`../vllm-rtx3070`](../vllm-rtx3070) runs the
+[`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#qwen38-flash-next). [`../vllm-rtx3070`](../vllm-rtx3070) runs the
 model with stock vLLM instead, with the same `cpu_vision.py` and encoder runner change in
 [`../vllm/vllm.patch`](../vllm/vllm.patch). The runtime serves the model text-only
 (`--language-model-only`), although its model code supports images and videos. This image adds image and video
@@ -54,7 +54,7 @@ input and a faster CPU expert kernel:
     11.0 GB/s of weights), so 8 threads reach the memory bandwidth that the FP32 kernel needs 16 or more for, and
     with faster RAM, the kernel has more headroom. The relative error of an expert's output is ~1 % (FP32: 1e-7);
     in the quality test it was not measurable (see
-    [`../vllm-agx-z2e/README.md`](../vllm-agx-z2e/README.md#cpu-expert-kernel-2026-10-26)).
+    [`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#cpu-expert-kernel-2026-10-26)).
     `QWEN38_CPU_EXPERTS_INT16=1` uses int16 activations with `vpmaddwd` instead: practically exact (6e-5), 1.3 times
     as fast as FP32 per thread,
   - less per-layer overhead: each thread zeroes its own output buffer, and only the threads that computed an expert

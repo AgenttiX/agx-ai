@@ -23,7 +23,7 @@ settings. The tools are in [`../benchmark`](../benchmark); the commands are at t
 | CPU | AMD Ryzen Threadripper 3970X (32 cores, 64 threads) |
 | RAM | 128 GB DDR4-2666 (8 x 16 GB Kingston 9965745-002.A00G unbuffered DIMMs, ECC), 125.6 GiB visible to the OS |
 | NPU | none |
-| GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)) |
+| GPU | AMD Radeon VII, used only for this server (the RTX 3090 in the same machine runs [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090)) |
 | GPU architecture | GCN 5.1 (Vega 20, gfx906), 60 CUs, PCIe 3.0 x16 |
 | VRAM | 16 GB HBM2 (16368 MiB) |
 
@@ -285,7 +285,7 @@ the agents' code (see [Entirely on the GPU](#entirely-on-the-gpu-with-a-q8_0-v-c
 
 ### Quantization of the weights
 
-The `UD-Q4_K_M` of [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e) is 16.5 GB and does not fit. The candidates are
+The `UD-Q4_K_M` of [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090) is 16.5 GB and does not fit. The candidates are
 unsloth's smaller quants of the same repository. `llama bench`, K+V q8_0, ub 512; VRAM after loading
 the server with K+V q8_0, ub 512, MTP and the vision encoder on the CPU (amd-smi):
 
@@ -363,7 +363,7 @@ servers without MTP at ctx 30720 (the f16 reference does not fit at a longer one
 
 All single lookups were right in every run (96/96). The q8_0 cache is within the noise of a different ubatch size;
 q4_0 is 7-17 times above it (q4_0 is above the noise for this model on the RTX 3090 too, see
-[`../llama-cpp-agx-z2e/README.md`](../llama-cpp-agx-z2e/README.md)), although its retrieval accuracy is unchanged.
+[`../llama-cpp-rtx3090/README.md`](../llama-cpp-rtx3090/README.md)), although its retrieval accuracy is unchanged.
 Qwen3.8's distributions are much more stable than Gemma 4 26B-A4B's (noise KLD 0.0002-0.0004 vs ~0.01).
 
 The cache is therefore q8_0: with it, the context can be ~47k tokens, compared with ~28k with f16. q4_0 would allow
@@ -418,7 +418,7 @@ The production configuration on a test server, measured with the full command be
 | Image, 1280x960 | 11.2 s prompt processing |
 | Peak VRAM | 16298 MiB |
 
-For comparison, the same model in `UD-Q4_K_M` on the RTX 3090 of [`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e)
+For comparison, the same model in `UD-Q4_K_M` on the RTX 3090 of [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090)
 generates ~49 t/s in the chat test and processes prompts at ~1100 t/s.
 
 ## Commands

@@ -1,4 +1,4 @@
-# llama.cpp on agx-z2e (RTX 3090)
+# llama.cpp on RTX 3090
 
 llama-server on the RTX 3090 of agx-z2e, Mika's desktop computer. The Radeon VII in the same computer runs its own
 server, see [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii).
@@ -259,7 +259,7 @@ optimizations since then; MTP for it is not merged yet
 ([ggml-org/llama.cpp#27836](https://github.com/ggml-org/llama.cpp/pull/27836)). It is a 125B
 MoE (512 experts of which 10 are active, 6B active parameters) with a 51B-parameter n-gram embedding table and 48
 layers, of which 12 have a KV cache (Qwen Sparse Attention) and 36 a fixed-size Gated DeltaNet state. The same model
-runs with vLLM in [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-flash-next).
+runs with vLLM in [`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-flash-next).
 
 **Quantization.** [`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
 `IQ3_S`: a quantization type per tensor chosen by a gradient-based search (3.5 bits per weight on average, 54.8 GB),
@@ -388,9 +388,9 @@ slower in prompt processing and 30 % slower in generation).
 ```sh
 cd ../benchmark
 # Stop the production server, then start a test server on port 9934 with a preset or a variant of it
-docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml stop
+docker compose -f ../llama-cpp-rtx3090/docker-compose.yml stop
 NAME=llama-test-cuda DOCKER_ARGS="--gpus all" ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:server-cuda13 \
-    ../llama-cpp-agx-z2e/preset-qwen3.8-27b.ini ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env 9934
+    ../llama-cpp-rtx3090/preset-qwen3.8-27b.ini ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env 9934
 # Serving speed with a full-context prompt, chat, depth and an image
 ./llama_cpp_bench_http.py --url http://localhost:9934 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth image --prompt-tokens 100900 --repeat 2 --depth 6400 16000 36500 60000 100000 \
@@ -398,7 +398,7 @@ NAME=llama-test-cuda DOCKER_ARGS="--gpus all" ./llama_cpp_test_server.sh ghcr.io
 # Output quality of a KV cache type (on test servers without MTP, see ../benchmark/README.md)
 ./llama_cpp_quality_http.py --url http://localhost:9934 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
     --tests retrieval --label "..." --reference "z2e Qwen3.8-27B quality f16 ub 512 (reference)"
-docker rm -f llama-test-cuda && docker compose -f ../llama-cpp-agx-z2e/docker-compose.yml start
+docker rm -f llama-test-cuda && docker compose -f ../llama-cpp-rtx3090/docker-compose.yml start
 # Raw model speed (llama bench) of a GGUF with the same build
 ./llama_cpp_bench_container.py --image ghcr.io/ggml-org/llama.cpp:full-cuda13-b10689 --docker-arg=--gpus=all \
     --model /root/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/.../Qwen3.8-27B-UD-Q4_K_M.gguf \
