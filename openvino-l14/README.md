@@ -2,12 +2,12 @@
 
 OpenVINO Model Server (OVMS) for the NPU of the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Meteor Lake NPU 3720),
 serving Qwen3-8B.
-The llama.cpp server for the CPU and iGPU is in [../llama-cpp-agx-l14](../llama-cpp-agx-l14),
-Gemma 4 E4B on the NPU in [../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b),
-and EmbeddingGemma 2 on the NPU (also with OVMS) in [../openvino-agx-l14-npu-embeddinggemma2](../openvino-agx-l14-npu-embeddinggemma2).
+The llama.cpp server for the CPU and iGPU is in [../llama-cpp-l14](../llama-cpp-l14),
+Gemma 4 E4B on the NPU in [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b),
+and EmbeddingGemma 2 on the NPU (also with OVMS) in [../openvino-l14-npu-embeddinggemma2](../openvino-l14-npu-embeddinggemma2).
 
 llama.cpp's OpenVINO backend compiles a static graph for the whole context, which makes it unusable on the NPU
-beyond ~512 tokens of context (see [../llama-cpp-agx-l14/README.md](../llama-cpp-agx-l14/README.md)).
+beyond ~512 tokens of context (see [../llama-cpp-l14/README.md](../llama-cpp-l14/README.md)).
 OVMS uses OpenVINO GenAI's NPU LLM pipeline instead,
 which handles the KV cache inside the NPU model ("stateful") and processes the prompt in chunks.
 It requires models with symmetric INT4 weights, preferably channel-wise (`-cw-ov` on Hugging Face).
@@ -22,7 +22,7 @@ docker compose up -d
 - Thinking can be disabled per request with `"chat_template_kwargs": {"enable_thinking": false}`.
   This is recommended for interactive use, as Qwen3 often thinks for over 1000 tokens (2-3 min at ~8 t/s).
 - Thinking and tool calls are returned in the separate `reasoning_content` and `tool_calls` fields (tested).
-- Do not run this at the same time as [../llama-cpp-agx-l14](../llama-cpp-agx-l14):
+- Do not run this at the same time as [../llama-cpp-l14](../llama-cpp-l14):
   together they exhausted the 32 GB of RAM and the kernel killed the desktop session.
   Stop one with `docker compose down` before starting the other.
 
@@ -53,7 +53,7 @@ Phi-3.5 and Mistral were run with an earlier, lenient version of the quality che
   The NPU's advantage is that it leaves the CPU and iGPU free.
 - Gemma 4 does not run on the NPU with llama.cpp or OVMS.
   The third-party server ryugyosoft/gemma-4-E4B-it-npu runs it with rewritten model graphs at 8.1-8.6 t/s,
-  but with a 1024-token context, see [../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b).
+  but with a 1024-token context, see [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b).
 
 ## Settings
 - `GENERATE_HINT=BEST_PERF` made decoding slower (6.0 vs 8.7 t/s), and `NPUW_LLM_PREFILL_CHUNK_SIZE=256` crashed OVMS.

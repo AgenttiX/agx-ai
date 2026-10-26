@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "openvino-agx-l14-npu-embeddinggemma2/**"
+      - "openvino-l14-npu-embeddinggemma2/**"
       - ".github/workflows/deploy-docker-embeddinggemma2-ov-convert.yml"
   workflow_dispatch:
 jobs:
@@ -42,7 +42,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
           # The Dockerfile is in a subdirectory of the repository.
-          context: "{{defaultContext}}:openvino-agx-l14-npu-embeddinggemma2"
+          context: "{{defaultContext}}:openvino-l14-npu-embeddinggemma2"
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
           provenance: mode=max

@@ -61,7 +61,7 @@ report its arguments; `--server-config FILE` stores the YAML file given to `vllm
 ### OpenVINO Model Server
 
 The embedding test (`--tests embedding`) also works with OpenVINO Model Server (OVMS, detected from its `/v1/config`
-endpoint), e.g. [`../openvino-agx-l14-npu-embeddinggemma2`](../openvino-agx-l14-npu-embeddinggemma2).
+endpoint), e.g. [`../openvino-l14-npu-embeddinggemma2`](../openvino-l14-npu-embeddinggemma2).
 OVMS has no `/detokenize`, so the texts are cut to the token count at word boundaries with its `/v3/tokenize`.
 It does not report its version or arguments, so give them with `--label` or `--server-config`.
 

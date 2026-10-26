@@ -116,7 +116,7 @@ A q8_0 KV cache would allow more context, but made generation ~10 % slower (ctx 
 - The UHD Graphics 620 iGPU (Vulkan, `server-vulkan` image, all layers, -fa 0) is slower than this configuration
   in both respects: pp512 25.6 t/s, tg64 4.6 t/s. It shares the memory bandwidth with the CPU, so it cannot add
   generation speed, and mixing the CPU and Vulkan in one model was very slow on the ThinkPad L14
-  ([../llama-cpp-agx-l14](../llama-cpp-agx-l14)).
+  ([../llama-cpp-l14](../llama-cpp-l14)).
 - The whole non-expert part (attention, shared FFN, router, output matrix: 1323 MiB) does not fit in VRAM with
   useful compute buffers: with the MoE experts on the CPU (`n-cpu-moe`), ub 512 ran out of memory, and ub 256 gave
   pp 45 t/s and tg 6.9 t/s (8 threads, experts in the host buffer) or pp 25 t/s and tg 8.4 t/s (`no-host`),

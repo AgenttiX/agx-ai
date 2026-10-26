@@ -20,7 +20,7 @@ docker compose up -d
 ```
 - On the first start, the `convert` container downloads the model files (1.5 GB) to the Hugging Face cache of the host
   (`~/.cache/huggingface/hub`, of which only the `hub` directory is mounted),
-  exports the text model to the Docker volume `openvino-agx-l14-npu-embeddinggemma2_models` (0.6 GB) and exits.
+  exports the text model to the Docker volume `openvino-l14-npu-embeddinggemma2_models` (0.6 GB) and exits.
   OVMS starts after it and compiles the model for the NPU in ~10 s (cached in the same volume, 0.5 GB).
   Later starts skip the export, as long as the revision and the library versions are the same (`export.json`).
 - The API is OpenAI-compatible at http://localhost:9935/v3/embeddings (also `/v1/embeddings`).
@@ -32,7 +32,7 @@ docker compose up -d
   `--truncate true` would truncate them instead.
 - Use the task prefixes of the [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes),
   e.g. `task: search result | query: {query}` for queries and `title: none | text: {document}` for documents.
-- The container uses ~2 GB of RAM. It can run at the same time as [../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b)
+- The container uses ~2 GB of RAM. It can run at the same time as [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)
   on the NPU (tested), but they share the NPU (see below).
 
 The converter image is built by
@@ -61,7 +61,7 @@ Measured on 2026-10-14 with [../benchmark/llama_cpp_bench_http.py](../benchmark/
 - The NPU runs a static graph, so every input is padded to `--max_length`, and each input takes the same time
   regardless of its length. With 512, the NPU is 3.3x faster than the CPU for document chunks,
   but slower than the CPU for short queries, and it leaves the CPU free.
-- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-agx-l14-npu-e4b](../openvino-agx-l14-npu-e4b)),
+- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
   the embeddings ran at 2063 t/s (500-token texts), and the generation of one of the requests slowed from 8.3 to 7.0 t/s.
 - The embeddings match sentence-transformers (float32 on the CPU) with a cosine similarity of 0.99999-1.00000
   (inputs of 15-289 tokens, on the NPU and the CPU), and the tokenizer gives the same token IDs.

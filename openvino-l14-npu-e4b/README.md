@@ -5,7 +5,7 @@ with the third-party server [ryugyosoft/gemma-4-E4B-it-npu](https://huggingface.
 entirely in a container ([Dockerfile](Dockerfile)).
 The server rewrites the Gemma 4 graphs for the NPU and manages the KV cache in Python,
 which neither llama.cpp nor OpenVINO Model Server can do for Gemma 4 on this NPU
-(see [../openvino-agx-l14](../openvino-agx-l14) and [../llama-cpp-agx-l14](../llama-cpp-agx-l14)).
+(see [../openvino-l14](../openvino-l14) and [../llama-cpp-l14](../llama-cpp-l14)).
 
 ## Setup
 ```sh
@@ -27,7 +27,7 @@ uv lock
 ```
 
 - The first start compiles the model for the NPU (~10 min, 578-653 s measured).
-  Later starts load the compiled blobs (9 GB) from the Docker volume `openvino-agx-l14-npu-e4b_npu-cache` in 20-30 s.
+  Later starts load the compiled blobs (9 GB) from the Docker volume `openvino-l14-npu-e4b_npu-cache` in 20-30 s.
   The Dockerfile patches `gemma4_npu.py` to use this volume instead of the model directory, which is in the Hugging Face cache.
   The blobs depend on the NPU driver and OpenVINO versions in the image, so updating either recompiles them.
   To delete the old blobs, recreate the volume with `docker compose down -v` before the update.
@@ -35,8 +35,8 @@ uv lock
   `user` in [docker-compose.yml](docker-compose.yml).
 - Memory: the container peaked at ~24 GB of RAM while compiling and uses ~15-18.5 GB when loaded
   (the 64-token prefill decoder is loaded only with >= 24 GB of RAM, see `block_sizes()` in `gemma4_npu.py`).
-- Do not run this at the same time as [../llama-cpp-agx-l14](../llama-cpp-agx-l14)
-  or [../openvino-agx-l14](../openvino-agx-l14), as the RAM would run out.
+- Do not run this at the same time as [../llama-cpp-l14](../llama-cpp-l14)
+  or [../openvino-l14](../openvino-l14), as the RAM would run out.
 
 ## Usage
 - The API is OpenAI-compatible at http://localhost:9934/v1 (`/v1/chat/completions`, streaming, image input),
@@ -61,7 +61,7 @@ Measured on 2026-09-26 with OpenVINO 2026.5.0b1 and transformers 5.5.4:
 - Generation 8.1-8.6 t/s. Time to the first token 0.9 s for an 18-token prompt
   and 3.7-3.8 s for a 684-token prompt (~185 t/s), after which generation slows to 5.8-5.9 t/s.
 - Image input works: a 293-token prompt with an image took 3.7-3.8 s to the first token.
-- 5/8 correct answers to the short questions used for the models in [../openvino-agx-l14](../openvino-agx-l14)
+- 5/8 correct answers to the short questions used for the models in [../openvino-l14](../openvino-l14)
   (Qwen3-8B: 4/8), i.e. about as fast as Qwen3-8B with OVMS, with image input, but with a much shorter context.
 - The published image gave the same results as a local build.
 

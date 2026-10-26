@@ -392,12 +392,12 @@ def build(specs: bool) -> str:
     # nearest length that was measured (in the comments).
     machines = [
         Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
-                # llama-cpp-agx-l14/README.md: 26B-A4B without MTP and checkpoints, chat with a 3.5k-token prompt;
-                # openvino-agx-l14-npu-e4b/README.md: E4B on the NPU, 684-token prompt
+                # llama-cpp-l14/README.md: 26B-A4B without MTP and checkpoints, chat with a 3.5k-token prompt;
+                # openvino-l14-npu-e4b/README.md: E4B on the NPU, 684-token prompt
                 [(gemma_moe, "8.9", "106"), ("Gemma 4 E4B", "8.1–8.6", "185")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
         Machine("laptop", 402, pub("ThinkPad T480"), [spec("Core i7-8550U, 32 GB RAM"), pub("GeForce MX150 (2 GB)")],
-                # llama-cpp-agx-t480/README.md: 4096-token prompt
+                # llama-cpp-t480/README.md: 4096-token prompt
                 [(gemma_moe, "6.7", "80")], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("laptop", 654, spec("Windows laptop"),
                 [spec("Core i7-1260P, 32 GB RAM"), pub("T550 Laptop GPU (4 GB)")],
