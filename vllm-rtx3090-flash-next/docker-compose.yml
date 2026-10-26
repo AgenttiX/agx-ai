@@ -22,13 +22,17 @@ services:
     # this directory, built by ../.github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml. See README.md.
     image: ghcr.io/agenttix/agx-ai/vllm-flash-next:latest
     container_name: vllm-flash-next
-    # The runtime takes the API key from VLLM_API_KEY.
+    # The runtime takes the API key from VLLM_API_KEY. The checkpoint: albucino/Qwen3.8-Flash-Next-W4A16-FP8PLE with
+    # its Gated DeltaNet and attention projections in int8 (README.md: a view of the checkpoint in
+    # ~/.cache/vllm-models with one new 2.6 GB shard and links to the original shards), and the checkpoint's own MTP
+    # drafter (its runtime/ directory, which the view does not have).
     entrypoint:
       - /bin/sh
       - -c
       - >-
         VLLM_API_KEY="$$LLAMA_API_KEY" exec /usr/local/bin/qwen38-serve
-        /root/.cache/huggingface/hub/models--albucino--Qwen3.8-Flash-Next-W4A16-FP8PLE/snapshots/ef554143369a706525336f6b42a09094835dc077
+        /models/Qwen3.8-Flash-Next-W4A16-FP8PLE-dense8-view
+        /root/.cache/huggingface/hub/models--albucino--Qwen3.8-Flash-Next-W4A16-FP8PLE/snapshots/ef554143369a706525336f6b42a09094835dc077/runtime/mtp-int4-g32
     env_file:
       - ../llama-cpp-radeon-vii/llama-cpp.env
     # Overrides of the runtime's defaults (configs/3090-64gb-128k.env of the runtime repository, see its
@@ -38,24 +42,27 @@ services:
       PORT: "8000"
       # The full trained context of 262144 tokens (the runtime's default: 135168), like llama.cpp. It fits because the
       # token embedding is in pinned RAM (QWEN38_EMBED_UVA, -1.18 GiB, looked up over PCIe) and fewer experts stay on
-      # the GPU (see ../vllm-agx-z2e/README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the context. Peak
-      # 20876 MiB with a 260000-token prompt.
+      # the GPU (see ../vllm-agx-z2e/README.md). The KV cache holds 287594 tokens; the runtime needs ~1.05 times the
+      # context. Peak 20238 MiB with a 260000-token prompt.
       MAX_MODEL_LEN: "262144"
       KV_CACHE_MEMORY_BYTES: "5150000000"
       QWEN38_EMBED_UVA: "1"
-      # Experts per layer kept on the GPU (~116 MiB of VRAM each; default 32, which needs 23.4 GB). The other ones
-      # are computed by the CPU during decode (and partly by the GPU over PCIe) and streamed to the GPU during
-      # prefill. Decode is bound by the CPU's memory bandwidth, so 14 instead of 20 cost no measurable speed.
-      QWEN38_HOT_ONLY: "14"
+      # Experts per layer kept on the GPU (~116 MiB of weights each, ~200 MiB of peak VRAM with the prefill buffers;
+      # default 32, which needs 23.4 GB). The other ones are computed by the CPU during decode (and partly by the GPU
+      # over PCIe) and streamed to the GPU during prefill. The int8 dense layers leave room for 24 instead of 14:
+      # 4 % fewer cold experts per decode step for the CPU.
+      QWEN38_HOT_ONLY: "24"
       # Share of each layer's cold experts that the GPU computes during decode, at most 8 per layer
       # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
       # help (see ../vllm-agx-z2e/README.md).
       QWEN38_GPU_SHARE_FRAC: "0.3"
-      # The CPU pool: 16 threads, 2 on each 4-core CCX of the Threadripper 3970X (the runtime's default: 24, 3 per
-      # CCX). The pool is bound by the memory bandwidth (~41 GB/s), which 16 threads already reach (59 ms per decode
-      # step, 24: 63 ms, 8: 66 ms, 48 with SMT: 77 ms), and the freed cores speed up the serving processes that drive
-      # the GPU: +15 % in edits, +5-10 % otherwise (see ../vllm-agx-z2e/README.md#qwen38-flash-next).
-      QWEN38_CPU_EXPERTS_CPUS: "1-2,5-6,9-10,13-14,17-18,21-22,25-26,29-30"
+      # The CPU experts with int8 activations (cpu-moe.patch, README.md): ~2.3 times as fast per thread as the
+      # runtime's FP32 activations, so that 8 threads, 1 on each 4-core CCX of the Threadripper 3970X, reach the
+      # memory bandwidth (the runtime's default: 24 threads), and the other cores are left to the serving processes
+      # that drive the GPU. No measurable quality loss (../vllm-agx-z2e/README.md#cpu-expert-kernel-2026-10-26).
+      # QWEN38_CPU_EXPERTS_INT16=1 instead is practically exact and needs 16 threads (1-2,5-6,...,29-30).
+      QWEN38_CPU_EXPERTS_INT8: "1"
+      QWEN38_CPU_EXPERTS_CPUS: "1,5,9,13,17,21,25,29"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Image and video input with the vision tower on the CPU (README.md): 32 threads were the
@@ -81,6 +88,8 @@ services:
       - "9931:8000"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+      # The int8 dense checkpoint view, see above
+      - /home/mika/.cache/vllm-models:/models:ro
       # Kernel caches (Humming, Triton): the first start compiles kernels, later starts reuse them.
       - flash-next-cache:/root/.humming
       - flash-next-triton-cache:/root/.triton

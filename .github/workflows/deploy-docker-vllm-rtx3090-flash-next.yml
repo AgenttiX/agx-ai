@@ -9,6 +9,7 @@ on:
       - "vllm-rtx3090-flash-next/cpu_vision.py"
       - "vllm-rtx3090-flash-next/flash-next.patch"
       - "vllm-rtx3090-flash-next/vllm-mm.patch"
+      - "vllm-rtx3090-flash-next/cpu-moe.patch"
       - ".github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml"
   workflow_dispatch:
 jobs:

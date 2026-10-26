@@ -15,6 +15,11 @@ indexer, the routers, the hyper-connections and the MTP module.
 
 The output directory gets new shards in place of the quantized ones (~78 GB) and symbolic links to the n-gram table
 shards (51 GB) and the other files of the source, which therefore has to stay in the Hugging Face cache.
+With --separate-shard, it gets one new shard with only the quantized tensors (~3 GB) and symbolic links to all
+source shards instead: the index then refers to the new tensors in it, and to the other tensors in the source
+shards, which still hold the BF16 originals of the quantized ones. Only loaders that honor the index at the tensor
+level can load that, such as the vLLM build of ../vllm-rtx3090-flash-next (stock vLLM 0.31 reads every tensor of a
+listed shard). --keep-shared-experts leaves the shared experts in BF16 (that runtime fuses them into the MoE).
 The quantization_config of config.json gets the new bits for the quantized layers.
 
 Run it in the vLLM image, which has torch and safetensors (see README.md).
@@ -79,6 +84,9 @@ def main() -> None:
     parser.add_argument("--src", default=SRC, type=Path, help="source snapshot directory (default %(default)s)")
     parser.add_argument("--bits", type=int, default=8, choices=[4, 8])
     parser.add_argument("--lm-head-bits", type=int, default=8, choices=[4, 8, 16], help="16 = keep BF16")
+    parser.add_argument("--separate-shard", action="store_true",
+                        help="write only the quantized tensors, into one new shard, and link all source shards")
+    parser.add_argument("--keep-shared-experts", action="store_true", help="keep the shared experts in BF16")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -93,7 +101,32 @@ def main() -> None:
     def is_target(name: str) -> bool:
         module = name.removesuffix(".weight")
         is_linear = TARGET.match(module) is not None or module == LM_HEAD
+        if args.keep_shared_experts and ".shared_expert." in module:
+            return False
         return name.endswith(".weight") and is_linear and bits_for(module) < 16
+
+    if args.separate_shard:
+        new_shard = f"model-dense-int{args.bits}.safetensors"
+        tensors = {}
+        for shard in shards:
+            dst = args.out / shard
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            dst.symlink_to(os.path.realpath(args.src / shard))
+            targets = [n for n, s in weight_map.items() if s == shard and is_target(n)]
+            if not targets:
+                continue
+            with safe_open(args.src / shard, "pt") as f:
+                for name in targets:
+                    module = name.removesuffix(".weight")
+                    for suffix, t in quantize_gptq(f.get_tensor(name), bits_for(module)).items():
+                        tensors[f"{module}.{suffix}"] = t
+                        weight_map[f"{module}.{suffix}"] = new_shard
+                    del weight_map[name]
+                    quantized[module] = bits_for(module)
+            print(f"{shard}: {len(targets)} tensors quantized", flush=True)
+        save_file(tensors, args.out / new_shard, metadata={"format": "pt"})
+        shards = []  # all done
 
     for shard in shards:
         names = [n for n, s in weight_map.items() if s == shard]
@@ -125,7 +158,7 @@ def main() -> None:
         # The exact keys are checked before the regular expressions.
         extra[module] = {"bits": bits, "group_size": GROUP_SIZE, "sym": True, "data_type": "int"}
     # These patterns would also match the quantized layers; the exact keys cover all layers anyway.
-    for pattern in (".*linear_attn.*", ".*shared_expert.*"):
+    for pattern in (".*linear_attn.*",) if args.keep_shared_experts else (".*linear_attn.*", ".*shared_expert.*"):
         extra.pop(pattern, None)
     (args.out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     (args.out / "model.safetensors.index.json").write_text(json.dumps(index, indent=2) + "\n")

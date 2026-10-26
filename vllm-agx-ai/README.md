@@ -164,7 +164,11 @@ shared expert projections to int8 and the lm_head to int4 with round-to-nearest 
 the experts), which takes the weights on the GPU from 8.0 GiB (without the embedding) to 4.83 GiB (5.03 GiB with an
 int8 lm_head, as until 2026-10-13). The relative error of the int8 weights is 0.8 % (int4: 14 %); for the lm_head,
 int4 cost less quality than the FP8 KV cache, see [Context size](#context-size). The output directory gets new shards for the quantized tensors (65 GB) and
-symbolic links to the n-gram table and the other files of the source, which must stay in the Hugging Face cache.
+symbolic links to the n-gram table and the other files of the source, which must stay in the Hugging Face cache. Since
+2026-10-26, `--separate-shard` writes only the quantized tensors into one new shard (2.6 GB) and links all source
+shards, for loaders that honor the index at the tensor level (not stock vLLM 0.31, which reads every tensor of a listed
+shard), and `--keep-shared-experts` keeps the shared experts in BF16: used by
+[`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md#checkpoint-with-int8-dense-layers-2026-10-26).
 
 **The fixes**, in [`../vllm/vllm.patch`](../vllm/vllm.patch) (details in [`../vllm/README.md`](../vllm/README.md)),
 found one at a time:

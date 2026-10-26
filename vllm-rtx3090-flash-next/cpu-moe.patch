@@ -1,0 +1,351 @@
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
+@@ -125,6 +125,217 @@
+     }
+ }
+ 
++// agx-ai: integer activations for the CPU experts, selected at startup (the default stays FP32).
++// INT8 (QWEN38_CPU_EXPERTS_INT8=1): each token's activations are quantized to int8 with one scale per group of QG
++// (32, like llama.cpp's Q8_0 activations; the weights' groups are 128), and the products with the int4 weights
++// (0..15) are summed exactly in int32 with vpmaddubsw/vpmaddwd: 64 weights per ~8 instructions instead of 8 per 4
++// with FP32 activations. A thread computes an expert ~2.3 times as fast (in cache), so 8 threads reach the memory
++// bandwidth. Relative error of an expert's output ~1 % (FP32: 1e-7, the GPU's BF16 activations: ~0.3 %). The zero
++// point 8 is subtracted with the group sums of the quantized activations:
++//   y[n] = sum over weight groups g of s[g][n] * sum over activation groups a in g of xs[a] (sum_k xq[k] q[k][n] - 8 sum_k xq[k]).
++#ifndef QG
++#define QG 32
++#endif
++bool g_int8 = [] { const char* v = std::getenv("QWEN38_CPU_EXPERTS_INT8"); return v && v[0] == '1'; }();
++bool g_int16 = [] { const char* v = std::getenv("QWEN38_CPU_EXPERTS_INT16"); return v && v[0] == '1'; }();
++
++// INT16 (QWEN38_CPU_EXPERTS_INT16=1): one scale per group of 128, practically exact (relative error ~6e-5), and the
++// products with the int4 weights summed in int32 with vpmaddwd: 64 weights per ~16 instructions, ~1.3 times as fast
++// as FP32 per thread. x fp32 [T][K] -> xq int16 [T][K], xs fp32 [T][K/128], xz int32 [T][K/128] (8 * sum of xq).
++static void quantize_q16(const float* x, int T, int K, int16_t* xq, float* xs, int32_t* xz) {
++  const int groups = K / GS;
++  for (int t = 0; t < T; ++t)
++    for (int g = 0; g < groups; ++g) {
++      const float* xp = x + static_cast<size_t>(t) * K + g * GS;
++      float amax = 0.f;
++      for (int k = 0; k < GS; ++k) amax = std::max(amax, std::fabs(xp[k]));
++      const float inv = amax > 0.f ? 32767.f / amax : 0.f;
++      int16_t* q = xq + static_cast<size_t>(t) * K + g * GS;
++      int32_t sum = 0;
++      for (int k = 0; k < GS; ++k) {
++        const int v = static_cast<int>(std::nearbyint(xp[k] * inv));
++        q[k] = static_cast<int16_t>(v);
++        sum += v;
++      }
++      xs[t * groups + g] = amax / 32767.f;
++      xz[t * groups + g] = 8 * sum;
++    }
++}
++
++// The int16 GEMV: in each int32 of the weights, the nibble pairs (j, j + 4) are 16-bit lanes after a shift by 4j
++// and a mask, multiplied with the activation pairs (k = 8r + j, 8r + j + 4) by vpmaddwd.
++template <int T>
++static void gemv_q16(const int32_t* __restrict qw, const uint16_t* __restrict sc, int K, int N, int n0, int n1,
++                     const int16_t* __restrict xq, const float* __restrict xs, const int32_t* __restrict xz,
++                     float* __restrict y, int ldy) {
++  alignas(32) float tot[T][MAXC];
++  const int W = n1 - n0;
++  for (int t = 0; t < T; ++t) std::memset(tot[t], 0, sizeof(float) * W);
++  const __m256i mask = _mm256_set1_epi32(0x000F000F);
++  const int groups = K / GS;
++  for (int g = 0; g < groups; ++g) {
++    const int r0 = g * (GS / 8);
++    if (g + 1 < groups) {
++      const char* nxt = reinterpret_cast<const char*>(qw + static_cast<size_t>(r0 + GS / 8) * N + n0);
++      for (int r = 0; r < GS / 8; ++r)
++        for (int b = 0; b < W * 4; b += 64) _mm_prefetch(nxt + static_cast<size_t>(r) * N * 4 + b, _MM_HINT_T1);
++    }
++    const uint16_t* srow = sc + static_cast<size_t>(g) * N + n0;
++    for (int c = 0; c < W; c += 16) {
++      __m256i acc[T][2];
++      for (int t = 0; t < T; ++t) acc[t][0] = acc[t][1] = _mm256_setzero_si256();
++      for (int r = 0; r < GS / 8; ++r) {
++        const int32_t* row = qw + static_cast<size_t>(r0 + r) * N + n0 + c;
++        __m256i xp[T][4];
++        for (int t = 0; t < T; ++t) {
++          const uint16_t* xr = reinterpret_cast<const uint16_t*>(xq + static_cast<size_t>(t) * K + (r0 + r) * 8);
++          for (int j = 0; j < 4; ++j) xp[t][j] = _mm256_set1_epi32(static_cast<int32_t>(xr[j] | (xr[j + 4] << 16)));
++        }
++        for (int u = 0; u < 2; ++u) {
++          const __m256i q = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(row + 8 * u));
++          const __m256i w0 = _mm256_and_si256(q, mask), w1 = _mm256_and_si256(_mm256_srli_epi32(q, 4), mask);
++          const __m256i w2 = _mm256_and_si256(_mm256_srli_epi32(q, 8), mask);
++          const __m256i w3 = _mm256_and_si256(_mm256_srli_epi32(q, 12), mask);
++          for (int t = 0; t < T; ++t) {
++            const __m256i s01 = _mm256_add_epi32(_mm256_madd_epi16(w0, xp[t][0]), _mm256_madd_epi16(w1, xp[t][1]));
++            const __m256i s23 = _mm256_add_epi32(_mm256_madd_epi16(w2, xp[t][2]), _mm256_madd_epi16(w3, xp[t][3]));
++            acc[t][u] = _mm256_add_epi32(acc[t][u], _mm256_add_epi32(s01, s23));
++          }
++        }
++      }
++      for (int u = 0; u < 2; ++u) {
++        const __m256 sv = load_h8(srow + c + 8 * u);
++        for (int t = 0; t < T; ++t) {
++          const __m256i d = _mm256_sub_epi32(acc[t][u], _mm256_set1_epi32(xz[t * groups + g]));
++          const __m256 f = _mm256_mul_ps(sv, _mm256_set1_ps(xs[t * groups + g]));
++          _mm256_store_ps(&tot[t][c + 8 * u],
++                          _mm256_fmadd_ps(f, _mm256_cvtepi32_ps(d), _mm256_load_ps(&tot[t][c + 8 * u])));
++        }
++      }
++    }
++  }
++  for (int t = 0; t < T; ++t) std::memcpy(y + static_cast<size_t>(t) * ldy, tot[t], sizeof(float) * W);
++}
++
++static void gemv_q16_cols(const int32_t* qw, const uint16_t* sc, int K, int N, int n0, int n1, int Tn,
++                          const int16_t* xq, const float* xs, const int32_t* xz, float* y, int ldy) {
++  for (int a = n0; a < n1; a += MAXC) {
++    const int b = std::min(n1, a + MAXC);
++    switch (Tn) {
++      case 1: gemv_q16<1>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      case 2: gemv_q16<2>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      case 3: gemv_q16<3>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      default: gemv_q16<4>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++    }
++  }
++}
++
++// x fp32 [T][K] -> xq int8 [T][K], xs fp32 [T][K/QG] (scale), xz int32 [T][K/QG] (8 * sum of xq in the group)
++static void quantize_q8(const float* x, int T, int K, int8_t* xq, float* xs, int32_t* xz) {
++  const int groups = K / QG;
++  const __m256 sign = _mm256_set1_ps(-0.0f);
++  for (int t = 0; t < T; ++t)
++    for (int g = 0; g < groups; ++g) {
++      const float* xp = x + static_cast<size_t>(t) * K + g * QG;
++      __m256 m = _mm256_setzero_ps();
++      for (int k = 0; k < QG; k += 8) m = _mm256_max_ps(m, _mm256_andnot_ps(sign, _mm256_loadu_ps(xp + k)));
++      __m128 m4 = _mm_max_ps(_mm256_castps256_ps128(m), _mm256_extractf128_ps(m, 1));
++      m4 = _mm_max_ps(m4, _mm_movehl_ps(m4, m4));
++      m4 = _mm_max_ss(m4, _mm_shuffle_ps(m4, m4, 1));
++      const float amax = _mm_cvtss_f32(m4);
++      const float scale = amax / 127.f, inv = amax > 0.f ? 127.f / amax : 0.f;
++      int8_t* q = xq + static_cast<size_t>(t) * K + g * QG;
++      int32_t sum = 0;
++      for (int k = 0; k < QG; ++k) {
++        const int v = static_cast<int>(std::nearbyint(xp[k] * inv));
++        q[k] = static_cast<int8_t>(v);
++        sum += v;
++      }
++      xs[t * groups + g] = scale;
++      xz[t * groups + g] = 8 * sum;
++    }
++}
++
++// y[t][n] = sum_k xq[t][k] (q[k][n] - 8) s[k / 128][n] xs[t][k / QG] for the columns [n0, n1) (multiple of 16).
++// Within a group (16 packed rows, contiguous in memory), each block of 16 columns keeps its int32 sums in registers.
++template <int T>
++static void gemv_q8(const int32_t* __restrict qw, const uint16_t* __restrict sc, int K, int N, int n0, int n1,
++                    const int8_t* __restrict xq, const float* __restrict xs, const int32_t* __restrict xz,
++                    float* __restrict y, int ldy) {
++  alignas(32) float tot[T][MAXC];
++  const int W = n1 - n0;
++  for (int t = 0; t < T; ++t) std::memset(tot[t], 0, sizeof(float) * W);
++  const __m256i mask = _mm256_set1_epi32(0x0F0F0F0F);
++  const __m256i ones = _mm256_set1_epi16(1);
++  const int groups = K / GS;
++  constexpr int SUB = GS / QG, SR = QG / 8;  // activation groups per weight group, packed rows per activation group
++  const int qgroups = K / QG;
++  for (int g = 0; g < groups; ++g) {
++    const int r0 = g * (GS / 8);
++    if (g + 1 < groups) {  // the next group's rows: 16 * N * 4 bytes, contiguous
++      const char* nxt = reinterpret_cast<const char*>(qw + static_cast<size_t>(r0 + GS / 8) * N + n0);
++      for (int r = 0; r < GS / 8; ++r)
++        for (int b = 0; b < W * 4; b += 64) _mm_prefetch(nxt + static_cast<size_t>(r) * N * 4 + b, _MM_HINT_T1);
++    }
++    // Per row and token: the int8 activations of the row's 8 k as two broadcast 4-byte patterns (even, odd k).
++    __m256i xe[GS / 8][T], xo[GS / 8][T];
++    for (int r = 0; r < GS / 8; ++r)
++      for (int t = 0; t < T; ++t) {
++        const int8_t* xr = xq + static_cast<size_t>(t) * K + (r0 + r) * 8;
++        const int32_t e = (xr[0] & 0xFF) | (xr[2] & 0xFF) << 8 | (xr[4] & 0xFF) << 16 | (xr[6] & 0xFF) << 24;
++        const int32_t o = (xr[1] & 0xFF) | (xr[3] & 0xFF) << 8 | (xr[5] & 0xFF) << 16 | (xr[7] & 0xFF) << 24;
++        xe[r][t] = _mm256_set1_epi32(e);
++        xo[r][t] = _mm256_set1_epi32(o);
++      }
++    const uint16_t* srow = sc + static_cast<size_t>(g) * N + n0;
++    for (int c = 0; c < W; c += 16) {
++      __m256 fa[T][2];
++      for (int t = 0; t < T; ++t) fa[t][0] = fa[t][1] = _mm256_setzero_ps();
++      for (int sg = 0; sg < SUB; ++sg) {
++        __m256i acc[T][2];
++        for (int t = 0; t < T; ++t) acc[t][0] = acc[t][1] = _mm256_setzero_si256();
++        for (int rr = 0; rr < SR; ++rr) {
++          const int r = sg * SR + rr;
++          const int32_t* row = qw + static_cast<size_t>(r0 + r) * N + n0 + c;
++          for (int u = 0; u < 2; ++u) {
++            const __m256i q = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(row + 8 * u));
++            const __m256i lo = _mm256_and_si256(q, mask), hi = _mm256_and_si256(_mm256_srli_epi32(q, 4), mask);
++            for (int t = 0; t < T; ++t) {
++              const __m256i pp = _mm256_add_epi16(_mm256_maddubs_epi16(lo, xe[r][t]), _mm256_maddubs_epi16(hi, xo[r][t]));
++              acc[t][u] = _mm256_add_epi32(acc[t][u], _mm256_madd_epi16(pp, ones));
++            }
++          }
++        }
++        const int qg = g * SUB + sg;
++        for (int t = 0; t < T; ++t)
++          for (int u = 0; u < 2; ++u) {
++            const __m256i d = _mm256_sub_epi32(acc[t][u], _mm256_set1_epi32(xz[t * qgroups + qg]));
++            fa[t][u] = _mm256_fmadd_ps(_mm256_set1_ps(xs[t * qgroups + qg]), _mm256_cvtepi32_ps(d), fa[t][u]);
++          }
++      }
++      for (int u = 0; u < 2; ++u) {
++        const __m256 sv = load_h8(srow + c + 8 * u);
++        for (int t = 0; t < T; ++t)
++          _mm256_store_ps(&tot[t][c + 8 * u], _mm256_fmadd_ps(sv, fa[t][u], _mm256_load_ps(&tot[t][c + 8 * u])));
++      }
++    }
++  }
++  for (int t = 0; t < T; ++t) std::memcpy(y + static_cast<size_t>(t) * ldy, tot[t], sizeof(float) * W);
++}
++
++static void gemv_q8_cols(const int32_t* qw, const uint16_t* sc, int K, int N, int n0, int n1, int Tn,
++                         const int8_t* xq, const float* xs, const int32_t* xz, float* y, int ldy) {
++  for (int a = n0; a < n1; a += MAXC) {
++    const int b = std::min(n1, a + MAXC);
++    switch (Tn) {
++      case 1: gemv_q8<1>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      case 2: gemv_q8<2>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      case 3: gemv_q8<3>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++      default: gemv_q8<4>(qw, sc, K, N, a, b, xq, xs, xz, y + (a - n0), ldy); break;
++    }
++  }
++}
++
+ // ---------------------------------------------------------------- thread pool
+ class Pool {
+  public:
+@@ -258,17 +469,35 @@
+     g_tail_jobs.fetch_add(tail, std::memory_order_relaxed);
+     std::stable_partition(jobs, jobs + J, [&](const Job& jb) { return !tm[jb.e]; });
+   }
++  {  // agx-ai: the experts with more tokens (more work) first, among the resident ones (the tail ones stay last)
++    int nres = J;
++    if (tm) nres = static_cast<int>(std::find_if(jobs, jobs + J, [&](const Job& jb) { return tm[jb.e]; }) - jobs);
++    std::stable_sort(jobs, jobs + nres, [](const Job& a, const Job& b) { return a.n > b.n; });
++  }
+   const int nw = g_pool->size();
+   const size_t per_job = MAXT * H + MAXT * (H / GS);
+   const size_t per_worker = 3 * MAXT * I + MAXT * H + MAXT * (I / GS);
+   TORCH_CHECK(per_job * J + per_worker * nw <= scratch_floats, "scratch too small");
+   float* wbase = sp + per_job * J;
+-  for (int j = 0; j < J; ++j) {
+-    float* xs = sp + per_job * j;
+-    for (int i = 0; i < jobs[j].n; ++i) std::memcpy(xs + i * H, xp + jobs[j].tok[i] * H, sizeof(float) * H);
+-    group_sums(xs, jobs[j].n, H, xs + MAXT * H);
+-  }
+-  for (int w = 0; w < nw; ++w) std::memset(wbase + per_worker * w + 3 * MAXT * I, 0, sizeof(float) * MAXT * H);
++  // INT8: the quantized activations of each token, once per layer (each job copies its tokens' rows).
++  alignas(32) int8_t xq_all[MAXT * H];
++  float xs_all[MAXT * (H / QG)];
++  int32_t xz_all[MAXT * (H / QG)];
++  alignas(32) int16_t xw_all[MAXT * H];
++  float xws_all[MAXT * (H / GS)];
++  int32_t xwz_all[MAXT * (H / GS)];
++  if (g_int8) quantize_q8(xp, T, H, xq_all, xs_all, xz_all);
++  else if (g_int16) quantize_q16(xp, T, H, xw_all, xws_all, xwz_all);
++  if (!g_int8 && !g_int16)  // the FP32 activations of each job's tokens (the integer modes copy theirs per item)
++    for (int j = 0; j < J; ++j) {
++      float* xs = sp + per_job * j;
++      for (int i = 0; i < jobs[j].n; ++i) std::memcpy(xs + i * H, xp + jobs[j].tok[i] * H, sizeof(float) * H);
++      group_sums(xs, jobs[j].n, H, xs + MAXT * H);
++    }
++  // agx-ai: each worker zeroes its output rows when it takes its first item, and only the workers that took one
++  // are summed, in parallel (before, one thread zeroed and summed MAXT * H floats of every worker in every layer).
++  uint8_t used[256] = {};
++  TORCH_CHECK(nw <= 256, "too many workers");
+   const int SL = g_nslices;
+   g_pool->run(J * SL, [&](int item, int w) {
+     const Job& jb = jobs[item / SL];
+@@ -280,12 +509,41 @@
+     float* act = wb + 2 * MAXT * I;
+     float* yacc = wb + 3 * MAXT * I;
+     float* ag = yacc + MAXT * H;
++    if (!used[w]) { std::memset(yacc, 0, sizeof(float) * T * H); used[w] = 1; }
+     const int64_t* e = tab + static_cast<int64_t>(jb.e) * 6;
+-    gemv_cols(reinterpret_cast<const int32_t*>(e[0]), reinterpret_cast<const uint16_t*>(e[1]), H, I, c0, c1, jb.n,
+-              xs, xg, gu, cw);
+-    gemv_cols(reinterpret_cast<const int32_t*>(e[2]), reinterpret_cast<const uint16_t*>(e[3]), H, I, c0, c1, jb.n,
+-              xs, xg, gu + MAXT * I, cw);
+     const int ng = cw / GS;
++    alignas(32) int8_t xq[MAXT * H];
++    float xsq[MAXT * (H / QG)];
++    int32_t xz[MAXT * (H / QG)];
++    if (g_int8) {
++      for (int i = 0; i < jb.n; ++i) {
++        std::memcpy(xq + i * H, xq_all + jb.tok[i] * H, H);
++        std::memcpy(xsq + i * (H / QG), xs_all + jb.tok[i] * (H / QG), sizeof(float) * (H / QG));
++        std::memcpy(xz + i * (H / QG), xz_all + jb.tok[i] * (H / QG), sizeof(int32_t) * (H / QG));
++      }
++      gemv_q8_cols(reinterpret_cast<const int32_t*>(e[0]), reinterpret_cast<const uint16_t*>(e[1]), H, I, c0, c1,
++                   jb.n, xq, xsq, xz, gu, cw);
++      gemv_q8_cols(reinterpret_cast<const int32_t*>(e[2]), reinterpret_cast<const uint16_t*>(e[3]), H, I, c0, c1,
++                   jb.n, xq, xsq, xz, gu + MAXT * I, cw);
++    } else if (g_int16) {
++      alignas(32) int16_t xw[MAXT * H];
++      float xws[MAXT * (H / GS)];
++      int32_t xwz[MAXT * (H / GS)];
++      for (int i = 0; i < jb.n; ++i) {
++        std::memcpy(xw + i * H, xw_all + jb.tok[i] * H, sizeof(int16_t) * H);
++        std::memcpy(xws + i * (H / GS), xws_all + jb.tok[i] * (H / GS), sizeof(float) * (H / GS));
++        std::memcpy(xwz + i * (H / GS), xwz_all + jb.tok[i] * (H / GS), sizeof(int32_t) * (H / GS));
++      }
++      gemv_q16_cols(reinterpret_cast<const int32_t*>(e[0]), reinterpret_cast<const uint16_t*>(e[1]), H, I, c0, c1,
++                    jb.n, xw, xws, xwz, gu, cw);
++      gemv_q16_cols(reinterpret_cast<const int32_t*>(e[2]), reinterpret_cast<const uint16_t*>(e[3]), H, I, c0, c1,
++                    jb.n, xw, xws, xwz, gu + MAXT * I, cw);
++    } else {
++      gemv_cols(reinterpret_cast<const int32_t*>(e[0]), reinterpret_cast<const uint16_t*>(e[1]), H, I, c0, c1, jb.n,
++                xs, xg, gu, cw);
++      gemv_cols(reinterpret_cast<const int32_t*>(e[2]), reinterpret_cast<const uint16_t*>(e[3]), H, I, c0, c1, jb.n,
++                xs, xg, gu + MAXT * I, cw);
++    }
+     for (int t = 0; t < jb.n; ++t)
+       for (int g = 0; g < ng; ++g) {
+         float sum = 0.f;
+@@ -300,8 +558,18 @@
+     const int32_t* qd = reinterpret_cast<const int32_t*>(e[4]) + static_cast<size_t>(c0 / 8) * H;
+     const uint16_t* sd = reinterpret_cast<const uint16_t*>(e[5]) + static_cast<size_t>(c0 / GS) * H;
+     alignas(32) float y[MAXT * 320];
++    alignas(32) int8_t aq[MAXT * I];
++    float as[MAXT * (I / QG)];
++    int32_t az[MAXT * (I / QG)];
++    alignas(32) int16_t aw[MAXT * I];
++    float aws[MAXT * (I / GS)];
++    int32_t awz[MAXT * (I / GS)];
++    if (g_int8) quantize_q8(act, jb.n, cw, aq, as, az);
++    else if (g_int16) quantize_q16(act, jb.n, cw, aw, aws, awz);
+     for (int a0 = 0; a0 < H; a0 += 320) {
+-      switch (jb.n) {
++      if (g_int8) gemv_q8_cols(qd, sd, cw, H, a0, a0 + 320, jb.n, aq, as, az, y, 320);
++      else if (g_int16) gemv_q16_cols(qd, sd, cw, H, a0, a0 + 320, jb.n, aw, aws, awz, y, 320);
++      else switch (jb.n) {
+         case 1: gemv_rows<1>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+         case 2: gemv_rows<2>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+         case 3: gemv_rows<3>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+@@ -315,11 +583,17 @@
+       }
+     }
+   });
+-  for (int w = 0; w < nw; ++w) {
+-    const float* yacc = wbase + per_worker * w + 3 * MAXT * I;
+-    for (int i = 0; i < T * H; i += 8)
+-      _mm256_storeu_ps(op + i, _mm256_add_ps(_mm256_loadu_ps(op + i), _mm256_loadu_ps(yacc + i)));
+-  }
++  int ws[256], nu = 0;
++  for (int w = 0; w < nw; ++w) if (used[w]) ws[nu++] = w;
++  constexpr int CH = 640;  // floats per reduction item
++  g_pool->run((T * H) / CH, [&](int item, int) {
++    float* o = op + item * CH;
++    for (int u = 0; u < nu; ++u) {
++      const float* yacc = wbase + per_worker * ws[u] + 3 * MAXT * I + item * CH;
++      for (int i = 0; i < CH; i += 8)
++        _mm256_storeu_ps(o + i, _mm256_add_ps(_mm256_loadu_ps(o + i), _mm256_loadu_ps(yacc + i)));
++    }
++  });
+ }
+ 
+ // Prefill chunks (T up to MAXT_BIG): one work item per cold expert, largest first, each processing its tokens
