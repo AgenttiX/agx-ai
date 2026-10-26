@@ -1,7 +1,9 @@
 # llama.cpp on RTX 3070
 
 llama.cpp for the `agx-ai` LXC container on the Proxmox host `agx-h12`:
-NVIDIA GeForce RTX 3070 (8 GB), AMD EPYC 7302 (16 cores, 32 threads), 128 GB RAM, Supermicro H12SSL-i.
+NVIDIA GeForce RTX 3070 (8 GB), AMD EPYC 7302 (16 cores, 32 threads), Supermicro H12SSL-i, 256 GB of DDR4-2400 ECC
+RDIMM (8 × 32 GB SK Hynix HMA84GR7AFR4N-UH, dual-rank, one per channel in all 8 channels), of which 144 GiB are
+available to the container.
 The LXC container is limited to 24 of the 32 threads. Proxmox picks which ones at each boot (currently
 1-2, 5-7, 10-25 and 29-31, see `/sys/fs/cgroup/cpuset.cpus.effective`), so the container sometimes gets both threads
 of some cores and none of another: during the tests of 2026-09-25, its 24 threads were on only 15 of the 16 cores.
