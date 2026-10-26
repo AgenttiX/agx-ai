@@ -9,6 +9,10 @@
       "Read(/ssh/id_*[!u]b)",
       "Read(/ssh/id_*[!p]ub)",
       "Read(/ssh/id_*[!.]pub)"
+    ],
+    "ask": [
+      "Bash(git push)",
+      "PowerShell(git push)"
     ]
   },
   "enabledPlugins": {
