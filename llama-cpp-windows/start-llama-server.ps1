@@ -19,7 +19,7 @@ The server runs in the foreground until it is stopped (Ctrl+C), so that the cons
 (register-autostart.ps1) controls it.
 
 .EXAMPLE
-.\start-llama-server.ps1 -ConfigDir ..\llama-cpp-t550\windows -EnvFile ..\llama-cpp-t550\llama-cpp.env
+.\start-llama-server.ps1 -ConfigDir ..\llama-cpp-t550\windows -EnvFile ..\llama-cpp\llama-cpp.env
 #>
 param(
     [Parameter(Mandatory = $true)][string]$ConfigDir,

@@ -8,7 +8,7 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: llama-cpp
     env_file:
-      - path: ./llama-cpp.env
+      - path: ../llama-cpp/llama-cpp.env
         # required: false
     environment:
       # The image has no native kernels for the MX150 (sm_61), so the CUDA driver JIT-compiles them from PTX
@@ -19,7 +19,7 @@ services:
       - "9931:9931"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
       - ./preset.ini:/etc/llama.cpp/preset.ini:ro
       - cuda-cache:/root/.nv
     deploy:

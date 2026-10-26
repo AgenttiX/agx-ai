@@ -5,7 +5,7 @@ llama.cpp router server for agx-frame, a Valve Steam Frame VR headset
 It runs in rootless Podman from the official `ghcr.io/ggml-org/llama.cpp:server-vulkan` image (arm64), as a
 Quadlet systemd user unit ([llama-cpp.container](llama-cpp.container)), with the models from the host's Hugging Face
 cache. The models and their settings are in [preset.ini](preset.ini), and the server-wide settings in
-[config.ini](config.ini). Measured on 2026-10-26 with build b11870 (74bca3950).
+[`../llama-cpp/config.ini`](../llama-cpp/config.ini). Measured on 2026-10-26 with build b11870 (74bca3950).
 
 | Model | Context | VRAM = RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|
@@ -41,7 +41,7 @@ loaded. All results are in `../benchmark/results/agx-frame*.jsonl`.
 mkdir -p ~/.config/containers/systemd
 ln -s ~/Git/agx-ai/llama-cpp-frame/llama-cpp.container ~/.config/containers/systemd/
 # Only if it does not exist yet (it is not in Git):
-echo "LLAMA_API_KEY=$(openssl rand -base64 32)" > ~/Git/agx-ai/llama-cpp-frame/llama-cpp.env
+echo "LLAMA_API_KEY=$(openssl rand -base64 32)" > ~/Git/agx-ai/llama-cpp/llama-cpp.env
 systemctl --user daemon-reload
 systemctl --user start llama-cpp
 journalctl --user -u llama-cpp -f
@@ -57,7 +57,7 @@ Use `127.0.0.1` instead of `localhost` on the Frame itself: Podman's port forwar
 
 ```sh
 cd ../benchmark
-./llama_cpp_bench_http.py --url http://127.0.0.1:9931 --env-file ../llama-cpp-frame/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://127.0.0.1:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat --prompt-tokens 2048
 ./llama_cpp_bench_container.py --image ghcr.io/ggml-org/llama.cpp:full-vulkan \
     --model /root/.cache/huggingface/hub/models--unsloth--gemma-4-E4B-it-qat-GGUF/snapshots/.../gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf \

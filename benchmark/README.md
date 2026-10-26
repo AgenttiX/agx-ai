@@ -15,7 +15,7 @@ Benchmarks a *running* `llama-server` through its API, so the numbers reflect th
 router presets, slot count, KV cache, speculative decoding, tensor split. Needs only Python 3.11+.
 
 ```sh
-./llama_cpp_bench_http.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "what was changed"
+./llama_cpp_bench_http.py --env-file ../llama-cpp/llama-cpp.env --label "what was changed"
 ./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --no-embedding     # another server
 ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192  # heavier settings
 ./llama_cpp_bench_http.py --mixed   # embedding batches concurrently with the concurrent requests (PaperQA2-like load)
@@ -80,8 +80,8 @@ selected with `GPUS` (default all; `GPUS=none` for the CPU image), and the compi
 ```sh
 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
     ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
-    ../llama-cpp-radeon-vii/llama-cpp.env -- --max-model-len 16384
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    ../llama-cpp/llama-cpp.env -- --max-model-len 16384
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test
 ```
@@ -99,9 +99,9 @@ Two tests for vLLM servers of coding agents (they use `cache_salt`, so vLLM only
   time to the first token.
 
 ```sh
-./vllm_prefix_return.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./vllm_prefix_return.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env \
     --tokens 25000 --evict 2 --evict-tokens 100000
-./vllm_concurrent_agents.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./vllm_concurrent_agents.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env \
     --depth 32000 --agents 1 2 3
 ```
 
@@ -123,7 +123,7 @@ first (they reload on the next request), runs the benchmark with `docker exec`, 
 appends JSON lines to `results/<host>-llama-bench.jsonl`.
 
 ```sh
-./llama_cpp_bench_container.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
+./llama_cpp_bench_container.py --env-file ../llama-cpp/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
 ./llama_cpp_bench_container.py --container llama-cpp-gpu --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
 ./llama_cpp_bench_container.py --help   # all options
 ```
@@ -133,7 +133,7 @@ exists and the Hugging Face cache) instead of in the running one. This compares 
 and Vulkan, on the same GGUF:
 
 ```sh
-./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 ```
 
@@ -160,8 +160,8 @@ container name and port (`NAME=llama-test-cuda ... 9934`).
 
 ```sh
 ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
-    ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --label "Vulkan"
 docker rm -f llama-test
 ```
@@ -178,8 +178,8 @@ decoding (temperature 0), so runs are repeatable:
 | Agreement (`agreement`): the chat prompts and long-context code questions of `llama_cpp_bench_http.py`, greedy | with `--reference`: identical outputs and the mean common prefix compared with the reference run |
 
 ```sh
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "f16 KV"
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --label "f16 KV"
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
     --label "V q8_0" --reference "f16 KV"
 ```
 

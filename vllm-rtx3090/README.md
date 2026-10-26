@@ -458,17 +458,17 @@ Results with the settings of 2026-10-14 (24 CPU pool threads; `--tests generatio
 ```sh
 cd ../benchmark
 # Serving speed with a full-context prompt, chat and depth (the configuration of docker-compose.yml)
-./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 145000 --depth 6400 32000 100000 --repeat 1 \
     --server-config ../vllm-rtx3090/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)
 docker compose -f ../vllm-rtx3090/docker-compose.yml stop
 CACHE_VOLUME=vllm-rtx3090_vllm-cache GPUS=0 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
-    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp-radeon-vii/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 1 --depth 6400 32000 --server-config /tmp/config-variant.yaml --label "..."
 # Long-context retrieval (output quality of a KV cache type or a patch)
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
     --tests retrieval --depth 16000 60000 --logprobs 0 --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-rtx3090/docker-compose.yml start
 ```

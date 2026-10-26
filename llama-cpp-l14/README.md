@@ -3,7 +3,7 @@
 llama.cpp router server for the ThinkPad L14 Gen 5:
 Intel Core Ultra 5 125U (2 P-cores with HT + 8 E-cores + 2 LP E-cores),
 Intel Graphics iGPU (Meteor Lake, 4 Xe cores), Meteor Lake NPU (NPU 3720), 32 GB RAM shared by all of them.
-The models and their settings are in [preset.ini](preset.ini), and the server-wide settings in [config.ini](config.ini).
+The models and their settings are in [preset.ini](preset.ini), and the server-wide settings in [`../llama-cpp/config.ini`](../llama-cpp/config.ini).
 
 All models run on the iGPU with Vulkan and flash attention off, as that gives the best performance overall:
 compared to the CPU, prompt processing is 3-4x faster, while token generation is 30-40 % slower
@@ -121,7 +121,7 @@ OpenVINO backend, `GGML_OPENVINO_DEVICE=NPU`:
 
 ## Memory and threads
 - The 26B-A4B llama-server process used ~20.6 GB RSS on the CPU (weights, the CPU_REPACK copy of the Q4_0 tensors,
-  mmproj, MTP drafter and KV cache), so only one model fits at a time (`models-max = 1` in [config.ini](config.ini)).
+  mmproj, MTP drafter and KV cache), so only one model fits at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini)).
   Requesting another model through the router unloads the loaded one.
 - Threads (CPU): 8-10 is the sweet spot.
   12 threads was slower, presumably as the slow LP E-cores hold the others back.

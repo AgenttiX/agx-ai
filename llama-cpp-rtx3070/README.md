@@ -8,7 +8,7 @@ The LXC container is limited to 24 of the 32 threads. Proxmox picks which ones a
 1-2, 5-7, 10-25 and 29-31, see `/sys/fs/cgroup/cpuset.cpus.effective`), so the container sometimes gets both threads
 of some cores and none of another: during the tests of 2026-09-25, its 24 threads were on only 15 of the 16 cores.
 
-One `llama-server` router ([`docker-compose.yml`](docker-compose.yml), [`config.ini`](config.ini),
+One `llama-server` router ([`docker-compose.yml`](docker-compose.yml), [`../llama-cpp/config-dual.ini`](../llama-cpp/config-dual.ini),
 [`preset.ini`](preset.ini)) serves two models on port 9931. They are not used at the same time,
 so each is tuned for running alone.
 
@@ -422,7 +422,7 @@ compute buffer). `ubatch-size = 1024` (1213 MiB) would leave room for ~130k toke
   startup, and requesting Qwen3.8-Flash-Next while it is loaded fails with an out-of-memory error. Unload it first:
 
   ```sh
-  source llama-cpp.env
+  source ../llama-cpp/llama-cpp.env
   curl -H "Authorization: Bearer $LLAMA_API_KEY" -H "Content-Type: application/json" \
       -d '{"model": "google/gemma-4-26b-a4b-qat"}' http://localhost:9931/models/unload
   ```

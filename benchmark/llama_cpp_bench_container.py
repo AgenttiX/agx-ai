@@ -24,11 +24,11 @@ on the same GGUF. The running server's models are still unloaded first if the se
 container instead if it has other models on the GPU.
 
 Examples (arguments after ``--`` go to ``llama bench``; match the server preset's device flags for comparability):
-    ./llama_cpp_bench_container.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "UD-Q4_K_M" \\
+    ./llama_cpp_bench_container.py --env-file ../llama-cpp/llama-cpp.env --label "UD-Q4_K_M" \\
         -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
     ./llama_cpp_bench_container.py --container llama-cpp-gpu \\
         --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
-    ./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
+    ./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \\
         --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 
 The Markdown table is printed and the JSON lines that ``llama bench`` emits are appended, with the label and date,

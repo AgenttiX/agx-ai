@@ -3,5 +3,5 @@
 # (docker compose stop in ..), as both use the GPU and port 9931.
 param([string]$LogFile = "")
 & "$PSScriptRoot\..\..\llama-cpp-windows\start-llama-server.ps1" -ConfigDir $PSScriptRoot `
-    -EnvFile "$PSScriptRoot\..\llama-cpp.env" -LogFile $LogFile
+    -EnvFile "$PSScriptRoot\..\..\llama-cpp\llama-cpp.env" -LogFile $LogFile
 exit $LASTEXITCODE

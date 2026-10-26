@@ -9,7 +9,7 @@ token (long if its context had to be computed again). Only for vLLM (``cache_sal
 only the Python standard library.
 
 Example:
-    ./vllm_concurrent_agents.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
+    ./vllm_concurrent_agents.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
         --depth 16000 --agents 1 2 4
 """
 

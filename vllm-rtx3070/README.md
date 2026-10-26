@@ -319,7 +319,7 @@ image. Its GGUF was removed on 2026-10-13 to free disk space.
 ```sh
 cd ../benchmark
 # Serving speed (the configuration of docker-compose.yml)
-./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp-rtx3070/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 96000 --depth 6400 36500 --repeat 1 \
     --server-config ../vllm-rtx3070/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)

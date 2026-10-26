@@ -5,13 +5,13 @@ services:
     # Built by ../.github/workflows/deploy-docker-vllm-radeon-vii.yml. Locally: docker build -t vllm-radeon-vii:local .
     image: ghcr.io/agenttix/agx-ai/vllm-gfx906:latest
     container_name: vllm-radeon-vii
-    # The API key is the one of the llama.cpp server (LLAMA_API_KEY in llama-cpp.env), so that clients work with both.
+    # The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that clients work with both.
     entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
     devices:
       - /dev/dri:/dev/dri
       - /dev/kfd:/dev/kfd
     env_file:
-      - ../llama-cpp-radeon-vii/llama-cpp.env
+      - ../llama-cpp/llama-cpp.env
     environment:
       - HF_HUB_OFFLINE=1
       # Frees ~0.8 GiB of fragmented allocator memory for the KV cache (see README.md).

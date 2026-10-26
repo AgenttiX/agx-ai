@@ -5,7 +5,7 @@
 #   docker compose run --rm prepare   # once: download and requantize the model into ~/.cache/vllm-models/hyperqwen
 #   docker compose up -d
 #
-# The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp-radeon-vii/llama-cpp.env), so that
+# The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that
 # clients work with all of them.
 
 x-hyperqwen: &hyperqwen
@@ -37,7 +37,7 @@ services:
     # which would include those of other vLLM containers.
     shm_size: 36gb
     env_file:
-      - ../llama-cpp-radeon-vii/llama-cpp.env
+      - ../llama-cpp/llama-cpp.env
     environment:
       # The torch.compile, Triton and FlashInfer caches are in $HOME (the cache volume).
       HOME: /cache

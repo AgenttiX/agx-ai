@@ -1,6 +1,6 @@
 # vLLM on the RTX 3070 (8 GB) of agx-ai. See README.md for the configurations and results.
 # The same port as ../llama-cpp-rtx3070 (9931): only one of the two fits on the GPU at a time.
-# The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp-rtx3070/llama-cpp.env), so that
+# The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that
 # clients work with both.
 #
 # Gemma 4 26B-A4B or Qwen3.8-Flash-Next, selected with the volume lines below.
@@ -25,7 +25,7 @@ services:
     container_name: vllm-rtx3070
     entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
     env_file:
-      - ../llama-cpp-rtx3070/llama-cpp.env
+      - ../llama-cpp/llama-cpp.env
     environment:
       HF_HUB_OFFLINE: "1"
       # Less fragmentation of PyTorch's allocator, which leaves more memory for the KV cache.

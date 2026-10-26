@@ -13,7 +13,7 @@ The answers are greedy and compared with the first one, which checks that the re
 for vLLM (``cache_salt`` keeps the requests of each step apart). Needs only the Python standard library.
 
 Example:
-    ./vllm_prefix_return.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
+    ./vllm_prefix_return.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
         --tokens 25000 --evict 2 --evict-tokens 100000
 """
 

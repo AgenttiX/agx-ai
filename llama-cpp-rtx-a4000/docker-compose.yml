@@ -6,7 +6,7 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda13
     container_name: llama-cpp
     env_file:
-      - ./llama-cpp.env
+      - ../llama-cpp/llama-cpp.env
     environment:
       # The image requires CUDA >= 13.4 (build b11541), but the driver 610.57 provides CUDA 13.3.
       # CUDA minor version compatibility lets it run anyway.

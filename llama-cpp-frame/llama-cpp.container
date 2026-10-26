@@ -19,12 +19,12 @@ AddDevice=/dev/dri
 # Rootless Podman cannot add the host's groups by name, but it can keep the user's own (video, render).
 GroupAdd=keep-groups
 # LLAMA_API_KEY=... (llama-cpp.env is not in Git)
-EnvironmentFile=%h/Git/agx-ai/llama-cpp-frame/llama-cpp.env
+EnvironmentFile=%h/Git/agx-ai/llama-cpp/llama-cpp.env
 # The image sets LLAMA_ARG_PORT=8080, which overrides the port of config.ini.
 Environment=LLAMA_ARG_PORT=9931
 PublishPort=9931:9931
 Volume=%h/.cache/huggingface/hub:/root/.cache/huggingface/hub
-Volume=%h/Git/agx-ai/llama-cpp-frame/config.ini:/etc/llama.cpp/config.ini:ro
+Volume=%h/Git/agx-ai/llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
 Volume=%h/Git/agx-ai/llama-cpp-frame/preset.ini:/etc/llama.cpp/preset.ini:ro
 HealthCmd=curl -f http://localhost:9931/health
 HealthInterval=30s

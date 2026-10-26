@@ -23,14 +23,14 @@ services:
       - /dev/dri:/dev/dri
       - /dev/kfd:/dev/kfd
     env_file:
-      - ./llama-cpp.env
+      - ../llama-cpp/llama-cpp.env
     group_add:
       - video
     ports:
       - "9932:9931"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ../llama-cpp-rtx3070/config.ini:/etc/llama.cpp/config.ini:ro
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
       # Select the LLM model here
       - ./preset-gemma-4-26b-a4b-qat.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-qwen3.8-27b.ini:/etc/llama.cpp/preset.ini:ro

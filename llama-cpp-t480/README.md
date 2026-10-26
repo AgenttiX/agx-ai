@@ -6,7 +6,7 @@ NVIDIA GeForce MX150 (2 GB GDDR5, Pascal GP108, PCIe 3.0 x4, driver 580 / CUDA 1
 The model runs on the CPU, and the MX150 is used for the attention and for prompt processing.
 
 - [docker-compose.yml](docker-compose.yml): the container
-- [config.ini](config.ini): server-wide settings
+- [`../llama-cpp/config.ini`](../llama-cpp/config.ini): server-wide settings
 - [preset.ini](preset.ini): the model and its settings
 
 ## Setup
@@ -19,7 +19,7 @@ docker compose up -d
 - The image has no native kernels for the MX150 (sm_61), so the CUDA driver JIT-compiles them from PTX on first use.
   They are cached in the `cuda-cache` volume (~50 MB), so only the first start after an image update is slow.
 - Loading takes ~1.5 min. The llama-server process uses ~15.6 GB of RAM (14 GB of it the memory-mapped weights)
-  and ~1.7-1.8 GB of VRAM, so only one model fits at a time (`models-max = 1` in [config.ini](config.ini)).
+  and ~1.7-1.8 GB of VRAM, so only one model fits at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini)).
 - The MX150 must not be used by other programs (e.g. games through PRIME offload) while the model is loaded.
 
 ## When this configuration is faster

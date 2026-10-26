@@ -426,26 +426,26 @@ generates ~49 t/s in the chat test and processes prompts at ~1100 t/s.
 ```sh
 cd ../benchmark
 # Serving speed: generation, two full-context prompts (ctx-size - 1500), chat, depth
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 86564 --repeat 2 --depth 6400 16000 36500 70000 85000 --label "..."
 # The same for Qwen3.8 (preset-qwen3.8-27b.ini), with the image test
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth image --prompt-tokens 45604 --repeat 2 --depth 6400 16000 30000 43000 --label "..."
 # Output quality compared with a reference run (on a test server; see ../benchmark/README.md)
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." \
+./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --label "..." \
     --reference "Radeon VII ctx 77824 f16 KV, n-cpu-moe 1, ub 512 (reference)"
 # Raw model speed in the running container
 ./llama_cpp_bench_container.py --container llama-cpp-radeon-vii --url http://localhost:9932 \
-    --env-file ../llama-cpp-radeon-vii/llama-cpp.env --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384 -r 3
+    --env-file ../llama-cpp/llama-cpp.env --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384 -r 3
 # Raw model speed with another image or backend
-./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384
 # Serving speed with another image or a preset variant (stop the production container first)
 docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
 # (for a preset variant, edit a copy of the preset and pass it instead)
 ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
-    ../llama-cpp-rtx3070/config.ini ../llama-cpp-radeon-vii/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --depth 6400 16000 36500 70000 --label "..."
 docker rm -f llama-test && docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start
 ```

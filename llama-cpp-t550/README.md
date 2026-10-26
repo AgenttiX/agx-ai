@@ -1,12 +1,12 @@
 # llama.cpp on the NVIDIA T550 Laptop GPU
 
 Configuration for the NVIDIA T550 Laptop GPU (4 GB, Turing TU117, 30 W) under Docker Desktop with WSL 2 on Windows.
-The model and its settings are in [`preset.ini`](preset.ini), server-wide settings in [`config.ini`](config.ini)
+The model and its settings are in [`preset.ini`](preset.ini), server-wide settings in [`../llama-cpp/config.ini`](../llama-cpp/config.ini)
 and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
 The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
 [`../benchmark`](../benchmark/README.md)).
 
-Two models, one loaded at a time (`models-max = 1` in [`config.ini`](config.ini); requesting the other model unloads
+Two models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
 the loaded one):
 
 - `google/gemma-4-e4b-qat`, loaded on request: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
@@ -298,7 +298,7 @@ stopping the PostgreSQL services. Then replace `no-mmproj = true` with `no-mmpro
 
 llama.cpp can also run without Docker and WSL 2, with the generic scripts in [`../llama-cpp-windows`](../llama-cpp-windows)
 and this computer's configuration in [`windows/`](windows): [`windows/config.ini`](windows/config.ini) (as
-[`config.ini`](config.ini), but with `host = 127.0.0.1`) and the same [`preset.ini`](preset.ini) and `llama-cpp.env`
+[`../llama-cpp/config.ini`](../llama-cpp/config.ini), but with `host = 127.0.0.1`) and the same [`preset.ini`](preset.ini) and `../llama-cpp/llama-cpp.env`
 as Docker. This removes the 15.5 GiB memory limit of the WSL 2 VM and the slow file share (see
 [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)).
 

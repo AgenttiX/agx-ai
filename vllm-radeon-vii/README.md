@@ -75,7 +75,7 @@ docker compose up -d
 
 The first start compiles kernels for ~6 min; later starts take ~1.5-3 min (the compile caches are in the
 `vllm-cache` volume). The model ids, the port and the API key (`LLAMA_API_KEY` of
-[`../llama-cpp-radeon-vii/llama-cpp.env`](../llama-cpp-radeon-vii)) are the same as for llama.cpp, so clients such as
+[`../llama-cpp/llama-cpp.env`](../llama-cpp/README.md)) are the same as for llama.cpp, so clients such as
 LiteLLM work with either server, as long as the prompts fit in vLLM's smaller context.
 
 ## Checkpoints (2026-10-09)
@@ -330,11 +330,11 @@ vs 111.5 t/s, the depth tests within 1 %). The offloading takes no GPU memory an
 ```sh
 cd ../benchmark
 # Serving speed: generation, a prompt of ctx-size - 1500 tokens, chat, depth
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 45600 --depth 6400 16000 32000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # The same for Qwen (config-qwen3.8-27b.yaml)
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 32300 --depth 6400 16000 28000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (stop the production container first)
@@ -342,8 +342,8 @@ docker compose -f ../vllm-radeon-vii/docker-compose.yml stop
 GPUS=amd DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0 \
     -e VLLM_TRITON_ATTN_NUM_PAR_SOFTMAX_SEGMENTS=128" \
     ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
-    ../llama-cpp-radeon-vii/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env --no-embedding \
+    ../llama-cpp/llama-cpp.env
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 1 --depth 6400 16000 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-radeon-vii/docker-compose.yml start
 ```

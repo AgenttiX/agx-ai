@@ -10,6 +10,7 @@
   - Use Claude Pro or Max subscription instead of an API key
 - [llama.cpp](https://llama-cpp.com/)
   - For running local models
+  - [Shared server settings (config.ini) and API key (llama-cpp.env) of the configurations](llama-cpp/README.md)
   - [RTX 3070 (8 GB) + EPYC config of agx-ai (Gemma 4 26B-A4B on the GPU and the CPU, Qwen3.8-Flash-Next with experts in RAM), with the GPU power limit and measurements](llama-cpp-rtx3070/README.md)
   - [RTX 3090 config of agx-z2e, with KV cache, context size and MTP measurements, and Qwen3.8-Flash-Next with experts in RAM](llama-cpp-rtx3090/README.md)
   - [Custom container for Radeon VII with ROCm, with measurements](llama-cpp-radeon-vii/README.md)

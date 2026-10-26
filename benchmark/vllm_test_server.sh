@@ -19,8 +19,8 @@
 #
 # Example:
 #   ./vllm_test_server.sh aiinfos/vllm-gfx906-mobydick:v0.30.0.x-rocm7.14-pytorch2.13.0-260726fedb27 \
-#       /tmp/config-variant.yaml ../llama-cpp-radeon-vii/llama-cpp.env -- --max-model-len 32768
-#   ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \
+#       /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env -- --max-model-len 32768
+#   ./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
 #       --no-embedding --tests chat depth --repeat 2 --depth 6400 16000 --server-config /tmp/config-variant.yaml
 set -euo pipefail
 

@@ -11,7 +11,7 @@ services:
     devices:
       - /dev/dri:/dev/dri
     env_file:
-      - path: ./llama-cpp.env
+      - path: ../llama-cpp/llama-cpp.env
         # required: false
     # The group names do not exist in the image, so use the host's GIDs (getent group video render).
     group_add:
@@ -22,7 +22,7 @@ services:
       - "9931:9931"
     volumes:
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ./config.ini:/etc/llama.cpp/config.ini:ro
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
       - ./preset.ini:/etc/llama.cpp/preset.ini:ro
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]

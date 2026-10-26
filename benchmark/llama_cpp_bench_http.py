@@ -17,7 +17,7 @@ prompt and generation timings, plus draft-token acceptance when speculative deco
 wall-clock, with token counts from ``/tokenize``. Nothing but the Python standard library is needed.
 
 Examples:
-    ./llama_cpp_bench_http.py --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "Qwen3.8-27B ctx 65536"
+    ./llama_cpp_bench_http.py --env-file ../llama-cpp/llama-cpp.env --label "Qwen3.8-27B ctx 65536"
     ./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --model gemma --no-embedding
     ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
     ./llama_cpp_bench_http.py --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts

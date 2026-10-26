@@ -29,9 +29,9 @@ llama-perplexity's KL divergence (``llama_cpp_kld.py``) is the more precise meth
 models: with Gemma 4 26B-A4B on raw text, even a different ubatch size flips ~30 % of the top tokens.
 
 Examples:
-    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
+    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
         --label "f16 KV (reference)"
-    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp-radeon-vii/llama-cpp.env \\
+    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
         --label "V q8_0" --reference "f16 KV (reference)"
 
 Each run is appended to two files: ``results/full/<hostname>-quality.jsonl`` with everything, including the

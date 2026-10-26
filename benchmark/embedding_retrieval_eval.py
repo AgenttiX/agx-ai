@@ -18,9 +18,9 @@ the pickled documents in ``<index>/docs/`` (see ``../vllm-rtx-a4000/README.md``)
 
 Examples:
     ./embedding_retrieval_eval.py questions --chunks chunks.jsonl --out questions.jsonl --n 200 \
-        --url http://localhost:9932 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env
+        --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env
     ./embedding_retrieval_eval.py eval --chunks chunks.jsonl --questions questions.jsonl \
-        --url http://localhost:9934 --env-file ../llama-cpp-rtx-a4000/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
+        --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
 
 The results are appended to ``results/<hostname>-embedding.jsonl``.
 """
