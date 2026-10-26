@@ -137,6 +137,10 @@ and Vulkan, on the same GGUF:
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 ```
 
+Without Docker (e.g. on SteamOS), the script uses Podman (`--engine podman`, or `LLAMA_BENCH_ENGINE=podman`), and
+`--exe PATH` runs a `llama` binary of a local build on the host instead of a container
+(see [../llama-cpp-frame](../llama-cpp-frame)).
+
 `--env NAME=VALUE` and `--docker-arg ARG` pass extra settings to that container (e.g. `--docker-arg=--gpus=all` for a
 CUDA image). The image needs `/app/llama` (the ggml-org `full-*` images and the gfx906 images have it; the `server-*`
 images do not have the benchmark).

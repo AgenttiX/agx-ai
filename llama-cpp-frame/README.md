@@ -1,17 +1,70 @@
 # llama.cpp on the Steam Frame
 
-Feasibility study of llama.cpp on agx-frame, a Valve Steam Frame VR headset (2026-10-26).
-Nothing has been installed or benchmarked yet.
+llama.cpp router server for agx-frame, a Valve Steam Frame VR headset
+(Snapdragon 8 Gen 3, Adreno 750 GPU, 16 GB of unified LPDDR5X).
+It runs in rootless Podman from the official `ghcr.io/ggml-org/llama.cpp:server-vulkan` image (arm64), as a
+Quadlet systemd user unit ([llama-cpp.container](llama-cpp.container)), with the models from the host's Hugging Face
+cache. The models and their settings are in [preset.ini](preset.ini), and the server-wide settings in
+[config.ini](config.ini). Measured on 2026-10-26 with build b11870 (74bca3950).
 
-| Model | Context | VRAM | RAM | Generation | Prompt processing | Notes |
-|---|---|---|---|---|---|---|
-| - | - | - | - | - | - | Not set up yet. See the plan below. |
+| Model | Context | VRAM = RAM | Generation | Prompt processing | Notes |
+|---|---|---|---|---|---|
+| Gemma 4 E4B QAT UD-Q4_K_XL (default) | 32768 | 4.5 GiB (model 3.9 GiB, vision/audio encoder, KV cache) | 9.0 t/s, chat 8.9 t/s; 8.7 t/s at 4k context | 53 t/s (2048 tokens); 42 t/s at 4k context | The CPU generates faster in short chats (12.6 t/s), but processes prompts at half the speed |
+| Gemma 4 E2B QAT UD-Q4_K_XL | 32768 | 2.4 GiB | 13.7 t/s | 106 t/s (1024 tokens) | The CPU generates 26 t/s with a short context |
+| Gemma 4 12B QAT UD-Q4_K_XL | 16384 | 6.8 GiB | 4.2 t/s | 19 t/s (1024 tokens) | `ubatch-size = 128` (512 hangs the GPU); leaves only 3.2 GiB free |
+| Qwen3.5-9B Q4_0 | 16384 | 5.4 GiB | 6.1 t/s | 32 t/s (1024 tokens) | |
 
-**Summary:** llama.cpp is feasible. The official prebuilt `ubuntu-vulkan-arm64` release should run as is
-(same glibc 2.39 as Ubuntu 24.04, all the libraries it needs are in SteamOS) from a directory in `/home`, so neither
-Docker nor any change to the read-only root partition is needed. The GPU is usable only through Vulkan (Mesa Turnip).
-The Hexagon NPU and the Adreno OpenCL backend are not usable on this OS. A local build is cheap
-(all the build tools are preinstalled) and may give a small CPU speedup, but is not required.
+All on the GPU (Vulkan), measured with the server ([../benchmark/llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py)):
+generation of 128-256 tokens, a 1024- or 2048-token prompt, and for E4B also the chat test; the 4k-context numbers
+are from `llama bench`. The memory use is the drop of `MemAvailable` (10.0 GiB without llama.cpp) when the model is
+loaded. All results are in `../benchmark/results/agx-frame*.jsonl`.
+
+**Summary:**
+
+- Everything runs on the GPU with Vulkan. The CPU generates 5-80 % faster with a short context (4 threads; the smaller the model, the bigger the difference), but
+  it processes prompts slower, falls far behind with a longer context (E4B at 4k tokens: prompt processing
+  10.7 vs 43 t/s, generation 7.6 vs 8.7 t/s), heats up to 95 °C within minutes and competes with the VR
+  runtime for the CPU. The GPU stayed at ~41 °C.
+- Podman works without drawbacks: the container (Ubuntu 26.04, Mesa 26.0.8) is as fast as a native build
+  with SteamOS' own Mesa 26.3. Docker is not available on SteamOS, but rootless Podman 5.5 is preinstalled
+  and keeps its images in `/home`, so the setup survives SteamOS upgrades.
+- A local build (tuned for the Cortex-A720/X4, with or without KleidiAI) is not faster than the official
+  build, which already selects the `armv8.6_2` CPU variant (dotprod, i8mm, fp16, SVE2) at runtime.
+- Generation on the GPU is not limited by the memory bandwidth: the CPU generates faster from the same memory, and
+  the GPU is about as fast with a 2.4 GiB model as with a 3.9 GiB one (~9 t/s). The Adreno 750 has no matrix
+  cores or accelerated int8 dot products in Turnip, so llama.cpp uses its scalar shaders.
+
+## Installation
+
+```sh
+mkdir -p ~/.config/containers/systemd
+ln -s ~/Git/agx-ai/llama-cpp-frame/llama-cpp.container ~/.config/containers/systemd/
+# Only if it does not exist yet (it is not in Git):
+echo "LLAMA_API_KEY=$(openssl rand -base64 32)" > ~/Git/agx-ai/llama-cpp-frame/llama-cpp.env
+systemctl --user daemon-reload
+systemctl --user start llama-cpp
+journalctl --user -u llama-cpp -f
+```
+
+The models are downloaded by llama-server into `~/.cache/huggingface/hub` on first use.
+The unit starts with the user's systemd session (`WantedBy=default.target`); to start it at boot without a login,
+enable lingering (`sudo loginctl enable-linger steamos`). Installing the unit is the only step that was not done
+during the setup: the server was tested by running the same `podman run` command by hand.
+
+Use `127.0.0.1` instead of `localhost` on the Frame itself: Podman's port forwarding (pasta) resets connections to
+`[::1]:9931`, and `localhost` resolves to `::1` first. For example:
+
+```sh
+cd ../benchmark
+./llama_cpp_bench_http.py --url http://127.0.0.1:9931 --env-file ../llama-cpp-frame/llama-cpp.env --no-embedding \
+    --tests generation prompt chat --prompt-tokens 2048
+./llama_cpp_bench_container.py --image ghcr.io/ggml-org/llama.cpp:full-vulkan \
+    --model /root/.cache/huggingface/hub/models--unsloth--gemma-4-E4B-it-qat-GGUF/snapshots/.../gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf \
+    -- -ngl 99 -fa 1 -p 512 -n 128
+```
+
+`llama_cpp_bench_container.py` uses Podman automatically when Docker is not installed, and `--exe` runs a local
+build instead of a container.
 
 ## Hardware and OS
 
@@ -20,122 +73,127 @@ The Hexagon NPU and the Adreno OpenCL backend are not usable on this OS. A local
 | Computer | Valve Steam Frame (VR headset) |
 | OS | SteamOS 0.4.5 "holo", VR variant (build 20261022.6150929), Linux 6.18.0, aarch64 |
 | SoC | Qualcomm Snapdragon 8 Gen 3 (SM8650) |
-| CPU | 8 cores, ARMv9.2-A: 1x Cortex-X4 @ 3.05 GHz, 3x Cortex-A720 @ 3.15 GHz, 2x Cortex-A720 @ 2.96 GHz, 2x Cortex-A520 @ 2.27 GHz; 12 MiB L3 |
+| CPU | 8 cores, ARMv9.2-A: 1x Cortex-X4 @ 3.05 GHz (CPU 7), 3x Cortex-A720 @ 3.15 GHz (CPUs 2-4), 2x Cortex-A720 @ 2.96 GHz (CPUs 5-6), 2x Cortex-A520 @ 2.27 GHz (CPUs 0-1); 12 MiB L3 |
 | CPU features | NEON, dotprod, fp16, i8mm, bf16, SVE, SVE2 (128-bit vector length); no SME |
 | RAM | 16 GB (15.3 GiB visible to the OS), unified with the GPU |
 | RAM type | LPDDR5X (the frequency is not visible from userspace; the SoC supports up to LPDDR5X-9600, 76.8 GB/s) |
-| GPU | Qualcomm Adreno 750 (integrated), up to 903 MHz |
-| GPU architecture | Adreno 7xx (A7xx), driver Mesa Turnip 26.3.0-devel (Vulkan 1.4) |
-| VRAM | Unified with the RAM: Vulkan reports a single 14.34 GiB device-local heap |
-| NPU | Qualcomm Hexagon (in the SoC, but not exposed: no `/dev/fastrpc*`, no remoteproc) |
-| Storage | `/home` 929 GB (762 GB free), root 10 GB |
+| GPU | Qualcomm Adreno 750 (integrated), 231-903 MHz |
+| GPU architecture | Adreno 7xx (A7xx), driver Mesa Turnip 26.3.0-devel (Vulkan 1.4) on the host, 26.0.8 in the container |
+| VRAM | Unified with the RAM: Vulkan reports a single 14.34 GiB device-local heap (11.5 GiB in the container's Mesa) |
+| NPU | Qualcomm Hexagon (CDSP), not usable by llama.cpp (see below) |
+| Storage | `/home` 929 GB, root 10 GB |
 | Swap | 7.6 GiB |
 
 ## Free memory
 
-Measured in desktop mode with Steam, SteamVR services and Plasma running (no VR game):
+In desktop mode with Steam, the SteamVR services and Plasma running (no VR game):
 
-| | |
-|---|---|
-| `MemTotal` | 15.3 GiB |
-| `MemAvailable` | 10.0 GiB (5.9 GiB free, 5.8 GiB cache) |
-| Vulkan heap budget | 9.38 GiB of 14.34 GiB |
-| Swap | 7.6 GiB free |
-
-Since the memory is unified, the RAM and the "VRAM" are the same ~10 GiB pool, and a model on the GPU uses it just like
-a model on the CPU. Realistically ~8 GiB is usable for the model and KV cache, e.g. a 7-9B model at Q4 or a
-12-14B model at Q3/IQ3. Running a VR game or SteamVR at the same time will leave a lot less.
-The memory bandwidth (at most ~77 GB/s, shared with the display pipeline) limits token generation to roughly
-15-20 t/s for a 4 GB model, and a MoE model with few active parameters (e.g. Gemma 4 26B-A4B or Qwen3 30B-A3B at a
-small quant) would be much faster but does not fit in ~8 GiB unless quantized very aggressively.
-
-## Existing builds
-
-The llama.cpp GitHub releases (checked with b11889) contain these Linux aarch64 builds:
-
-| Build | Backends | Useful here? |
+| | Without llama.cpp | With E4B loaded (Vulkan, 32k context, vision/audio encoder) |
 |---|---|---|
-| `llama-bXXXX-bin-ubuntu-arm64.tar.gz` | CPU | Yes, CPU only |
-| `llama-bXXXX-bin-ubuntu-vulkan-arm64.tar.gz` | CPU + Vulkan | **Yes, the best candidate** |
-| `llama-bXXXX-bin-linux-arm64-snapdragon.tar.gz` | CPU + Hexagon NPU + OpenCL (Adreno) | No, see below |
-| `llama-bXXXX-bin-ubuntu-cuda-13.4-arm64.tar.gz` | CUDA | No (NVIDIA only) |
+| `MemAvailable` | 10.0 GiB | 5.4 GiB |
+| Vulkan heap budget | 9.38 GiB of 14.34 GiB | - |
+| Swap | 7.6 GiB free | 7.3 GiB free |
 
-The Ubuntu builds are built on Ubuntu 24.04 (glibc 2.39), which matches SteamOS (glibc 2.39). SteamOS already has
-`libvulkan.so.1`, `libgomp.so.1`, `libssl.so.3` and `libstdc++.so.6`, so the archive can just be extracted to
-`/home` and run. The official Docker images are not an option since Docker is not installed and the root
-partition is reset on upgrades. (Rootless Podman 5.5.2 is preinstalled with its storage in `/home`, so containers
-would be possible, but they are not needed for llama.cpp.)
+The RAM and the "VRAM" are the same pool, so the ~10 GiB is shared by the model, the KV cache and everything else.
+Only one model is loaded at a time (`models-max = 1`). Models of up to ~7 GiB (e.g. Gemma 4 12B at Q4) fit, but
+then little is left for anything else; the 26B-A4B MoE (13.6 GiB at UD-Q4_K_XL) does not fit.
+A VR game running at the same time would leave much less memory and GPU time.
 
-### Vulkan
+## llama bench
 
-The GPU is supported by Mesa's Turnip Vulkan driver, which is what SteamOS uses for games. Relevant properties
-reported by `vulkaninfo`:
+`-fa 1`, `-ngl 99` for Vulkan, `-dev none -ngl 0` for the CPU, t/s:
+
+| Model (size) | Vulkan pp512 | Vulkan tg128 | CPU 4 thr pp512 | CPU 4 thr tg128 | CPU 8 thr pp512 | CPU 8 thr tg128 |
+|---|---|---|---|---|---|---|
+| Gemma 4 E2B QAT UD-Q4_K_XL (2.4 GiB) | **119** | 14.1 | 50 | **25.6** | 67 | 19.0 |
+| Gemma 4 E4B QAT UD-Q4_K_XL (3.9 GiB) | **58** | 9.1 | 34 | **13.3** | 46 | 10.5 |
+| Gemma 4 E4B QAT Q4_0, Google (4.8 GiB) | **58** | 8.5 | 33 | **11.3** | 45 | 9.4 |
+| Qwen3.5-4B Q4_0 (2.4 GiB) | **59** | 9.4 | 46 | **11.0** | 57 | 8.9 |
+| Qwen3.5-9B Q4_0 (5.0 GiB) | 32 | 6.2 | 28 | **6.5** | **37** | 5.7 |
+| Gemma 4 12B QAT UD-Q4_K_XL (6.2 GiB) | **21** (`-ub 128`) | 4.3 | 14 | **5.3** | 19 | 4.6 |
+
+With a longer context (E4B, `-d 4096`), the CPU falls behind:
+
+| E4B at 4096 tokens of context | pp512 | pp2048 | tg128 |
+|---|---|---|---|
+| Vulkan | **43** | **42** | **8.7** |
+| CPU 8 threads | 10.7 | - | 7.6 |
+
+- **Vulkan:** flash attention on or off makes no difference (E4B: pp512 57.8 vs 57.3, tg 9.1 vs 9.0).
+  The generation speed barely depends on the model size (E4B 9.1, Qwen3.5-4B 9.4 t/s at 3.9 vs 2.4 GiB), so it is
+  limited by the GPU's compute or per-kernel overhead rather than by the memory bandwidth.
+- **GPU hang:** Gemma 4 12B with the default `ubatch-size` 512 crashed with `vk::DeviceLostError`, and the kernel
+  reset the GPU (`a6xx_recover` in the kernel log). With `-ub 128`, it works. The kernel's hang check kills GPU
+  jobs that run too long; that may also affect the VR compositor, so keep the ubatch size small for big models.
+- **CPU threads:** generation is fastest with 4 threads and gets slower with more (the A520 cores and memory
+  contention), prompt processing is fastest with all 8. llama-server can use both (`threads = 4`,
+  `threads-batch = 8`). Pinning to the big cores (`-C 0xFC --cpu-strict 1`) did not help: E4B tg 13.7 t/s with
+  4 threads, pp512 40 t/s with 6 threads.
+- **Thermals:** after ~15 minutes of CPU benchmarks, the CPU reached 95 °C. The CPU numbers above are therefore
+  partly throttled, and the repeat runs drifted by a few percent. The GPU stayed at ~41 °C under load.
+- **Q4_0 repacking:** the QAT models are almost entirely Q4_0. On the CPU they are repacked at load time to
+  `q4_0_4x8` for the dotprod/i8mm kernels, a 2.5 GiB copy for E4B in addition to the mmapped model.
+- Google's own E4B QAT GGUF (`google/gemma-4-E4B-it-qat-q4_0-gguf`) is 0.9 GiB larger than Unsloth's and slightly
+  slower, so Unsloth's UD-Q4_K_XL is used.
+
+## llama-server
+
+Measured with [llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py) (results in
+`../benchmark/results/agx-frame.jsonl`), Gemma 4 E4B, 1 slot, 32k context:
+
+| Configuration | Generation (256 tokens) | Prompt processing (2048 tokens) | Chat (6 prompts, up to 512 tokens) |
+|---|---|---|---|
+| Vulkan (preset.ini) | 9.0 t/s | 52.7 t/s | 8.9 t/s |
+| Vulkan, MTP 2 (`spec-type = draft-mtp`) | 9.5 t/s (acceptance 56 %) | - | 9.5 t/s (8.7-11.4, acceptance 56 %) |
+| CPU, `threads = 4`, `threads-batch = 8` | **12.8 t/s** | 26.1 t/s | **12.6 t/s** (12.5-12.8) |
+
+MTP is only ~6 % faster on the GPU and costs memory, so it is not enabled.
+The CPU is 40 % faster in short chats, but processes the 2048-token prompt at half the speed of the GPU (a 2k-token
+prompt takes 78 s instead of 39 s), and with a longer context it falls behind in generation too (see above).
+For short chats without a system prompt, the CPU configuration in the comment of [preset.ini](preset.ini) is faster.
+While the CPU configuration was loaded, 2.6 GiB of swap were in use, since the repacked Q4_0 weights take another
+2.5 GiB of RAM.
+
+## Container vs. local build
+
+To see whether the container or a local build loses performance, llama.cpp b11870 (the same commit as the image)
+was built on the host with SteamOS' own GCC 15.1 and Mesa 26.3 (SPIRV-Headers had to be installed to `~/.local`
+first, and the include path passed by hand):
+
+```sh
+cmake -B build-vk -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$HOME/.local/spirv-headers \
+    -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv9.2-a+fp16 -DCMAKE_C_FLAGS=-mtune=cortex-a720 \
+    -DCMAKE_CXX_FLAGS="-mtune=cortex-a720 -isystem $HOME/.local/spirv-headers/include" -DGGML_VULKAN=ON
+```
+
+| E4B UD-Q4_K_XL | Vulkan pp512 | Vulkan tg64 | CPU 4 thr pp512 | CPU 4 thr tg64 | CPU 6 thr pp512 | CPU 6 thr tg64 |
+|---|---|---|---|---|---|---|
+| Container (`full-vulkan`, Mesa 26.0.8, `armv8.6_2` CPU variant) | 57.8 | 9.1 | 30.5 | 13.7 | 40.4 | 13.3 |
+| Local build (Mesa 26.3, `-march=armv9.2-a+fp16 -mtune=cortex-a720`) | 57.4 | 9.0 | 29.9 | 12.8 | 41.1 | 12.5 |
+| Local build with KleidiAI (`-DGGML_CPU_KLEIDIAI=ON`) | - | - | 28.1 | 12.4 | 37.7 | 12.1 |
+
+(CPU runs pinned to CPUs 2-7, `-C 0xFC --cpu-strict 1`.) The differences are within the run-to-run and thermal
+variation, so there is no reason to build locally. GCC's `-march=native`/`-mcpu=native` would detect the CPU as
+`cortex-a520` (a little core), so a local build should not use `GGML_NATIVE=ON`.
+KleidiAI found I8MM kernels for Q4_0 and Q8_0 but none for F32 or Q4_K.
+
+## Backends that do not work here
+
+- **Hexagon NPU:** llama.cpp's Hexagon backend (and the `linux-arm64-snapdragon` release) needs Qualcomm's FastRPC
+  (`/dev/fastrpc-*`, `libcdsprpc`). SteamOS has none of it. Instead, Valve's own driver (`dsp-sm8650`) exposes the
+  CDSP as `/dev/cdsp` (group `cdsp`, of which the user is a member), and SteamVR uses it for eye tracking
+  (`eyetracking -b CDSP`) and for `dsp_service`. That interface is undocumented, so the NPU is not usable for LLMs.
+- **OpenCL (Adreno):** llama.cpp's Adreno OpenCL kernels need Qualcomm's proprietary OpenCL driver. SteamOS has only
+  the OpenCL ICD loader, without any ICD (no Rusticl either).
+- **vLLM:** CPU only, see [../vllm-frame](../vllm-frame).
+
+## Vulkan properties
+
+From `vulkaninfo` (Turnip on the host):
 
 - fp16 arithmetic, 16-bit and 8-bit storage, int8: supported
 - `VK_KHR_shader_integer_dot_product`: present, but `integerDotProduct8BitSignedAccelerated = false`
-- `VK_KHR_cooperative_matrix`: **not supported**, so llama.cpp falls back to its scalar matrix multiplication
-  shaders. Prompt processing will be much slower than on GPUs with matrix cores.
-- Subgroup size 64-128 (with `subgroupSizeControl`), 32 KiB shared memory per workgroup
-- `maxMemoryAllocationSize` = 4 GiB, `maxStorageBufferRange` = **128 MiB**. llama.cpp splits the model into
-  allocations, but single tensors larger than 128 MiB (e.g. the token embedding or output tensor of a model with a
-  large vocabulary) may fail or fall back to the CPU. This has to be tested.
-
-The Adreno 750 is roughly comparable to a low-end discrete GPU (on the order of 4 TFLOPS FP32 and twice that in FP16,
-theoretical, at the 903 MHz limit seen here). Since token generation is memory-bound and the memory is shared, Vulkan mainly helps prompt
-processing and keeps the CPU cores free; token generation may be similar to the CPU. Both need benchmarking.
-
-### Snapdragon build (Hexagon NPU + Adreno OpenCL)
-
-The `linux-arm64-snapdragon` build targets Qualcomm's own Linux images and is not usable here:
-
-- The Hexagon backend needs FastRPC (`/dev/fastrpc-*`) and a booted CDSP. The kernel has `CONFIG_QCOM_FASTRPC=y`,
-  but there are no FastRPC devices and no remoteproc instances, so the DSP is not running and the NPU is unavailable.
-  Enabling it would require Valve to ship the DSP firmware and device tree support.
-- The OpenCL backend with Adreno kernels is written for Qualcomm's proprietary OpenCL driver and its extensions.
-  SteamOS has only the OpenCL ICD loader (`libOpenCL.so.1`) without any ICD (no `/etc/OpenCL/vendors`, no Rusticl).
-- Its CPU code is compiled for only `armv8.2a+fp16+dotprod`.
-
-## Would a local build help?
-
-Partially. The official arm64 builds use `GGML_CPU_ALL_VARIANTS=ON` with `GGML_BACKEND_DL=ON`, which builds these
-Linux CPU variants and selects the best one at runtime:
-
-| Variant | Features | Runs here |
-|---|---|---|
-| `armv8.0_1` ... `armv8.2_3` | up to dotprod, fp16, SVE | yes |
-| `armv8.6_1` | dotprod, fp16, SVE, i8mm | yes |
-| `armv8.6_2` | dotprod, fp16, SVE, i8mm, SVE2 | **yes, would be selected** |
-| `armv9.2_1`, `armv9.2_2` | ... + SME | no (no SME) |
-
-So the prebuilt CPU backend already uses all the important instructions of this CPU (dotprod, i8mm, fp16, SVE2).
-A local build could still add:
-
-- **Tuning** for the big cores (`-mcpu=cortex-x4` or `-mcpu=cortex-a720` via `GGML_CPU_ARM_ARCH` / `CMAKE_C_FLAGS`).
-  Note: `-march=native` / `GGML_NATIVE=ON` is not a good choice here, since GCC detects the heterogeneous CPU as
-  `cortex-a520` (the little core) and tunes for that. The instruction sets of all three core types are identical.
-- **BF16** (`+bf16`), which none of the Linux variants enables. It matters only for BF16 models.
-- **KleidiAI** (`-DGGML_CPU_KLEIDIAI=ON`), Arm's optimized i8mm/dotprod micro-kernels, which are not enabled in the
-  release builds. They speed up prompt processing of Q4_0 and Q8_0 models on the CPU.
-- A newer Vulkan shader build against the system's Vulkan headers 1.4.309 (no practical difference expected).
-
-The expected gain is small (single-digit percent for token generation, possibly more for prompt processing with
-KleidiAI), but building is easy: GCC 15.1, Clang 19.1, CMake 3.29, Ninja, `glslc` and the Vulkan headers are all
-preinstalled in SteamOS. The build output can live in `/home`, so it survives SteamOS upgrades.
-However, the preinstalled compilers and headers are on the root partition and may change or disappear on upgrades,
-so the prebuilt release is the more robust default.
-
-## Other considerations
-
-- **Thread placement:** with 1+5+2 heterogeneous cores, using the A520 cores tends to slow llama.cpp down. Start with
-  `-t 6` pinned to the X4 and A720 cores (CPUs 2-7, e.g. with `taskset -c 2-7`) and compare with other values.
-- **Thermals and power:** the headset is designed for VR sessions and runs on battery.
-  Sustained inference may be throttled; benchmarks should be run long enough to see the steady state.
-- **Serving:** `llama-server` can run as a systemd user service from `/home`, which also survives SteamOS upgrades.
-
-## Plan
-
-1. Download the latest `ubuntu-vulkan-arm64` release to `/home/steamos/llama.cpp/` and check `llama-cli --list-devices`.
-2. Benchmark a small model (e.g. a 4B model at Q4_0 and Q4_K_M) with the scripts in `../benchmark/`
-   on the CPU only (`-ngl 0`) and on Vulkan (`-ngl 99`), with different thread counts.
-3. Test whether larger models hit the 128 MiB `maxStorageBufferRange` limit.
-4. If the CPU path wins, try a local build with `-mcpu=cortex-x4+bf16` and KleidiAI.
+- `VK_KHR_cooperative_matrix`: not supported (llama.cpp: "matrix cores: none", "int dot: 0")
+- Subgroup size 64-128, 32 KiB shared memory per workgroup
+- `maxMemoryAllocationSize` = 4 GiB, `maxStorageBufferRange` = 128 MiB. This did not cause problems with any of the
+  models above.

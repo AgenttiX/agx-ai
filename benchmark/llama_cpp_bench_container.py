@@ -14,6 +14,10 @@ models every minute over the network and makes the router reload models that wer
 (``background_health_checks: false``) or stop that LiteLLM while benchmarking; otherwise the benchmark may run with
 the server's models back in VRAM.
 
+The container engine is Docker, or Podman if Docker is not installed (``--engine`` or ``LLAMA_BENCH_ENGINE``
+overrides this). With ``--exe``, a ``llama`` binary on the host (e.g. a local build) runs the benchmark instead of a
+container; a model path in the Hugging Face cache of the container is mapped to ``--hf-cache``.
+
 With ``--image``, the benchmark runs in a new container from that image instead of the running one (``docker run``
 with the GPU devices and the Hugging Face cache mounted). This compares images, builds and backends (ROCm vs Vulkan)
 on the same GGUF. The running server's models are still unloaded first if the server is reachable; stop the server
@@ -41,6 +45,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -88,12 +93,19 @@ def reload_models(server: Server, model_ids: list[str]) -> None:
         print(f"{model_id}: {model_status(server, model_id)}", file=sys.stderr)
 
 
+CONTAINER_HF_CACHE = "/root/.cache/huggingface/hub"
+
+
 def docker_prefix(args: argparse.Namespace) -> list[str]:
-    """``docker exec`` into the running container, or ``docker run`` of a new container from ``--image``."""
+    """``docker exec`` into the running container, ``docker run`` from ``--image``, or the host ``--exe``."""
+    if args.exe:
+        return [str(args.exe)]
     if not args.image:
-        return ["docker", "exec", args.container]
-    cmd = ["docker", "run", "--rm", "--device", "/dev/dri", "--group-add", "video",
-           "-v", f"{args.hf_cache}:/root/.cache/huggingface/hub:ro"]
+        return [args.engine, "exec", args.container]
+    # Rootless Podman cannot add host groups by name, but it can keep the user's groups (video, render).
+    group = "keep-groups" if args.engine == "podman" else "video"
+    cmd = [args.engine, "run", "--rm", "--device", "/dev/dri", "--group-add", group,
+           "-v", f"{args.hf_cache}:{CONTAINER_HF_CACHE}:ro"]
     if Path("/dev/kfd").exists():  # ROCm
         cmd += ["--device", "/dev/kfd"]
     for env in args.env:
@@ -103,9 +115,10 @@ def docker_prefix(args: argparse.Namespace) -> list[str]:
 
 def run_bench(
     prefix: list[str], model_path: str, bench_args: list[str], label: str, image: str | None, output: Path,
+    host_exe: bool = False,
 ) -> int:
     """One ``llama bench`` invocation: Markdown to stdout, JSON lines (via stderr) to the results file."""
-    exe = [] if image else ["/app/llama"]  # with --image, /app/llama is the entrypoint
+    exe = [] if image or host_exe else ["/app/llama"]  # with --image, /app/llama is the entrypoint
     cmd = [*prefix, *exe, "bench", "-m", model_path, "-o", "md", "-oe", "jsonl", *bench_args]
     print("Running:", " ".join(cmd), file=sys.stderr)
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -117,6 +130,8 @@ def run_bench(
             rec["label"] = label
             if image:
                 rec["image"] = image
+            if host_exe:
+                rec["exe"] = prefix[0]
             rec["date"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
             records.append(rec)
         elif line.strip():
@@ -142,8 +157,14 @@ def main() -> int:
     parser.add_argument("--model-id", help="router model id whose path is used (default: first non-embedding model)")
     parser.add_argument("--label", default="", help="label stored with the result")
     parser.add_argument("--image", help="run in a new container from this image instead of the running container")
+    parser.add_argument("--exe", type=Path,
+                        help="run this llama binary on the host (e.g. a local build) instead of a container")
+    default_engine = os.environ.get("LLAMA_BENCH_ENGINE") or ("docker" if shutil.which("docker") else "podman")
+    parser.add_argument("--engine", choices=["docker", "podman"], default=default_engine,
+                        help="container engine (default: $LLAMA_BENCH_ENGINE, or docker if installed, else podman)")
     parser.add_argument("--hf-cache", type=Path, default=Path.home() / ".cache/huggingface/hub",
-                        help="Hugging Face cache mounted into the --image container (default %(default)s)")
+                        help="Hugging Face cache mounted into the --image container, and the one used by --exe "
+                             "(default %(default)s)")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                         help="environment variable for the --image container, "
                              "e.g. GGML_VK_VISIBLE_DEVICES=0 (repeatable)")
@@ -167,7 +188,7 @@ def main() -> int:
     try:
         models = server.models()
     except SystemExit as e:
-        if not (args.image and args.model):
+        if not ((args.image or args.exe) and args.model):
             raise
         print(f"No server ({e}); benchmarking {args.model} without unloading anything", file=sys.stderr)
         models = []
@@ -177,6 +198,8 @@ def main() -> int:
         model_id = args.model_id or pick_chat_model(models)
         model_path = server.props(model_id)["model_path"]
         print(f"Model: {model_id} -> {model_path}", file=sys.stderr)
+    if args.exe and model_path.startswith(CONTAINER_HF_CACHE):
+        model_path = str(args.hf_cache) + model_path.removeprefix(CONTAINER_HF_CACHE)
 
     loaded = [] if args.keep_loaded else [
         m["id"] for m in models if m.get("status", {}).get("value") in ("loaded", "sleeping")
@@ -189,7 +212,9 @@ def main() -> int:
         / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-llama-bench.jsonl"
     )
     try:
-        return run_bench(docker_prefix(args), model_path, args.bench_args, args.label, args.image, output)
+        return run_bench(
+            docker_prefix(args), model_path, args.bench_args, args.label, args.image, output, bool(args.exe),
+        )
     finally:
         if loaded:
             reload_models(server, loaded)

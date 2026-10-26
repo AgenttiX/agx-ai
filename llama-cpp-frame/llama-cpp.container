@@ -1,0 +1,40 @@
+# Podman Quadlet unit of the llama.cpp router server for the Steam Frame (agx-frame), the Podman counterpart of the
+# docker-compose.yml files of the other configurations. Docker is not available on SteamOS, but rootless Podman is.
+# Models and their settings are in preset.ini, server-wide settings in config.ini, and the benchmarks in README.md.
+#
+# Install (the files stay in /home, so this survives SteamOS upgrades):
+#   mkdir -p ~/.config/containers/systemd
+#   ln -s ~/Git/agx-ai/llama-cpp-frame/llama-cpp.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start llama-cpp
+# Logs: journalctl --user -u llama-cpp -f
+[Unit]
+Description=llama.cpp server (Vulkan and CPU)
+
+[Container]
+# The Vulkan image contains both the Vulkan (Adreno 750 with Mesa Turnip) and the CPU backends.
+Image=ghcr.io/ggml-org/llama.cpp:server-vulkan
+ContainerName=llama-cpp
+AddDevice=/dev/dri
+# Rootless Podman cannot add the host's groups by name, but it can keep the user's own (video, render).
+GroupAdd=keep-groups
+# LLAMA_API_KEY=... (llama-cpp.env is not in Git)
+EnvironmentFile=%h/Git/agx-ai/llama-cpp-frame/llama-cpp.env
+# The image sets LLAMA_ARG_PORT=8080, which overrides the port of config.ini.
+Environment=LLAMA_ARG_PORT=9931
+PublishPort=9931:9931
+Volume=%h/.cache/huggingface/hub:/root/.cache/huggingface/hub
+Volume=%h/Git/agx-ai/llama-cpp-frame/config.ini:/etc/llama.cpp/config.ini:ro
+Volume=%h/Git/agx-ai/llama-cpp-frame/preset.ini:/etc/llama.cpp/preset.ini:ro
+HealthCmd=curl -f http://localhost:9931/health
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+
+[Service]
+Restart=always
+# Pulling the image on the first start can take a while.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

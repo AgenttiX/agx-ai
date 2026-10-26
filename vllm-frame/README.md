@@ -19,7 +19,7 @@ limited quantization support on Arm CPUs, it is useful only for small models and
 - Snapdragon 8 Gen 3 (SM8650): 1x Cortex-X4, 5x Cortex-A720, 2x Cortex-A520; ARMv9.2-A with NEON, dotprod, fp16,
   bf16, i8mm, SVE, SVE2 (128-bit), no SME
 - 16 GB LPDDR5X unified memory, ~10.0 GiB available in desktop mode (`MemAvailable`), 7.6 GiB swap
-- Adreno 750 GPU (Mesa Turnip Vulkan only), Hexagon NPU not exposed
+- Adreno 750 GPU (Mesa Turnip Vulkan only), Hexagon NPU not usable
 - SteamOS 0.4.5, glibc 2.39, Python 3.12.3 on the read-only root partition
 
 ## Existing builds
@@ -41,8 +41,9 @@ Python interpreter instead of relying on it.
 
 - **GPU:** vLLM supports CUDA, ROCm, Intel XPU, TPU and a few accelerator plugins, but not Vulkan or OpenCL. PyTorch
   has no usable Vulkan backend for this either. There is no way to use the Adreno 750 with vLLM.
-- **NPU:** the Hexagon NPU is not exposed by the kernel (no FastRPC devices, no remoteproc), and vLLM has no Hexagon
-  backend anyway.
+- **NPU:** there is no Qualcomm FastRPC interface. Valve's own driver exposes the CDSP as `/dev/cdsp` for SteamVR's
+  eye tracking, but that interface is undocumented, and vLLM has no Hexagon backend anyway
+  (see [../llama-cpp-frame](../llama-cpp-frame/README.md#backends-that-do-not-work-here)).
 
 ## Would a local build help?
 
