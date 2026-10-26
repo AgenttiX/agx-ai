@@ -171,40 +171,40 @@
 <rect x="799.9" y="834" width="250.2" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="805.9" y="838" width="22" height="22"/>
 <text x="833.9" y="854" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">ROCm, Radeon VII</tspan></text>
-<rect x="1118" y="555" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
-<rect x="1124" y="561" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1132" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1141" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1150" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1159" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1168" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1260" cy="571" r="3.2" fill="#3ebd93"/>
-<circle cx="1260" cy="582" r="3.2" fill="#ff8236"/>
-<rect x="1124" y="595" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1132" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1141" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1150" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1159" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1168" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1260" cy="605" r="3.2" fill="#3ebd93"/>
-<circle cx="1260" cy="616" r="3.2" fill="#ff8236"/>
-<rect x="1124" y="629" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1132" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1141" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1150" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1159" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1168" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1260" cy="639" r="3.2" fill="#3ebd93"/>
-<circle cx="1260" cy="650" r="3.2" fill="#ff8236"/>
-<rect x="1186" y="557" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
-<use href="#logo-proxmox" x="1195" y="566.5" width="40" height="40"/>
-<use href="#logo-ubuntu" x="1195" y="614.5" width="40" height="40"/>
-<text x="1198" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
-<text x="1198" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
-<text x="1198" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (15.5 | 377)</tspan></text>
-<rect x="1076.75" y="799" width="242.5" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
-<use href="#logo-vllm" x="1082.75" y="803" width="22" height="22"/>
-<text x="1110.75" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts in RAM</tspan></text>
+<rect x="1130" y="555" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
+<rect x="1136" y="561" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="571" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="582" r="3.2" fill="#ff8236"/>
+<rect x="1136" y="595" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="602" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="605" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="616" r="3.2" fill="#ff8236"/>
+<rect x="1136" y="629" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="636" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="639" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="650" r="3.2" fill="#ff8236"/>
+<rect x="1198" y="557" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
+<use href="#logo-proxmox" x="1207" y="566.5" width="40" height="40"/>
+<use href="#logo-ubuntu" x="1207" y="614.5" width="40" height="40"/>
+<text x="1210" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
+<text x="1210" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
+<text x="1210" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (15.5 | 377)</tspan></text>
+<rect x="1088.75" y="799" width="242.5" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
+<use href="#logo-vllm" x="1094.75" y="803" width="22" height="22"/>
+<text x="1122.75" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts in RAM</tspan></text>
 <rect x="1372" y="555" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
 <rect x="1378" y="561" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
 <rect x="1386" y="568" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
@@ -239,13 +239,13 @@
 <rect x="1361.55" y="799" width="180.9" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1367.55" y="803" width="22" height="22"/>
 <text x="1395.55" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>
-<path d="M594,300.5 L594,494.0 M150,494.0 L1198,494.0" stroke="#52606d" stroke-width="2" fill="none"/>
+<path d="M594,300.5 L594,494.0 M150,494.0 L1210,494.0" stroke="#52606d" stroke-width="2" fill="none"/>
 <circle cx="594" cy="494.0" r="4" fill="#52606d"/>
 <path d="M150,494 L150,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M402,494 L402,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M654,494 L654,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M925,494 L925,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M1198,494 L1198,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1210,494 L1210,551" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M1452,224.333 L1452,551" fill="none" stroke="#52606d" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
 <text x="1462" y="342.667" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">SSH tunnel</text>
 </svg>

@@ -414,7 +414,7 @@ def build(specs: bool) -> str:
                 [("Qwen3.8-27B", "110", "1160"), ("Qwen3.8-Flash-Next", "30", "1650"),
                  ("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
-        Machine("server", 1198, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
+        Machine("server", 1210, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
                 # Gemma 4 26B-A4B with llama-cpp-agx-ai/README.md, which is 1.7 times as fast as vLLM for it:
                 # 36.5k-token prompt (depth test); Qwen3.8-Flash-Next: vllm-agx-ai/README.md, 6.4k-token prompt
                 # (depth test); benchmark/results/agx-ai.jsonl
@@ -553,7 +553,7 @@ def build(specs: bool) -> str:
     # LiteLLM to the backends in the LAN
     bus_y = hw_top + 43
     litellm_x = lx + 60
-    f.add(f'<path d="M{litellm_x},{ly + lh} L{litellm_x},{bus_y} M150,{bus_y} L1198,{bus_y}" '
+    f.add(f'<path d="M{litellm_x},{ly + lh} L{litellm_x},{bus_y} M150,{bus_y} L1210,{bus_y}" '
           f'stroke="{LINE}" stroke-width="2" fill="none"/>')
     f.add(f'<circle cx="{litellm_x}" cy="{bus_y}" r="4" fill="{LINE}"/>')
     for m in machines[:-1]:
