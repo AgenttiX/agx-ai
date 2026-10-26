@@ -11,7 +11,8 @@ tensor-parallel-size: 2
 disable-custom-all-reduce: true
 # Do not load the vision tower, which would take memory from the KV cache.
 language-model-only: true
-max-model-len: 94208
+# The KV cache below holds 209818 tokens; vLLM needs ~1.05 times the context.
+max-model-len: 196608
 # vLLM requires this fraction of the GPU memory to be free at startup, so it has to be lower than what the
 # embedding server leaves free (~14.1 of 15.6 GiB).
 gpu-memory-utilization: 0.85
@@ -24,13 +25,22 @@ max-num-seqs: 4
 max-num-batched-tokens: 1024
 # CUDA graphs only for decoding and the batch sizes of 4 sequences with 2 drafted tokens each.
 compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4, 6, 8, 9, 12]}
+# int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (CUSTOM, from HyperQwen, as in
+# ../vllm-agx-z2e): twice the context of BF16, and generation at 32k / 80k tokens of context 54 / 53 instead of
+# 31 / 21 t/s. FlashAttention 2 (the default on Ampere) supports no quantized KV cache.
+kv-cache-dtype: int8_per_token_head
+attention-backend: CUSTOM
+# The recurrent state of the 48 Gated DeltaNet layers in FP16 instead of FP32 (as in HyperQwen): more tokens in the
+# KV cache.
+mamba-ssm-cache-dtype: float16
 enable-prefix-caching: true
 # Prefix cache blocks evicted from the GPU are kept in 8 GiB of pinned RAM, for returning to long conversations. It
 # does not speed up PaperQA2, whose prompts fit in the KV cache on the GPUs (see README.md).
 kv-offloading-size: 8
 kv-offloading-backend: native
-# Speculative decoding with the model's own MTP head: chat 37.5 -> 55.4 t/s.
-speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+# Speculative decoding with the model's own MTP head: chat 37.5 -> 55.4 t/s. The drafter takes its attention
+# backend from here.
+speculative-config: {"method": "mtp", "num_speculative_tokens": 2, "attention_backend": "CUSTOM"}
 reasoning-parser: qwen3
 enable-auto-tool-choice: true
 tool-call-parser: qwen3_coder

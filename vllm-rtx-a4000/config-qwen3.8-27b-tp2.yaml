@@ -10,18 +10,28 @@ tensor-parallel-size: 2
 disable-custom-all-reduce: true
 # Do not load the vision tower, which would take memory from the KV cache.
 language-model-only: true
-# The KV cache holds ~128k tokens (4.46 GiB per GPU).
-max-model-len: 122880
+# The KV cache holds 256682 tokens (4.46 GiB per GPU, int8); vLLM needs ~1.05 times the context, and 262144 did not
+# fit.
+max-model-len: 229376
 gpu-memory-utilization: 0.95
 # PaperQA2 sends 4 concurrent requests by default (PAPERQA_CONCURRENCY in paperqa_ask.py).
 max-num-seqs: 8
+# int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (CUSTOM, from HyperQwen, as in
+# ../vllm-agx-z2e): twice the context of BF16, and much faster generation at long contexts (README.md).
+# FlashAttention 2 (the default on Ampere) supports no quantized KV cache.
+kv-cache-dtype: int8_per_token_head
+attention-backend: CUSTOM
+# The recurrent state of the 48 Gated DeltaNet layers in FP16 instead of FP32 (as in HyperQwen): more tokens in the
+# KV cache.
+mamba-ssm-cache-dtype: float16
 enable-prefix-caching: true
 # Prefix cache blocks evicted from the GPU are kept in 8 GiB of pinned RAM, for returning to long conversations. It
 # does not speed up PaperQA2, whose prompts fit in the KV cache on the GPUs (see README.md).
 kv-offloading-size: 8
 kv-offloading-backend: native
-# Speculative decoding with the model's own MTP head: chat 37.5 -> 55.4 t/s.
-speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+# Speculative decoding with the model's own MTP head: chat 37.5 -> 55.4 t/s. The drafter takes its attention
+# backend from here.
+speculative-config: {"method": "mtp", "num_speculative_tokens": 2, "attention_backend": "CUSTOM"}
 reasoning-parser: qwen3
 enable-auto-tool-choice: true
 tool-call-parser: qwen3_coder

@@ -245,7 +245,7 @@
 <text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">192 GB RAM</text>
 <text x="1452" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
 <text x="1452" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
-<text x="1452" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (65 | 1495)</tspan></text>
+<text x="1452" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (92 | 1389)</tspan></text>
 <text x="1452" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
 <text x="1452" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-0.6B</text>
 <rect x="1361.55" y="799" width="180.9" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>

@@ -16,13 +16,15 @@ The preset is selected in [`docker-compose.yml`](docker-compose.yml):
 | | `Qwen/Qwen3-Embedding-4B` Q6_K | ctx 4096, 1 slot | GPU 0 |
 
 The same models and configurations on vLLM, and the comparison with these presets for PaperQA2 (vLLM answers
-1.6-2.5 times as fast with the same model), are in [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md).
+2.2-2.5 times as fast with the same model, with HyperQwen for Qwen3.8-27B), are in [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md).
 
 ## Hardware
 
 - OS: Ubuntu 24.04.5 LTS (kernel 7.0.0-30-generic), NVIDIA driver 610.57.04 (CUDA 13.3)
 - CPU: AMD Ryzen Threadripper PRO 3975WX (32 cores, 64 threads)
-- RAM: 192 GB registered DDR4 ECC in 8 channels (4 x 32 GB and 4 x 16 GB); the frequency needs root to read
+- Computer: Lenovo ThinkStation P620 (30E0003EMT)
+- RAM: 192 GB DDR4-3200 registered ECC in 8 channels, one DIMM per channel: 4 x 32 GB Micron 36ASF4G72PZ-3G2R1 and
+  4 x 16 GB Micron 18ASF2G72PDZ-3G2E1, all dual-rank, running at 3200 MT/s (`dmidecode`)
 - NPU: none
 - GPU: 2 x NVIDIA RTX A4000, PCIe 4.0 x16 each, no NVLink; GPU 0 also runs the desktop session (~110 MiB)
 - GPU architecture: Ampere (GA104)

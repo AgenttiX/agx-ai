@@ -423,9 +423,9 @@ def build(specs: bool) -> str:
                 [(vllm, "vLLM", "CUDA, experts on the CPU")]),
         Machine("server", 1452, spec("RTX A4000 server"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
-                # vllm-rtx-a4000/README.md, configurations 3 (Qwen3.8-27B) and 2 (Gemma 4 26B-A4B);
-                # benchmark/results/big-machine.jsonl: 4096-token prompt (Qwen), 6.4k-token prompt (Gemma, depth test)
-                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "65", "1495"), (gemma_moe, "254", "4760"),
+                # vllm-rtx-a4000/README.md, configurations 3 (Qwen3.8-27B with HyperQwen) and 2 (Gemma 4 26B-A4B);
+                # benchmark/results/big-machine.jsonl: 6.4k-token prompt (depth test)
+                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "92", "1389"), (gemma_moe, "254", "4760"),
                  ("Qwen3-Embedding-0.6B", "", "")],
                 ["ubuntu.svg"], [(vllm, "vLLM", "CUDA, 2 GPUs")]),
     ]

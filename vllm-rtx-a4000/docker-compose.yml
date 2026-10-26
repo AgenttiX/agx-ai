@@ -1,7 +1,7 @@
 # vLLM for PaperQA2 on 2x RTX A4000 (16 GB each). See README.md for the configurations and results.
 # The configuration (which models run where) is selected in .env, so that a plain "docker compose up -d" (which
 # ../../phd-research/phd_code/tools/paperqa_ask.py also runs) starts it:
-# - COMPOSE_PROFILES: llm, embedding (GPU) and/or embedding-cpu
+# - COMPOSE_PROFILES: llm (stock vLLM) or hyperqwen (HyperQwen for Qwen3.8-27B), embedding (GPU) and/or embedding-cpu
 # - LLM_CONFIG, LLM_GPUS: the vllm serve --config file of the LLM and its GPUs
 # - EMBEDDING_CONFIG, EMBEDDING_GPUS: the same for the embedding model on the GPU
 # vLLM serves one model per server: the LLM is on port 9932 and the embedding model on port 9934, both with the
@@ -64,6 +64,87 @@ services:
       - vllm-cache:/root/.cache/vllm
       - ./${LLM_CONFIG:-config-qwen3.8-27b-tp2.yaml}:/etc/vllm/config.yaml:ro
 
+  vllm-llm-hyperqwen:
+    # HyperQwen (https://github.com/syv-ai/HyperQwen, see ../vllm-rtx3090-hyperqwen/README.md) for Qwen3.8-27B on
+    # both GPUs: its patched vLLM 0.31.0, re-quantized checkpoint and DFlash2 drafter. Faster than vllm-llm in all
+    # tests, e.g. PaperQA2 1.5 times as fast (README.md). Its launcher is configured with the environment below.
+    # Once: docker compose run --rm hyperqwen-prepare
+    image: ghcr.io/syv-ai/hyperqwen@sha256:0cf71b42d3017f9af0f7a46ef5817eedc5a39b6cc9c789ccd8a54138d9292ea0
+    container_name: vllm-llm-hyperqwen
+    profiles: [hyperqwen]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: all
+    # NCCL communicates between the GPUs through /dev/shm. The container has its own /dev/shm instead of the host's
+    # (ipc: host), as the launcher deletes the CPU KV offload files of /dev/shm that no process of its container
+    # maps, which would include those of other vLLM containers.
+    shm_size: 2gb
+    # ~6 GiB: the processes and the token embedding (EMBED_UVA, pinned).
+    mem_limit: 24g
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    environment:
+      CUDA_VISIBLE_DEVICES: 0,1
+      # The torch.compile, Triton and FlashInfer caches are in $HOME (the cache volume).
+      HOME: /cache
+      PORT: "8000"
+      # The model was prepared with hyperqwen-prepare.
+      PREPARE: "0"
+      # Peer-to-peer copies between the GPUs return corrupted data on this machine (see README.md).
+      NCCL_P2P_DISABLE: "1"
+      # The DFlash2 block drafter (7 drafted tokens per step) with lookup drafting from the context, an int8 KV cache
+      # read by the pth-flash-attn kernel, and up to 4 sequences. HyperQwen's MTP mode (SPEC=mtp) was slower in all
+      # tests but the 4 concurrent requests, where it was as fast.
+      SPEC: dflash2
+      CTX: long
+      PTH_FA: "1"
+      # The KV cache per GPU: 5.6 GB, ~275k tokens, for the full context of the model next to the embedding
+      # server (config-embedding-tp2-qwen.yaml). Peak 15.8 GiB of the 16 GiB with a full-context prompt.
+      KV_MEM: "5600000000"
+      MAX_LEN: "262144"
+      # The token embedding in pinned RAM instead of VRAM.
+      EMBED_UVA: "1"
+      # No CPU KV offloading (KV_OFFLOAD_GB): the KV cache on the GPUs holds ~300k tokens, so an evicted conversation
+      # would be gone from a CPU cache of a few GiB too (see README.md).
+      # vLLM checks at startup that this share of the GPU is free (the embedding server may have started first); the
+      # KV cache has a fixed size (KV_MEM).
+      GPU_UTIL: "0.80"
+      # The custom all-reduce uses peer-to-peer copies, see above. The same model name as vllm-llm.
+      EXTRA_ARGS: "--tensor-parallel-size 2 --disable-custom-all-reduce --served-model-name Qwen/Qwen3.8-27B"
+    # The API key is that of the llama.cpp server, so that clients work with both.
+    entrypoint: ["/bin/sh", "-c", "VLLM_API_KEY=\"$$LLAMA_API_KEY\" exec bash docker/entrypoint.sh single"]
+    ports:
+      - "9932:8000"
+    volumes:
+      - /home/makimika/.cache/vllm-models/hyperqwen:/app/models
+      - hyperqwen-cache:/cache
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start compiles kernels for several minutes; later ones take ~6 min.
+      start_period: 15m
+
+  hyperqwen-prepare:
+    # Downloads and re-quantizes the model into ~/.cache/vllm-models/hyperqwen (~22 GB, a few minutes on the CPU).
+    image: ghcr.io/syv-ai/hyperqwen@sha256:0cf71b42d3017f9af0f7a46ef5817eedc5a39b6cc9c789ccd8a54138d9292ea0
+    profiles: [hyperqwen-prepare]
+    command: prepare
+    cpus: 8
+    mem_limit: 48g
+    environment:
+      HOME: /cache
+    volumes:
+      - /home/makimika/.cache/vllm-models/hyperqwen:/app/models
+      - hyperqwen-cache:/cache
+
   vllm-embedding:
     <<: *vllm
     container_name: vllm-embedding
@@ -77,7 +158,7 @@ services:
     volumes:
       - /home/makimika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - vllm-cache:/root/.cache/vllm
-      - ./${EMBEDDING_CONFIG:-config-embedding-tp2.yaml}:/etc/vllm/config.yaml:ro
+      - ./${EMBEDDING_CONFIG:-config-embedding-tp2-qwen.yaml}:/etc/vllm/config.yaml:ro
 
   vllm-embedding-cpu:
     # The CPU build of vLLM. No GPUs: with them (and libcuda), Triton would select its CUDA driver instead of the CPU
@@ -116,3 +197,6 @@ services:
 volumes:
   vllm-cache:
   vllm-cpu-cache:
+  # The same volume as the first test runs, so that its compile caches are kept.
+  hyperqwen-cache:
+    name: hyperqwen-cache
