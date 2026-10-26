@@ -26,7 +26,7 @@ left 0.8-1.0 GiB free:
 | [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2, pth-flash-attn | int8 | 155648 | 81-86 t/s | 83 / 79 / 66 t/s, 60 t/s at 153k | 1210 t/s at 6.4k, 690 t/s at 153k |
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
-| [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 26.5 t/s | 27 / 28 / 28 t/s | 1650 t/s at 6.4k, 2090 t/s at 260k |
+| [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 28.7 t/s | 27 / 28 / 26 t/s, 46 t/s in code edits | 1690 t/s at 6.4k, 2090 t/s at 260k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-agx-z2e`](../llama-cpp-agx-z2e/README.md#results-of-the-current-presets)):
 
@@ -41,7 +41,7 @@ left 0.8-1.0 GiB free:
   twice as fast (77 vs 36 t/s in chat). The dense 31B model leaves vLLM no room for the MTP drafter next to a useful
   context (see [Gemma 4 31B](#gemma-4-31b)).
 - **Qwen3.8-Flash-Next: vLLM is better, except for images.** Both fit the full 262144 tokens of context and generate
-  ~27 t/s in chats, bound by the memory bandwidth of the CPU. vLLM stays at ~28 t/s up to 100k tokens of context
+  ~27-29 t/s in chats, bound by the memory bandwidth of the CPU (vLLM: 46 t/s when copying code with MTP). vLLM stays at ~28 t/s up to 100k tokens of context
   (llama.cpp: 20 t/s at 100k), processes prompts 2.4-2.8 times as fast (1650-2090 vs 600-780 t/s) and supports
   videos (~35 s for 30 s of 1080p). llama.cpp processes images faster (3.2 s vs ~8 s for 1280x960, as vLLM's vision
   tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. See
@@ -294,6 +294,58 @@ cheaper steps were enough:
 - The runtime needs a KV cache of ~1.05 times the context. With MTP, the cache costs ~15 KB per additional token
   (5.95 GB held 333406 tokens), less than the ~21.5 KB per token of the smaller cache suggested.
 
+### CPU pool threads (2026-10-26)
+
+With `QWEN38_CPU_EXPERTS_STATS=64`, the runtime logs the decode step times. With the settings of 2026-10-14, a step
+(4 tokens with MTP 3) took 63 ms of CPU time for ~920 cold experts (~37 GB/s from the RAM), 20 ms of GPU time and a
+6.5 ms tail, one after the other: the GPU waits for the CPU's result in every layer. Each layer has only ~19 cold
+experts, one work item each, so the 24 threads of the pool are not all busy, but the pool is bound by the memory
+bandwidth anyway: splitting each expert into 5 slices of 128 columns (`QWEN38_CPU_EXPERTS_SLICES`) made it slower.
+Fewer threads leave more cores to the serving processes that drive the GPU:
+
+| CPU pool (`QWEN38_CPU_EXPERTS_CPUS`) | Chat | Gen. 6.4k | Edit (copy) | CPU / GPU / tail per step |
+|---|---|---|---|---|
+| 24 threads, 3 per 4-core CCX (the runtime's default) | 25.6 | 27.4 | 39.9 | 63 / 20 / 6.5 ms |
+| 48 threads, the same cores with SMT | 21.6 | 22.7 | 37.8 | 77 / 18 / 6.2 ms |
+| 24 threads with 5 slices per expert | 25.2 | 25.2 | 39.7 | 71 / 16 / 5.6 ms |
+| **16 threads, 2 per CCX (current)** | 28.0 | 30.0 | 46.0 | 59 / 16 / 5.6 ms |
+| 16 threads, GPU share 0.45 | 27.2 | 27.6 | 46.2 | 59 / 17 / 5.6 ms |
+| 16 threads, prefetch distance 16 instead of 6 rows (`PF_ROWS` of the kernel) | 27.7 | 27.7 | 45.7 | 62 / 16 / 5.6 ms |
+| 8 threads, 1 per CCX | 25.4 | 26.5 | 42.5 | 66 / 16 / 5.6 ms |
+
+One run of each test (the chat test varies by ~±10 %, the depth test by ~±5 %; the edit test, a file copied with
+one change at a draft acceptance of 98 %, by ~1 %). The current configuration with `--repeat 2`: chat 28.7 t/s,
+27.0 / 27.6 / 26.2 t/s at 6.4k / 32k / 100k tokens of context, 45.9 / 45.6 t/s in edits (short / after 32k tokens),
+prompt processing 1690 / 1986 / 1984 t/s, peak 20896 MiB. So +15 % in code edits and +12 % in chats; at long contexts,
+the difference is within the noise.
+
+Not applicable here (checked on 2026-10-26):
+
+- **HyperQwen's optimizations** (see [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md)) are for the
+  Qwen3.5/3.8 model code with full attention: the pth-flash-attn kernel needs causal attention with head size 256
+  (Flash-Next has Qwen Sparse Attention with its own kernels), DFlash2 and its lookup drafting need a DFlash2 drafter,
+  which does not exist for Flash-Next, and HyperQwen's image has no Flash-Next support. The FP16 recurrent state would
+  only save VRAM (one sequence), and more hot experts on the GPU made little difference (see above).
+- **Stock vLLM** ([`../vllm`](../vllm)'s image, as in [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next))
+  reads the cold experts over PCIe (~25 GB/s, ~2.4 GB per decode step with MTP 3) instead of computing them on the
+  CPU, which reads ~41 GB/s. In this runtime, a larger GPU share (more PCIe reads) did not help either, as both read the
+  same RAM.
+
+Ideas not tried yet, roughly by the expected gain per effort:
+
+1. **The CPU frequency policy** `performance` instead of `powersave`/`balance_performance` (a system-wide setting,
+   so not changed): the serving processes, which gained most from the freed cores, may gain from it too.
+2. **More hot experts with int8 dense weights**: the int8 Gated DeltaNet, attention and shared-expert weights of
+   [`../vllm-agx-ai`](../vllm-agx-ai/README.md#qwen38-flash-next) would free ~3.3 GiB, room for ~28 more hot experts
+   per layer (116 MiB each), if the runtime's kernels accept int8 weights. First measure the cold experts per step
+   with `QWEN38_HOT_ONLY=20` and `28` (with a smaller context) to see whether it would pay off: from 16 to 20 hot
+   experts, decode was only 2 % faster.
+3. **The CPU kernel** (`cpu_moe.cpp` of the runtime) reads ~41 GB/s of the 85 GB/s of the four DDR4-2666 channels.
+   Measure the RAM bandwidth of the machine with a STREAM-like test first; if it is well above 41 GB/s, the kernel's
+   int4 decoding (one `cvtepi32_ps` per 8 weights) may be the limit on Zen 2, and a lookup-table or `vpmaddubsw`
+   based variant with int8 activations could be faster. 12 or 20 pool threads (unbalanced over the CCXs) were not
+   tested.
+
 ### Other settings (2026-10-14)
 
 - **CPU KV offloading does not work with this runtime.** vLLM's native offloading (`kv-offloading-size`) requires
@@ -318,8 +370,8 @@ cheaper steps were enough:
   it is a system-wide setting. Transparent huge pages (`madvise`) work: 54.7 of the 56.4 GiB of the expert arena got
   huge pages.
 
-Results with the current settings (`--tests generation prompt chat depth --prompt-tokens 260000`), with llama.cpp for
-comparison:
+Results with the settings of 2026-10-14 (24 CPU pool threads; `--tests generation prompt chat depth --prompt-tokens
+260000`), with llama.cpp for comparison. For the current settings, see [CPU pool threads](#cpu-pool-threads-2026-10-26):
 
 | Test | vLLM | llama.cpp ([preset](../llama-cpp-agx-z2e/preset-qwen3.8-flash-next.ini)) |
 |---|---|---|

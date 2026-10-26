@@ -51,6 +51,11 @@ services:
       # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
       # help (see ../vllm-agx-z2e/README.md).
       QWEN38_GPU_SHARE_FRAC: "0.3"
+      # The CPU pool: 16 threads, 2 on each 4-core CCX of the Threadripper 3970X (the runtime's default: 24, 3 per
+      # CCX). The pool is bound by the memory bandwidth (~41 GB/s), which 16 threads already reach (59 ms per decode
+      # step, 24: 63 ms, 8: 66 ms, 48 with SMT: 77 ms), and the freed cores speed up the serving processes that drive
+      # the GPU: +15 % in edits, +5-10 % otherwise (see ../vllm-agx-z2e/README.md#qwen38-flash-next).
+      QWEN38_CPU_EXPERTS_CPUS: "1-2,5-6,9-10,13-14,17-18,21-22,25-26,29-30"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Image and video input with the vision tower on the CPU (README.md): 32 threads were the
