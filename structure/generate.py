@@ -460,7 +460,8 @@ def build(specs: bool) -> str:
     f.person_icon(50, 56, 56)
     f.text(78, 136, "Users", size=18, weight="bold", anchor="middle")
     f.text(78, 154, "browser,", size=13, color=MUTED, anchor="middle")
-    f.text(78, 170, "Conduit app", size=13, color=MUTED, anchor="middle")
+    f.text(78, 170, "Conduit app,", size=13, color=MUTED, anchor="middle")
+    f.text(78, 186, "OpenCode harness", size=13, color=MUTED, anchor="middle")
 
     # Stack
     col_a = 222
@@ -504,6 +505,11 @@ def build(specs: bool) -> str:
     users_x = 180
     f.arrow([(106, 90), (users_x, 90), (users_x, mid(rows[1])), (col_a, mid(rows[1]))])
     f.arrow([(users_x, mid(rows[1])), (users_x, mid(rows[2])), (col_a, mid(rows[2]))])
+    # OpenCode uses the API of LiteLLM directly, between the Open WebUI and GPT Researcher cards.
+    gap_y = (rows[1] + ch + rows[2]) / 2
+    f.arrow([(users_x, gap_y), (lx, gap_y)])
+    # Left of the center, so that the label does not overlap the arrowhead
+    f.text((col_a + cw + lx) / 2 - 7, gap_y - 6, "OpenCode", size=13, color=MUTED, anchor="middle", style="italic")
     f.arrow([(col_a + cw / 2, rows[1]), (col_a + cw / 2, rows[0] + ch)])
     f.text(col_a + cw / 2 + 8, rows[1] - 7, "tools", size=13, color=MUTED, style="italic")
     f.arrow([(col_a + cw / 2, rows[2] + ch), (col_a + cw / 2, rows[3])])

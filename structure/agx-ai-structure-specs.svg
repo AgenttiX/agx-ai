@@ -34,7 +34,8 @@
 <path d="M55.6,109.2 C55.6,86.8 100.4,86.8 100.4,109.2 Z" fill="#52606d"/>
 <text x="78" y="136" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Users</text>
 <text x="78" y="154" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">browser,</text>
-<text x="78" y="170" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">Conduit app</text>
+<text x="78" y="170" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">Conduit app,</text>
+<text x="78" y="186" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">OpenCode harness</text>
 <rect x="222" y="64" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <rect x="234" y="79" width="40" height="32" rx="6" fill="#1f2933" stroke="#1f2933" stroke-width="1.5"/>
 <path d="M241.2,87.8 L249.2,95 L241.2,102.2" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -90,6 +91,8 @@
 <text x="68" y="395" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Gemini</text>
 <path d="M106,90 L180,90 L180,187.333 L222,187.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M180,187.333 L180,279.667 L222,279.667" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M180,233.5 L534,233.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="486" y="227.5" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">OpenCode</text>
 <path d="M337,156.333 L337,126" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <text x="345" y="149.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">tools</text>
 <path d="M337,310.667 L337,341" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
