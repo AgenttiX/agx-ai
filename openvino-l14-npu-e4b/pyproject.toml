@@ -18,7 +18,7 @@ dependencies = [
     "pillow",
     "torch==2.14.1",
     "torchvision==0.29.1",
-    "transformers==5.19.0",
+    "transformers==5.21.0",
     "uvicorn",
 ]
 

@@ -3,7 +3,7 @@
 # The upper bound follows the uv versioning policy, so that the package keeps building when new versions are released.
 # https://docs.astral.sh/uv/concepts/build-backend/
 # [build-system]
-# requires = ["uv_build >= 0.12.17, < 0.13"]
+# requires = ["uv_build >= 0.13.5, < 0.14"]
 # build-backend = "uv_build"
 
 [project]
@@ -43,11 +43,11 @@ requires-python = ">= 3.14"
 # dynamic = ["version"]
 
 dependencies = [
-    "matplotlib >= 3.10.9",
-    "numpy >= 2.4.6",
+    "matplotlib >= 3.11.2",
+    "numpy >= 2.5.4",
     # As of 2026-05, Orjson does not yet support free-threading.
-    "orjson >= 3.11.9",
-    "pandas >= 3.0.5"
+    "orjson >= 3.13.0",
+    "pandas >= 3.1.0"
 ]
 
 [project.urls]
@@ -60,16 +60,16 @@ repository = "https://github.com/AgenttiX/agx-ai"
 [dependency-groups]
 dev = [
     "colorama >= 0.4.6",
-    "pandas-stubs >= 3.0.3.260530",
+    "pandas-stubs >= 3.0.5.260914",
     # Git hooks, configured in .pre-commit-config.yaml
-    # "prek >= 0.5.4",
-    "pyrefly >= 1.2.0",
+    # "prek >= 0.5.7",
+    "pyrefly >= 1.4.0",
     "pytest >= 9.1.1",
     "pytest-cov >= 7.1.0",
     "pytest-html >= 4.2.0",
-    "ruff >= 0.16.6",
+    "ruff >= 0.17.2",
     # For checking the packages built with "uv build"
-    "twine >= 6.2.0",
+    "twine >= 7.0.0",
 ]
 
 [tool.uv]
