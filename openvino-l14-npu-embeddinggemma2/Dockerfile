@@ -58,6 +58,7 @@ RUN \
 
 # The dependencies are installed from the lock file.
 # The PyTorch CPU index is restricted to torch in pyproject.toml.
+# The OpenVINO version of the converter has to match the OVMS image in docker-compose.yml (see pyproject.toml).
 RUN \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-${TARGETARCH} \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \

@@ -7,6 +7,8 @@ description = "Converter of google/embeddinggemma-2 to OpenVINO IR for OpenVINO 
 # Ubuntu 26.04 includes Python 3.14.
 requires-python = "==3.14.*"
 # OpenVINO and openvino-tokenizers should match the OpenVINO version of the OVMS image in docker-compose.yml.
+# Therefore, Dependabot ignores them (see ../.github/dependabot.yml), and they have to be updated manually
+# together with the OVMS image.
 dependencies = [
     "openvino==2026.4.1",
     "openvino-tokenizers==2026.4.1.0",

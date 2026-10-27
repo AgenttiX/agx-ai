@@ -1,0 +1,46 @@
+# Dependabot version updates
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+
+version: 2
+updates:
+  # The uv projects (pyproject.toml and uv.lock)
+  - package-ecosystem: "uv"
+    directories:
+      - "/"
+      - "/openvino-l14-npu-e4b"
+    schedule:
+      interval: "weekly"
+    # Combine the minor and patch updates of each directory into a single pull request.
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # The converter is a separate entry, as the ignore rules apply to all the directories of an entry.
+  - package-ecosystem: "uv"
+    directory: "/openvino-l14-npu-embeddinggemma2"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # The OpenVINO version of the converter has to match the OVMS image in docker-compose.yml,
+    # which Dependabot does not update, so these are updated manually together with it.
+    ignore:
+      - dependency-name: "openvino"
+      - dependency-name: "openvino-tokenizers"
+
+  # The base images in the Dockerfiles
+  - package-ecosystem: "docker"
+    directories:
+      - "/openvino-l14-npu-e4b"
+      - "/openvino-l14-npu-embeddinggemma2"
+      - "/ssh"
+      - "/vllm"
+      - "/vllm-radeon-vii"
+      - "/vllm-rtx3090-flash-next"
+    schedule:
+      interval: "weekly"
