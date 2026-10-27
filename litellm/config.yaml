@@ -5,6 +5,7 @@ general_settings:
   # alerting: [""]
   background_health_checks: false
   # background_health_check_model_groups: ["transient"]
+  disable_env_credential_login: true
   # enable_health_check_routing: true
   health_check_details: true
   health_check_ignore_transient_errors: true
