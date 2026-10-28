@@ -32,3 +32,9 @@ fi
 echo "Creating symlinks."
 ln -f -s "${SCRIPT_DIR}/opencode.jsonc" "${CONFIG_PATH}"
 echo "Configuration ready."
+
+echo "Removing old models from OpenCode cache."
+rm -f ~/.cache/opencode-litellm/models-*.json
+
+echo "Restarting OpenCode service."
+opencode service restart
