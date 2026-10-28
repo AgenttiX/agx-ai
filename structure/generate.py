@@ -48,6 +48,20 @@ VLLM = "#30a2ff"
 MODEL = "#b4531c"
 
 
+# Character widths of Helvetica in 1/1000 em, which match Arial. Other characters are assumed to be 556 wide.
+CHAR_WIDTHS = {
+    **dict.fromkeys(" ,./:;!fIt", 278), **dict.fromkeys("ijl", 222), **dict.fromkeys("-()r", 333),
+    **dict.fromkeys("cksvxyzJ", 500), **dict.fromkeys("+×", 584), **dict.fromkeys("FTZ", 611),
+    **dict.fromkeys("ABEKPSVXY", 667), **dict.fromkeys("CDHNRUw", 722), **dict.fromkeys("GOQ", 778),
+    **dict.fromkeys("mM", 833), "W": 944,
+}
+
+
+def text_width(text: str, size: float, bold: bool = False) -> float:
+    """Estimate the width of the text for Arial-like fonts. Bold text is about 7 % wider."""
+    return sum(CHAR_WIDTHS.get(c, 556) for c in text) * size / 1000 * (1.07 if bold else 1)
+
+
 def _svg_data(path: pathlib.Path) -> tuple[bytes, float]:
     text = path.read_text(encoding="utf-8")
     root_match = re.search(r"<svg\b[^>]*>", text, re.S)
@@ -313,7 +327,7 @@ class Figure:
         """
         wordmark = self.logo_width(logo, 1) > 1.5
         logo_w = self.logo_width(logo, 18) if wordmark else 22
-        text_w = 0.55 * 14 * (len(detail) + (0 if wordmark else len(title) + 1))
+        text_w = text_width(detail, 14) + (0 if wordmark else text_width(title, 14, bold=True) + text_width(" ", 14))
         w = 6 + logo_w + 8 + text_w + 14
         x = cx - w / 2
         stroke = {"llama-cpp.svg": LLAMA, "vllm.png": VLLM}.get(logo, "#6b4fbb")

@@ -122,12 +122,12 @@
 <text x="150" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core Ultra 5 125U, 32 GB RAM</text>
 <text x="150" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
 <text x="150" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
-<rect x="40.3" y="799" width="219.4" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
-<use href="#logo-llama-cpp" x="46.3" y="803" width="22" height="22"/>
-<text x="74.3" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">Vulkan, iGPU</tspan></text>
-<rect x="79.2431" y="834" width="141.514" height="30" rx="15" fill="#ffffff" stroke="#6b4fbb" stroke-width="1.5"/>
-<use href="#logo-openvino" x="89.2431" y="840" width="90.4138" height="18"/>
-<text x="187.657" y="854" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">NPU</text>
+<rect x="48.9903" y="799" width="202.019" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
+<use href="#logo-llama-cpp" x="54.9903" y="803" width="22" height="22"/>
+<text x="82.9903" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">Vulkan, iGPU</tspan></text>
+<rect x="76.0161" y="834" width="147.968" height="30" rx="15" fill="#ffffff" stroke="#6b4fbb" stroke-width="1.5"/>
+<use href="#logo-openvino" x="86.0161" y="840" width="90.4138" height="18"/>
+<text x="184.43" y="854" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">NPU</text>
 <rect x="334" y="525" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
 <rect x="342" y="532" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
 <path d="M320,616 L484,616 L478,627 L326,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
@@ -137,9 +137,9 @@
 <text x="402" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-8550U, 32 GB RAM</text>
 <text x="402" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">GeForce MX150 (2 GB)</text>
 <text x="402" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (6.7 | 80)</tspan></text>
-<rect x="300" y="799" width="204" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
-<use href="#logo-llama-cpp" x="306" y="803" width="22" height="22"/>
-<text x="334" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
+<rect x="300.416" y="799" width="203.167" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
+<use href="#logo-llama-cpp" x="306.416" y="803" width="22" height="22"/>
+<text x="334.416" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
 <rect x="586" y="525" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
 <rect x="594" y="532" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
 <path d="M572,616 L736,616 L730,627 L578,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
@@ -150,9 +150,9 @@
 <text x="654" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">T550 Laptop GPU (4 GB)</text>
 <text x="654" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 | 92)</tspan></text>
 <text x="654" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 | 144)</tspan></text>
-<rect x="552" y="799" width="204" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
-<use href="#logo-llama-cpp" x="558" y="803" width="22" height="22"/>
-<text x="586" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
+<rect x="552.416" y="799" width="203.167" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
+<use href="#logo-llama-cpp" x="558.416" y="803" width="22" height="22"/>
+<text x="586.416" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
 <rect x="813" y="519" width="144" height="94" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
 <rect x="821" y="527" width="128" height="76" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
 <path d="M875,613 L895,613 L899,627 L871,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
@@ -171,12 +171,12 @@
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>
-<rect x="826.85" y="799" width="196.3" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
-<use href="#logo-vllm" x="832.85" y="803" width="22" height="22"/>
-<text x="860.85" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>
-<rect x="799.9" y="834" width="250.2" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
-<use href="#logo-llama-cpp" x="805.9" y="838" width="22" height="22"/>
-<text x="833.9" y="854" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">ROCm, Radeon VII</tspan></text>
+<rect x="824.504" y="799" width="200.992" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
+<use href="#logo-vllm" x="830.504" y="803" width="22" height="22"/>
+<text x="858.504" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>
+<rect x="805.706" y="834" width="238.587" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
+<use href="#logo-llama-cpp" x="811.706" y="838" width="22" height="22"/>
+<text x="839.706" y="854" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">ROCm, Radeon VII</tspan></text>
 <rect x="1130" y="519" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
 <rect x="1136" y="525" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
 <rect x="1144" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
@@ -210,9 +210,9 @@
 <text x="1210" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
 <text x="1210" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
 <text x="1210" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
-<rect x="1073.35" y="799" width="273.3" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
-<use href="#logo-vllm" x="1079.35" y="803" width="22" height="22"/>
-<text x="1107.35" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts on the CPU</tspan></text>
+<rect x="1079.94" y="799" width="260.128" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
+<use href="#logo-vllm" x="1085.94" y="803" width="22" height="22"/>
+<text x="1113.94" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts on the CPU</tspan></text>
 <rect x="1372" y="519" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
 <rect x="1378" y="525" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
 <rect x="1386" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
@@ -248,9 +248,9 @@
 <text x="1452" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (92 | 1389)</tspan></text>
 <text x="1452" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
 <text x="1452" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-0.6B</text>
-<rect x="1361.55" y="799" width="180.9" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
-<use href="#logo-vllm" x="1367.55" y="803" width="22" height="22"/>
-<text x="1395.55" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>
+<rect x="1358.51" y="799" width="186.978" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
+<use href="#logo-vllm" x="1364.51" y="803" width="22" height="22"/>
+<text x="1392.51" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>
 <path d="M594,282.5 L594,458.0 M150,458.0 L1210,458.0" stroke="#52606d" stroke-width="2" fill="none"/>
 <circle cx="594" cy="458.0" r="4" fill="#52606d"/>
 <path d="M150,458 L150,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
