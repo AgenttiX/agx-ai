@@ -10,6 +10,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 CONFIG_DIR="${HOME}/.config/opencode"
 CONFIG_PATH="${CONFIG_DIR}/opencode.jsonc"
+REVIEWER_CONFIG_PATH="${CONFIG_DIR}/permission-reviewer.jsonc"
 OPENCODE_CLI_PATH="/opt/OpenCode/resources/opencode-cli"
 
 if [ ! -d "${CONFIG_DIR}" ]; then
@@ -22,6 +23,11 @@ if [ -f "${CONFIG_PATH}" ] && [ ! -L "${CONFIG_PATH}" ]; then
   mv "${CONFIG_PATH}" "${CONFIG_DIR}/opencode-old.jsonc"
 fi
 
+if [ -f "${REVIEWER_CONFIG_PATH}" ] && [ ! -L "${REVIEWER_CONFIG_PATH}" ]; then
+  echo "Permission reviewer config file already exists. Backing up."
+  mv "${REVIEWER_CONFIG_PATH}" "${CONFIG_DIR}/permission-reviewer-old.jsonc"
+fi
+
 if [ -f "${OPENCODE_CLI_PATH}" ]; then
   echo "Symlinking opencode-cli from OpenCode Desktop as opencode."
   ln -f -s "${OPENCODE_CLI_PATH}" "${HOME}/.local/bin/opencode"
@@ -31,6 +37,7 @@ fi
 
 echo "Creating symlinks."
 ln -f -s "${SCRIPT_DIR}/opencode.jsonc" "${CONFIG_PATH}"
+ln -f -s "${SCRIPT_DIR}/permission-reviewer.jsonc" "${REVIEWER_CONFIG_PATH}"
 echo "Configuration ready."
 
 echo "Removing old models from OpenCode cache."

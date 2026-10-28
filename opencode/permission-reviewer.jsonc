@@ -1,0 +1,5 @@
+// Configuration for https://github.com/warc0s/opencode-permission-reviewer
+{
+  "model": "litellm/agx-z2e-rocm/google/gemma-4-26b-a4b-qat",
+  "timeoutMs": 120000
+}

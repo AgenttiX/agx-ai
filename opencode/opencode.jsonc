@@ -95,7 +95,10 @@
     { "action": "websearch", "resource": "*", "effect": "allow" }
   ],
   "plugins": [
-    "opencode-plugin-litellm@latest"
+    "opencode-plugin-litellm@latest",
+    // Reviews "ask" permissions similarly to the auto mode of Claude Code.
+    // Configured in permission-reviewer.jsonc.
+    { "package": "opencode-permission-reviewer", "options": {} }
   ],
   "providers": {
     "litellm": {
