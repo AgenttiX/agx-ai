@@ -72,13 +72,14 @@ services:
       QWEN38_VISION_THREADS: "32"
       VLLM_VIDEO_LOADER_BACKEND: qwen3_vl
       # The same model name as ../vllm-rtx3090, so that the clients work with both. The vision limits override those
-      # of VISION=1 (1 image of up to 2 megapixels): up to 4 images per request, scaled down to 1 megapixel each, and
+      # of VISION=1 (1 image of up to 2 megapixels): up to 64 images per request (agent sessions collect screenshots,
+      # and a longer conversation would fail; the limit only checks the requests), scaled down to 1 megapixel each, and
       # 1 video, sampled at 2 frames per second, at most 64 frames and 12.6 megapixels over all frames (~6000 tokens);
       # no encoder profiling, which would take minutes on the CPU. No spaces in the values: the launcher splits
       # EXTRA_ARGS at them.
       EXTRA_ARGS: >-
         --served-model-name Qwen/Qwen3.8-27B
-        --limit-mm-per-prompt {"image":4,"video":1}
+        --limit-mm-per-prompt {"image":64,"video":1}
         --mm-processor-kwargs {"max_pixels":1048576,"videos_kwargs":{"max_pixels":12582912}}
         --media-io-kwargs {"video":{"max_frames":64}}
         --skip-mm-profiling

@@ -226,8 +226,8 @@ and [`../vllm`](../vllm/README.md), so the KV cache and the context stay the sam
   container runs at every start, still finds all of its patches.
 - [`docker-compose.yml`](docker-compose.yml) sets `VISION=1` (no `--language-model-only`), `VISION_OFFLOAD=0` (the
   launcher's weight offloading is for vLLM's tower) and, in `EXTRA_ARGS`, the limits of
-  [`../vllm-rtx3070`](../vllm-rtx3070/README.md): up to 4 images per request, scaled down to 1 megapixel each, and
-  1 video, sampled at 2 frames per second (vLLM's `qwen3_vl` video loader decodes only those), at most 64 frames and
+  [`../vllm-rtx3070`](../vllm-rtx3070/README.md), except for the number of images: up to 64 images per request,
+  scaled down to 1 megapixel each, and 1 video, sampled at 2 frames per second (vLLM's `qwen3_vl` video loader decodes only those), at most 64 frames and
   12.6 megapixels over all frames (~6000 tokens), and no encoder profiling (it would take minutes on the CPU).
 
 Measured on 2026-10-28 with generated test media (greedy, without thinking; all answers correct):
@@ -235,6 +235,7 @@ Measured on 2026-10-28 with generated test media (greedy, without thinking; all 
 | Input | Prompt tokens | Time of the request | Answer |
 |---|---|---|---|
 | 1280x960 image with text and three shapes | 1002 | 7.5 s (again: 1.8 s, from the caches) | the text, each shape's color and position |
+| 16 1280x960 images, each with its number (2026-10-29) | 15614 | 115 s (again: 1.4 s) | the 16 numbers in order |
 | 20-s 640x360 video, 30 fps: a red square moving from left to right, "ALPHA" in the first half and "OMEGA" in the second | 4602 | 30.5 s | the movement and the change of the text |
 | The same in 1080p, 30 s | 5992 | 35-40 s | the same |
 | 120k tokens of code and the 1080p video | 125993 | 187 s | the same |
@@ -245,7 +246,14 @@ peak of the server processes from ~21480 to 21634 MiB (after an image 21260 MiB,
 more with larger videos or 120k tokens of context), ~130 MiB over the 21 GiB of the other configurations of this GPU.
 Next to the desktop's 1.3 GiB, 1.6 GiB stayed free; with ~2.2 GiB of desktop, as during some of the tests, ~0.7 GiB.
 To stay within 21 GiB, the KV cache could be ~150 MB smaller (~4k tokens less context), or the video limit ~3500
-tokens (`videos_kwargs` `max_pixels` ~7 M).
+tokens (`videos_kwargs` `max_pixels` ~7 M). 16 images in one request had the same peak (21618 MiB).
+
+The limit of images per request only checks the requests: vLLM's encoder cache and the VRAM peak depend on the size of
+the largest image or video, not on their number, and without the encoder profiling nothing is reserved per image. With 4
+images, an agent session (OpenCode) failed, including its compaction, once its conversation had more than 4
+screenshots. The cost of many images is time: each image that is not in the prefix cache takes ~7 s on the CPU, so a
+request whose prefix differs from the earlier ones (e.g. a compaction, if it has a system prompt of its own) computes all of
+the conversation's images again (64 images: ~7.5 min), and each image takes ~1000 tokens of context.
 
 The text speed is the same as without vision within the run-to-run variation (back to back on 2026-10-28, a warm
 GPU: chat 119.5 vs 119.2 t/s, edits 269 vs 273 t/s, 105.6 / 84.4 vs 110.3 / 90.5 t/s at 6.4k / 32k tokens of context
