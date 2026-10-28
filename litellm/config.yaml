@@ -135,33 +135,33 @@ model_list:
   # Claude via the litellm-claude container, which is a LiteLLM proxy itself (./litellm-claude.yaml).
   # Its Claude Agent SDK provider runs the model with allowed_tools=[], so function calling is not enabled here.
 
-  - model_name: claude/haiku
+  - model_name: claude-sub/haiku
     litellm_params:
       model: litellm_proxy/haiku
       litellm_credential_name: litellm-claude
     model_info:
       mode: chat
 
-  - model_name: claude/sonnet
+  - model_name: claude-sub/sonnet
     litellm_params:
       model: litellm_proxy/sonnet
       litellm_credential_name: litellm-claude
     model_info:
       mode: chat
 
-  - model_name: claude/opus
+  - model_name: claude-sub/opus
     litellm_params:
       model: litellm_proxy/opus
       litellm_credential_name: litellm-claude
     model_info:
       mode: chat
 
-  - model_name: claude/fable
-    litellm_params:
-      model: litellm_proxy/fable
-      litellm_credential_name: litellm-claude
-    model_info:
-      mode: chat
+#  - model_name: claude-sub/fable
+#    litellm_params:
+#      model: litellm_proxy/fable
+#      litellm_credential_name: litellm-claude
+#    model_info:
+#      mode: chat
 
 general_settings:
   # master-key: sk-SET_ME_IN_ENV
