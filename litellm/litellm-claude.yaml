@@ -1,0 +1,28 @@
+# Overrides /app/config/litellm_config.yaml of ghcr.io/cabinlab/litellm-claude-code, whose default config only has
+# sonnet, opus and haiku. The provider passes the model name to the Claude Agent SDK as is, so the aliases work.
+model_list:
+  - model_name: "haiku"
+    litellm_params:
+      model: "claude-agent-sdk/haiku"
+
+  - model_name: "sonnet"
+    litellm_params:
+      model: "claude-agent-sdk/sonnet"
+
+  - model_name: "opus"
+    litellm_params:
+      model: "claude-agent-sdk/opus"
+
+  - model_name: "fable"
+    litellm_params:
+      model: "claude-agent-sdk/fable"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  drop_params: true
+  success_callback: []
+  custom_provider_map:
+    - {"provider": "claude-agent-sdk", "custom_handler": "providers.claude_agent_provider.claude_agent_provider"}

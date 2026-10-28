@@ -1,4 +1,165 @@
-# model_list:
+# The local models. The API base and key of each server are in an LLM credential in the database (UI: Models + Endpoints
+# -> LLM Credentials), referenced by litellm_credential_name. Remove the models of the same name from the database,
+# as LiteLLM would load balance between the two deployments instead of merging them.
+#
+# vLLM reports its context size (max_model_len) in /v1/models and LiteLLM uses it for max_tokens and
+# max_input_tokens, but also for max_output_tokens, which is therefore set here. llama.cpp does not report its context
+# size in a form LiteLLM reads, so max_input_tokens is the ctx-size of the model's llama.cpp preset.
+# Neither reports the input modalities, so they are set here as well. max_output_tokens is lower for the models with
+# little context, as clients such as OpenCode reserve it from the context.
+
+x-llama-cpp: &llama-cpp
+  mode: chat
+  max_output_tokens: 32768
+  supports_function_calling: true
+  supports_reasoning: true
+  supports_vision: true
+
+x-vllm-qwen: &vllm-qwen
+  mode: chat
+  max_output_tokens: 32768
+  supports_function_calling: true
+  supports_reasoning: true
+
+model_list:
+  # llama.cpp
+
+  - model_name: agx-z2e-rocm/google/gemma-4-26b-a4b-qat
+    litellm_params:
+      model: openai/google/gemma-4-26b-a4b-qat
+      litellm_credential_name: agx-z2e-llama-cpp-rocm
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini
+      max_input_tokens: 88064
+
+  - model_name: agx-ai/google/gemma-4-26b-a4b-qat
+    litellm_params:
+      model: openai/google/gemma-4-26b-a4b-qat
+      litellm_credential_name: agx-ai-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-rtx3070/preset.ini
+      max_input_tokens: 122880
+
+  - model_name: agx-ai/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF
+    litellm_params:
+      model: openai/llmfan46/gemma-4-26B-A4B-it-qat-q4_0-uncensored-heretic-GGUF
+      litellm_credential_name: agx-ai-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-rtx3070/preset.ini
+      max_input_tokens: 131072
+
+  - model_name: agx-t480/google/gemma-4-26b-a4b-qat/laptop
+    litellm_params:
+      model: openai/google/gemma-4-26b-a4b-qat
+      litellm_credential_name: agx-t480-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-t480/preset.ini
+      max_input_tokens: 24576
+      max_output_tokens: 8192
+
+  - model_name: agx-l14/google/gemma-4-26b-a4b-qat/laptop
+    litellm_params:
+      model: openai/google/gemma-4-26b-a4b-qat
+      litellm_credential_name: agx-l14-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-l14/preset.ini
+      max_input_tokens: 50000
+      max_output_tokens: 16384
+
+  - model_name: t550/google/gemma-4-e4b-qat
+    litellm_params:
+      model: openai/google/gemma-4-e4b-qat
+      litellm_credential_name: t550-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-t550/preset.ini
+      max_input_tokens: 69632
+      supports_audio_input: true
+
+  - model_name: agx-z2e/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF
+    litellm_params:
+      model: openai/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF
+      litellm_credential_name: agx-z2e-llama-cpp
+    model_info:
+      <<: *llama-cpp
+      # ../llama-cpp-rtx3090/preset-qwen3.8-27b-uncensored.ini
+      max_input_tokens: 118784
+
+  # vLLM
+
+  # ../vllm-rtx3090-flash-next
+  - model_name: agx-z2e/Qwen/Qwen3.8-Flash-Next
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3.8-Flash-Next
+      litellm_credential_name: agx-z2e-llama-cpp
+    model_info:
+      <<: *vllm-qwen
+      supports_vision: true
+      supports_video_input: true
+
+  # ../vllm-rtx3090-hyperqwen: HyperQwen has no vision tower ("At most 0 image(s) may be provided in one prompt").
+  - model_name: agx-z2e/Qwen/Qwen3.8-27B
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3.8-27B
+      litellm_credential_name: agx-z2e-llama-cpp
+    model_info:
+      <<: *vllm-qwen
+
+  # ../vllm-rtx-a4000: text only, both with HyperQwen and with vllm-llm (language-model-only).
+  - model_name: big-machine/Qwen/Qwen3.8-27B
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3.8-27B
+      litellm_credential_name: big-machine-llama-cpp
+    model_info:
+      <<: *vllm-qwen
+
+  # ../vllm-rtx3070
+  - model_name: agx-ai/Qwen/Qwen3.8-Flash-Next
+    litellm_params:
+      model: hosted_vllm/Qwen/Qwen3.8-Flash-Next
+      litellm_credential_name: agx-ai-llama-cpp
+    model_info:
+      <<: *vllm-qwen
+      # 57344 tokens of context
+      max_output_tokens: 16384
+      supports_vision: true
+      supports_video_input: true
+
+  # Claude via the litellm-claude container, which is a LiteLLM proxy itself (./litellm-claude.yaml).
+  # Its Claude Agent SDK provider runs the model with allowed_tools=[], so function calling is not enabled here.
+
+  - model_name: claude/haiku
+    litellm_params:
+      model: litellm_proxy/haiku
+      litellm_credential_name: litellm-claude
+    model_info:
+      mode: chat
+
+  - model_name: claude/sonnet
+    litellm_params:
+      model: litellm_proxy/sonnet
+      litellm_credential_name: litellm-claude
+    model_info:
+      mode: chat
+
+  - model_name: claude/opus
+    litellm_params:
+      model: litellm_proxy/opus
+      litellm_credential_name: litellm-claude
+    model_info:
+      mode: chat
+
+  - model_name: claude/fable
+    litellm_params:
+      model: litellm_proxy/fable
+      litellm_credential_name: litellm-claude
+    model_info:
+      mode: chat
 
 general_settings:
   # master-key: sk-SET_ME_IN_ENV

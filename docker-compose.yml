@@ -111,6 +111,8 @@ services:
       # The permissions don't work with directory mounting.
       # - ./litellm/claude:/home/claude/.claude
       - claude-auth:/home/claude/.claude
+      # Adds fable to the default models.
+      - ./litellm/litellm-claude.yaml:/app/config/litellm_config.yaml:ro
   litellm-db:
     image: postgres:18-alpine
     container_name: litellm-db
