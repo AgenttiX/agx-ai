@@ -102,13 +102,15 @@ model_list:
       supports_vision: true
       supports_video_input: true
 
-  # ../vllm-rtx3090-hyperqwen: HyperQwen has no vision tower ("At most 0 image(s) may be provided in one prompt").
+  # ../vllm-rtx3090-hyperqwen: images and videos with the vision tower on the CPU.
   - model_name: agx-z2e/Qwen/Qwen3.8-27B
     litellm_params:
       model: hosted_vllm/Qwen/Qwen3.8-27B
       litellm_credential_name: agx-z2e-llama-cpp
     model_info:
       <<: *vllm-qwen
+      supports_vision: true
+      supports_video_input: true
 
   # ../vllm-rtx-a4000: text only, both with HyperQwen and with vllm-llm (language-model-only).
   - model_name: big-machine/Qwen/Qwen3.8-27B

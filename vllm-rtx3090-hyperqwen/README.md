@@ -2,8 +2,9 @@
 
 [HyperQwen](https://github.com/syv-ai/HyperQwen) for Qwen3.8-27B on the RTX 3090 of agx-z2e, tuned for agentic coding
 with one user and one or a few agents. HyperQwen is a patch series for vLLM 0.31.0, a re-quantized checkpoint and two
-drafters (MTP and DFlash2). Its image is used as is, with the settings in the `environment` of
-[`docker-compose.yml`](docker-compose.yml), and the CPU KV offloading of this repository added. It replaces the
+drafters (MTP and DFlash2). Its image is used with the settings in the `environment` of
+[`docker-compose.yml`](docker-compose.yml), the CPU KV offloading of this repository added, and image and video input
+with the vision tower on the CPU (see [Images and videos](#images-and-videos)). It replaces the
 Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) on the same GPU and port (9931), with the same model
 name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at once.
 
@@ -11,7 +12,7 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 
 | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
-| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1220 t/s at 6.4k, 820 t/s at 100k, 740 t/s at 136k | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s) |
+| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1220 t/s at 6.4k, 820 t/s at 100k, 740 t/s at 136k | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the vision tower on the CPU (1 megapixel: ~7 s; 30-s 1080p video: ~40 s), which adds ~150 MiB to the VRAM peak and no other VRAM |
 
 Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
 with [`../vllm/vllm.patch`](../vllm/vllm.patch), GPTQ int4, MTP 2, Triton attention), measured on the same day with the
@@ -47,13 +48,18 @@ docker compose run --rm prepare   # once: ~22 GB of downloads and a few minutes 
 docker compose up -d
 ```
 
+The image `ghcr.io/agenttix/agx-ai/vllm-hyperqwen` is HyperQwen's image with the vision tower on the CPU, built from
+the [`Dockerfile`](Dockerfile) of this directory by
+[`../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml`](../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml);
+locally: `docker build -t ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest .`
+
 `prepare` runs HyperQwen's `docker/prepare.sh` into `~/.cache/vllm-models/hyperqwen`: it downloads
 [`dbirks/Qwen3.8-27B-W4A16-AutoRound`](https://huggingface.co/dbirks/Qwen3.8-27B-W4A16-AutoRound) (19.5 GB),
 re-quantizes its BF16 lm_head and embedding (2.5 GB each) and its MTP module to int8, and downloads the "fast" variant
 (the lm_head and the MTP module in int4 GPTQ, 1 GB, used by default) and the
 [DFlash2 drafter](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) re-quantized to W4A16 (1.2 GB). The first start
-compiles kernels for ~5 min; later starts take 2-4.5 min (the caches are in the `cache` volume). The image is that of
-HyperQwen's commit `ce9615c` (2026-10-22), pinned by digest. The project was called `qwen38-27b-rtx3090` before;
+compiles kernels for ~5 min; later starts take 2-6 min (the caches are in the `cache` volume). The base image is that
+of HyperQwen's commit `ce9615c` (2026-10-22), pinned by digest. The project was called `qwen38-27b-rtx3090` before;
 its last image under that name (`ghcr.io/syv-ai/qwen38-27b-rtx3090`) is from 2026-09-17.
 
 The measurements were made on 2026-10-26 with the tools in [`../benchmark`](../benchmark/README.md): `chat`, `depth`
@@ -198,6 +204,52 @@ the use case. Our Qwen3.8-27B configuration with each step (same tests as above)
 
 The chat and the 6.4k depth test vary by up to ±10 % between runs. The pth-flash-attn backend worked with this
 repository's CPU KV offloading in both images.
+
+## Images and videos
+
+Qwen3.8-27B has a vision tower (the Qwen3-VL architecture: 27 layers, 0.84 GiB in BF16). HyperQwen's launcher serves
+the model text-only by default (`--language-model-only`). Its `VISION=1` keeps the tower's weights in pinned RAM, but
+copies them to the GPU and runs it there, allows one image per request and no videos; its activations would need
+~1 GiB more VRAM for a large image (as measured with Qwen3.8-Flash-Next in
+[`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md#measurements-2026-10-13-agx-z2e)), i.e. ~25k tokens
+less context. This image runs the tower on the CPU instead, like [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next)
+and [`../vllm`](../vllm/README.md), so the KV cache and the context stay the same (146461 tokens, 139264 of context):
+
+- [`cpu_vision.py`](cpu_vision.py): transformers' `Qwen3VLVisionModel` in FP32 on the CPU (the same module as in
+  [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next); Qwen3.8 has no deepstack features), installed as
+  `vllm/model_executor/models/qwen3_vl_cpu_vision.py`, with `QWEN38_VISION_DEVICE=cpu` and 32 threads
+  (`QWEN38_VISION_THREADS`).
+- [`hyperqwen-vision.patch`](hyperqwen-vision.patch): Qwen3.5/3.8 (`qwen3_5.py`) creates it instead of vLLM's vision
+  transformer and sets `mm_encoder_inputs_on_cpu`, and the encoder runner of vLLM's V2 model runner (which DFlash2
+  uses) leaves the pixel values of such a model on the CPU, so that only the embeddings are copied to the GPU. The same
+  changes as in [`../vllm/vllm.patch`](../vllm/vllm.patch) for Qwen3.8-Flash-Next. HyperQwen's `verify.sh`, which the
+  container runs at every start, still finds all of its patches.
+- [`docker-compose.yml`](docker-compose.yml) sets `VISION=1` (no `--language-model-only`), `VISION_OFFLOAD=0` (the
+  launcher's weight offloading is for vLLM's tower) and, in `EXTRA_ARGS`, the limits of
+  [`../vllm-rtx3070`](../vllm-rtx3070/README.md): up to 4 images per request, scaled down to 1 megapixel each, and
+  1 video, sampled at 2 frames per second (vLLM's `qwen3_vl` video loader decodes only those), at most 64 frames and
+  12.6 megapixels over all frames (~6000 tokens), and no encoder profiling (it would take minutes on the CPU).
+
+Measured on 2026-10-28 with generated test media (greedy, without thinking; all answers correct):
+
+| Input | Prompt tokens | Time of the request | Answer |
+|---|---|---|---|
+| 1280x960 image with text and three shapes | 1002 | 7.5 s (again: 1.8 s, from the caches) | the text, each shape's color and position |
+| 20-s 640x360 video, 30 fps: a red square moving from left to right, "ALPHA" in the first half and "OMEGA" in the second | 4602 | 30.5 s | the movement and the change of the text |
+| The same in 1080p, 30 s | 5992 | 35-40 s | the same |
+| 120k tokens of code and the 1080p video | 125993 | 187 s | the same |
+
+The time is mostly the vision tower on the CPU, as in [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next). The
+container takes ~4 GiB more RAM (42 GiB). The tower takes no VRAM, but processing images and videos raises the VRAM
+peak of the server processes from ~21480 to 21634 MiB (after an image 21260 MiB, after a 4602-token video 21632 MiB, no
+more with larger videos or 120k tokens of context), ~130 MiB over the 21 GiB of the other configurations of this GPU.
+Next to the desktop's 1.3 GiB, 1.6 GiB stayed free; with ~2.2 GiB of desktop, as during some of the tests, ~0.7 GiB.
+To stay within 21 GiB, the KV cache could be ~150 MB smaller (~4k tokens less context), or the video limit ~3500
+tokens (`videos_kwargs` `max_pixels` ~7 M).
+
+The text speed is the same as without vision within the run-to-run variation (back to back on 2026-10-28, a warm
+GPU: chat 119.5 vs 119.2 t/s, edits 269 vs 273 t/s, 105.6 / 84.4 vs 110.3 / 90.5 t/s at 6.4k / 32k tokens of context
+with a lower draft acceptance in that run, prompt processing within 2 %).
 
 ## Other notes
 

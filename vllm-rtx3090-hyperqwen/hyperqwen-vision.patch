@@ -1,0 +1,54 @@
+diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+--- a/model_executor/models/qwen3_5.py
++++ b/model_executor/models/qwen3_5.py
+@@ -135,6 +135,9 @@
+     torch.cuda.empty_cache()
+ 
+ 
++# agx-ai: the vision tower on the CPU (QWEN38_VISION_DEVICE=cpu), see qwen3_vl_cpu_vision.py
++from .qwen3_vl_cpu_vision import CpuVisionTower, cpu_vision_enabled
++
+ class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
+     def get_hf_config(self):
+         return self.ctx.get_hf_config(Qwen3_5Config)
+@@ -548,12 +551,17 @@
+         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+ 
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.visual = Qwen3_VisionTransformer(
+-                config.vision_config,
+-                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-                quant_config=quant_config,
+-                prefix=maybe_prefix(prefix, "visual"),
+-            )
++            if cpu_vision_enabled():
++                # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (encoder_runner.py).
++                self.visual = CpuVisionTower(config.vision_config)
++                self.mm_encoder_inputs_on_cpu = True
++            else:
++                self.visual = Qwen3_VisionTransformer(
++                    config.vision_config,
++                    norm_eps=getattr(config, "rms_norm_eps", 1e-6),
++                    quant_config=quant_config,
++                    prefix=maybe_prefix(prefix, "visual"),
++                )
+ 
+         with self._mark_language_model(vllm_config):
+             self.language_model = Qwen3_5ForCausalLM(
+diff -ruN a/v1/worker/gpu/mm/encoder_runner.py b/v1/worker/gpu/mm/encoder_runner.py
+--- a/v1/worker/gpu/mm/encoder_runner.py
++++ b/v1/worker/gpu/mm/encoder_runner.py
+@@ -151,8 +151,12 @@
+         self, mm_kwargs: list[tuple[str, MultiModalKwargsItem]]
+     ) -> list[torch.Tensor]:
+         encoder_outputs: list[torch.Tensor] = []
++        # agx-ai: a model whose encoder runs on the CPU gets its inputs there, so that they never take VRAM.
++        on_cpu = getattr(self.model, "mm_encoder_inputs_on_cpu", False)
+         for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
+-            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
++            mm_kwargs,
++            device="cpu" if on_cpu else self.device,
++            pin_memory=PIN_MEMORY and not on_cpu,
+         ):
+             cg_manager = self.cudagraph_manager
+             cudagraph_output = (
