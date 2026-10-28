@@ -42,5 +42,6 @@ updates:
       - "/vllm"
       - "/vllm-radeon-vii"
       - "/vllm-rtx3090-flash-next"
+      - "/vllm-rtx3090-hyperqwen"
     schedule:
       interval: "weekly"
