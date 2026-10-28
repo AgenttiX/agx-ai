@@ -1,6 +1,6 @@
 name: agx-ai
 services:
-  gpt-researcher:
+  gptr:
     image: gptresearcher/gpt-researcher
     container_name: gpt-researcher
     env_file:
@@ -33,11 +33,40 @@ services:
       - ./gpt-researcher/logs:/usr/src/app/logs
       - ./gpt-researcher/my-docs:/usr/src/app/my-docs
       - ./gpt-researcher/outputs:/usr/src/app/outputs
+  gptr-mcp:
+    build: ./gptr-mcp
+    container_name: gptr-mcp
+    env_file:
+      - ./gpt-researcher/gpt-researcher.env
+    environment:
+      # The same as for gptr above.
+      # Other LLM providers, retrievers and scrapers need their packages to be added to ./gptr-mcp/Dockerfile.
+      - IMAGE_GENERATION_ENABLED=true
+      - IMAGE_GENERATION_MODEL=models/gemini-3.1-flash-image
+      - OPENAI_BASE_URL=http://litellm:4000/v1
+      - RETRIEVER=tavily,arxiv
+      - SCRAPER=tavily_extract
+      - FAST_LLM=openai:google/gemma-4-e4b
+      - SMART_LLM=openai:google/gemma-4-26b-a4b-qat
+      - STRATEGIC_LLM=openai:google/gemma-4-26b-a4b-qat
+      - EMBEDDING=openai:text-embedding-nomic-embed-text-v2-moe
+    volumes:
+      - ./gptr-mcp/logs:/app/logs
+      - ./gpt-researcher/outputs:/app/outputs
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
   gptr-nextjs:
     image: gptresearcher/gptr-nextjs
     container_name: gptr-nextjs
     depends_on:
-      - gpt-researcher
+      - gptr
     environment:
       - NEXT_PUBLIC_GPTR_API_URL=http://gpt-researcher:8000
     ports:
