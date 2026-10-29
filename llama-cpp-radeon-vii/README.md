@@ -10,6 +10,11 @@ q8_0 K and V caches:
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 88064 | ~114 t/s, 54-78 t/s at 36-85k tokens of context | ~1180 t/s at 16k, ~740 t/s at 85k |
 | [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` | 47104 | ~30 t/s, ~24 t/s at 30-43k tokens of context | ~240 t/s at 16k, ~210 t/s at 45k |
 
+Both presets take images and videos, with the vision encoder (mmproj) on the CPU, so that it needs no VRAM and no
+context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90 s; see
+[images and videos](#images-and-videos-2026-10-29). They are faster and fit more context than with
+[`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#images-and-videos-2026-10-29).
+
 The Gemma context is larger than the 77824 of [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070), so that the same agentic
 workloads can be split between the two. Qwen3.8-27B is a dense model, so it is 4 times slower than the
 mixture-of-experts Gemma; see [Qwen3.8-27B](#qwen38-27b-2026-10-09). This file has the benchmarks behind the
@@ -420,6 +425,30 @@ The production configuration on a test server, measured with the full command be
 
 For comparison, the same model in `UD-Q4_K_M` on the RTX 3090 of [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090)
 generates ~49 t/s in the chat test and processes prompts at ~1100 t/s.
+
+## Images and videos (2026-10-29)
+
+Both presets load the vision encoder of their GGUF repository (`mmproj-BF16.gguf`, downloaded with the model by `hf`) and keep it on
+the CPU (`no-mmproj-offload`). llama.cpp caps Gemma's images at 512 tokens (ubatch-size 512: the image tokens need
+non-causal attention in one batch) instead of 1120. Tested with the generated media of
+[`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#images-and-videos-2026-10-29) (greedy, without thinking, all answers
+correct), as served, VRAM peaks from the amdgpu sysfs counter:
+
+| Preset | Input | Prompt tokens | Time of the request | VRAM peak |
+|---|---|---|---|---|
+| Gemma | 1280x960 image with text and three shapes | 525 | 8.3 s (again: 1.0 s, from the prompt cache) | 16227 MiB |
+| Gemma | 16 1280x960 images, each with its number | 7968 | 98 s | 16227 MiB |
+| Gemma | 20-s 640x360 video (a red square moving to the right, "ALPHA" and then "OMEGA") | 8537 | 91 s | 16227 MiB |
+| Gemma | 85k tokens of code and the image | 85517 | 123 s | 16227 MiB |
+| Qwen | the image | 1229 | 13.7 s | 16149 MiB |
+| Qwen | 16 images | 19262 | 166 s | 16149 MiB |
+| Qwen | the video | 9172 | 78 s | 16149 MiB |
+| Qwen | 44.5k tokens of code and the image | 45722 | 223 s | 16194 MiB |
+
+The peaks are below those of the text-only stress tests (16262 and 16298 MiB), so the contexts stay as they are.
+Videos are sent as `video_url` parts like with vLLM. Compared with vLLM on the same GPU, whose vision towers also run
+on the CPU: Gemma takes about as long per image (vLLM: 8 s for 297 tokens) and 7 times as long for the video, but vLLM
+takes at most 6 frames of a video; Qwen takes half the time per image (vLLM: 32 s) and fits 1.4 times the context.
 
 ## Commands
 

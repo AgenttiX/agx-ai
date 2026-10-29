@@ -116,7 +116,8 @@ of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
 - [`repack_gemma4_qat.py`](repack_gemma4_qat.py) builds Gemma 4 26B-A4B with all linear weights bit-exact from
   Google's QAT Q4_0 GGUF (int4, group size 32), and the other tensors from Google's unquantized QAT checkpoint
   (~2.5 GB of it, downloaded with HTTP range requests). The embedding and the lm_head are untied and quantized with
-  round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). The reasons are in
+  round-to-nearest (`--embed-bits` 4/8/16, `--lm-head-bits` 4/8). Checkpoints built before 2026-10-29 lack the
+  vision tower's linear weights; `--vision-only` adds them to an existing checkpoint. The reasons are in
   [`../vllm-radeon-vii/README.md`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09). Used by the Gemma 4 26B-A4B
   configurations of [`../vllm-radeon-vii`](../vllm-radeon-vii), [`../vllm-rtx-a4000`](../vllm-rtx-a4000),
   [`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-rtx3090`](../vllm-rtx3090).

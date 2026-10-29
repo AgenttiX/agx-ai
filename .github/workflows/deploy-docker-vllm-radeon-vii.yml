@@ -5,6 +5,9 @@ on:
     paths:
       - "vllm-radeon-vii/Dockerfile"
       - "vllm-radeon-vii/vllm-gfx906.patch"
+      - "vllm-radeon-vii/cpu-vision.patch"
+      - "vllm-radeon-vii/cpu_onednn.py"
+      - "vllm-radeon-vii/cpu_vision_*.py"
       - ".github/workflows/deploy-docker-vllm-radeon-vii.yml"
   workflow_dispatch:
 jobs:

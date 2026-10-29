@@ -10,7 +10,8 @@ with its exllama and gfx906 W4A16 MoE kernels. The checkpoint is built from Goog
   Only these ~2.5 GB of the 52 GB repository are downloaded, with HTTP range requests.
 The embedding and the lm_head are untied, because vLLM cannot use a quantized embedding as the lm_head. Both are
 quantized with round-to-nearest (--embed-bits, --lm-head-bits; group size 32 for int4 and 128 for int8), as the
-fp16 versions (1.4 GiB each) do not fit. The vision tower stays fp16 (vLLM skips it with --language-model-only).
+fp16 versions (1.4 GiB each) do not fit. The vision tower stays fp16. Checkpoints built before 2026-10-29 lack its
+linear weights; --vision-only adds them to such a checkpoint as a separate file, which vLLM loads with the others.
 
 The ready-made int4 checkpoints of this model on Hugging Face (e.g. cyankiwi/gemma-4-26B-A4B-it-qat-AWQ-INT4) are not
 on Google's grid: their quantizer chose other scales, so only 60-70 % of the int4 values are the same (see
@@ -52,8 +53,15 @@ LINEAR = {
     "ffn_up": "mlp.up_proj",
     "ffn_down": "mlp.down_proj",
 }
-# HF tensors that come from the GGUF instead
-FROM_GGUF: re.Pattern[str] = re.compile(r"\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj|experts)\.")
+# HF tensors that come from the GGUF instead (only those of the language model: the vision tower has the same names)
+FROM_GGUF: re.Pattern[str] = re.compile(
+    rf"^{re.escape(PREFIX)}layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj|experts)\."
+)
+# The vision tower's linear weights, which checkpoints built before 2026-10-29 lack: the pattern above matched them too.
+VISION_LINEAR: re.Pattern[str] = re.compile(
+    r"^model\.vision_tower\..*\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)\."
+)
+VISION_FILE = "vision.safetensors"
 
 
 def read_gguf(path: Path) -> dict[str, tuple[list[int], int, np.ndarray]]:
@@ -201,7 +209,15 @@ def main() -> None:
     parser.add_argument("--out", required=True, type=Path, help="output model directory")
     parser.add_argument("--lm-head-bits", type=int, default=4, choices=[4, 8])
     parser.add_argument("--embed-bits", type=int, default=4, choices=[4, 8, 16], help="16 = keep fp16")
+    parser.add_argument("--vision-only", action="store_true",
+                        help=f"only add the vision tower's linear weights to an existing checkpoint ({VISION_FILE})")
     args = parser.parse_args()
+
+    if args.vision_only:
+        tensors = fetch_tensors(HF_REPO, lambda n: bool(VISION_LINEAR.search(n)))
+        save_file(tensors, args.out / VISION_FILE, metadata={"format": "pt"})
+        print(f"Wrote {args.out / VISION_FILE}: {len(tensors)} tensors")
+        return
 
     gguf = read_gguf(Path(hf_hub_download(GGUF_REPO, GGUF_FILE)))
     tensors: dict[str, torch.Tensor] = {}

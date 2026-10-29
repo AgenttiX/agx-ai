@@ -6,8 +6,16 @@ revision: mtp-int8
 served-model-name: Qwen/Qwen3.8-27B
 # gfx906 has no native bf16.
 dtype: float16
-# Do not load the vision tower (0.9 GiB), which would leave little room for the KV cache.
-language-model-only: true
+# Images and videos with the vision tower on the CPU (GEMMA4_VISION_DEVICE and QWEN38_VISION_DEVICE in
+# docker-compose.yml, cpu_vision_*.py), which takes no VRAM. Up to 64 images per request, as agent sessions collect
+# screenshots, and 1 video. No encoder profiling, which would take minutes on the CPU.
+limit-mm-per-prompt: {"image": 64, "video": 1}
+skip-mm-profiling: true
+# Images scaled down to 1 megapixel (~1000 tokens) as in ../vllm-rtx3090-hyperqwen, videos sampled at 2 frames per
+# second, at most 64 frames and 4.2 megapixels over all frames (~2000 tokens): with the 12.6 megapixels of
+# HyperQwen's configuration, the VRAM peak was 55 MiB over that of the longest text prompt (see README.md).
+mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 4194304}}
+media-io-kwargs: {"video": {"max_frames": 64}}
 # The rotary embedding cache is allocated for max_position_embeddings (262144 tokens); limiting it to the context frees
 # 0.11 GiB for the KV cache, ~3k tokens.
 hf-overrides: {"text_config": {"max_position_embeddings": 33792}}

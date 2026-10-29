@@ -5,8 +5,14 @@ model: /models/gemma-4-26B-A4B-it-qat-q4_0-ct
 served-model-name: google/gemma-4-26b-a4b-qat
 # gfx906 has no native bf16.
 dtype: float16
-# Do not load the vision tower (1.1 GiB in fp16), which would leave no room for the KV cache.
-language-model-only: true
+# Images and videos with the vision tower on the CPU (GEMMA4_VISION_DEVICE and QWEN38_VISION_DEVICE in
+# docker-compose.yml, cpu_vision_*.py), which takes no VRAM. Up to 64 images per request, as agent sessions collect
+# screenshots, and 1 video of at most 6 frames: vLLM needs each image and video of Gemma 4 in one prefill chunk
+# (max-num-batched-tokens), and a frame takes 78 tokens (see README.md). No encoder profiling, which would take minutes
+# on the CPU.
+limit-mm-per-prompt: {"image": 64, "video": {"count": 1, "num_frames": 6}}
+media-io-kwargs: {"video": {"num_frames": 6}}
+skip-mm-profiling: true
 # The rotary embedding caches are allocated for max_position_embeddings (262144 tokens: 0.38 GiB for the head sizes
 # 256 and 512); limiting it to the context frees 0.33 GiB for the KV cache, ~12k tokens.
 hf-overrides: {"text_config": {"max_position_embeddings": 47104}}

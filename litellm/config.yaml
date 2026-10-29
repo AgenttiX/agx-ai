@@ -32,6 +32,8 @@ model_list:
       <<: *llama-cpp
       # ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini
       max_input_tokens: 88064
+      # Tested with llama.cpp and with ../vllm-radeon-vii on the same port.
+      supports_video_input: true
 
   - model_name: agx-ai/google/gemma-4-26b-a4b-qat
     litellm_params:

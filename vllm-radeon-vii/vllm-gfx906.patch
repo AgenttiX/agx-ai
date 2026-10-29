@@ -125,6 +125,22 @@ diff -ru a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_
          )
  
          # CAT-1 (ported from syv-ai/qwen38-27b-rtx3090, patches/
+diff -ru a/transformers_utils/processor.py b/transformers_utils/processor.py
+--- a/transformers_utils/processor.py	2026-10-09 00:59:06.000000000 +0300
++++ b/transformers_utils/processor.py	2026-10-29 01:50:59.537880829 +0200
+@@ -185,7 +185,11 @@
+     # given type when torchvision is unavailable; callers then use opencv.
+     model_config = get_hf_file_to_dict("config.json", processor_name, revision=revision)
+     if model_config and "model_type" in model_config:
+-        return VIDEO_PROCESSOR_MAPPING_NAMES.get(model_config["model_type"])
++        name = VIDEO_PROCESSOR_MAPPING_NAMES.get(model_config["model_type"])
++        # agx-ai: transformers 5.19 maps each model type to {backend: class name}.
++        if isinstance(name, dict):
++            name = next(iter(name.values()), None)
++        return name
+     return None
+ 
+ 
 diff -ru a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
 --- a/v1/attention/backends/triton_attn.py	2026-10-10 00:27:12.593049544 +0300
 +++ b/v1/attention/backends/triton_attn.py	2026-10-10 00:27:12.732751185 +0300

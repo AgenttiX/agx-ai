@@ -1,0 +1,164 @@
+diff -ruN a/model_executor/models/gemma4_mm.py b/model_executor/models/gemma4_mm.py
+--- a/model_executor/models/gemma4_mm.py	2026-10-09 00:59:06.000000000 +0300
++++ b/model_executor/models/gemma4_mm.py	2026-10-29 00:35:38.304344574 +0200
+@@ -78,6 +78,8 @@
+ from vllm.utils.tensor_schema import TensorSchema, TensorShape
+ from vllm.utils.torch_utils import async_tensor_h2d
+ 
++# agx-ai: the vision tower on the CPU (GEMMA4_VISION_DEVICE=cpu), see gemma4_cpu_vision.py
++from . import gemma4_cpu_vision
+ from .interfaces import (
+     MultiModalEmbeddings,
+     SupportsEagle3,
+@@ -1110,18 +1112,27 @@
+ 
+         # ---- Vision tower (shared by image and video) ----
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.vision_tower = AutoModel.from_config(config=config.vision_config)
++            # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (gpu_model_runner.py).
++            self.vision_on_cpu = gemma4_cpu_vision.cpu_vision_enabled()
++            if self.vision_on_cpu:
++                self.vision_tower = gemma4_cpu_vision.build_cpu_vision_tower(
++                    config.vision_config
++                )
++                self.mm_encoder_inputs_on_cpu = True
++            else:
++                self.vision_tower = AutoModel.from_config(config=config.vision_config)
+             self.embed_vision = Gemma4MultimodalEmbedder(
+                 config.vision_config,
+                 config.text_config,
+                 quant_config=tower_quant,
+                 prefix=maybe_prefix(prefix, "embed_vision"),
+             )
+-            recursive_replace_linear(
+-                self.vision_tower,
+-                tower_quant,
+-                prefix=maybe_prefix(prefix, "vision_tower"),
+-            )
++            if not self.vision_on_cpu:
++                recursive_replace_linear(
++                    self.vision_tower,
++                    tower_quant,
++                    prefix=maybe_prefix(prefix, "vision_tower"),
++                )
+ 
+         # ---- Audio tower (variants with audio_config) ----
+         self.embed_audio: Gemma4MultimodalEmbedder | None
+@@ -1311,6 +1322,15 @@
+     # Image processing
+     # ------------------------------------------------------------------ #
+ 
++    def _project_cpu_vision_states(
++        self, states: list[torch.Tensor]
++    ) -> list[torch.Tensor]:
++        """agx-ai: project the soft tokens of the CPU vision tower on the GPU."""
++        weight = self.embed_vision.embedding_projection.weight
++        flat = torch.cat(states, dim=0).to(device=weight.device, dtype=self.model_dtype)
++        proj = self.embed_vision(inputs_embeds=flat.unsqueeze(0)).squeeze(0)
++        return list(proj.split([s.shape[0] for s in states], dim=0))
++
+     def _process_image_input(
+         self,
+         image_input: Gemma4ImageInputs,
+@@ -1325,6 +1345,13 @@
+         pixel_values = image_input["pixel_values"]
+         pixel_position_ids = image_input["pixel_position_ids"]
+ 
++        if self.vision_on_cpu:
++            return self._project_cpu_vision_states(
++                gemma4_cpu_vision.encode(
++                    self.vision_tower, pixel_values, pixel_position_ids
++                )
++            )
++
+         vt = self.vision_tower
+         vision_cfg = self.config.vision_config
+         pooling_k2 = vision_cfg.pooling_kernel_size**2
+@@ -1506,6 +1533,17 @@
+         else:
+             fc_list = list(frame_counts)
+ 
++        if self.vision_on_cpu:
++            frames = self._project_cpu_vision_states(
++                gemma4_cpu_vision.encode(vt, pixel_values, pixel_position_ids)
++            )
++            per_video: list[torch.Tensor] = []
++            first = 0
++            for count in fc_list:
++                per_video.append(torch.cat(frames[first : first + count], dim=0))
++                first += count
++            return per_video
++
+         total_frames = pixel_values.shape[0]
+         free, total = torch.accelerator.get_memory_info()
+         max_batch_size = min(
+diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+--- a/model_executor/models/qwen3_5.py	2026-10-09 00:59:06.000000000 +0300
++++ b/model_executor/models/qwen3_5.py	2026-10-29 00:35:38.304776293 +0200
+@@ -103,6 +103,10 @@
+ logger = init_logger(__name__)
+ 
+ 
++# agx-ai: the vision tower on the CPU (QWEN38_VISION_DEVICE=cpu), see qwen3_vl_cpu_vision.py
++from .qwen3_vl_cpu_vision import CpuVisionTower, cpu_vision_enabled
++
++
+ class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
+     def get_hf_config(self):
+         return self.ctx.get_hf_config(Qwen3_5Config)
+@@ -513,12 +517,19 @@
+         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+ 
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.visual = Qwen3_VisionTransformer(
+-                config.vision_config,
+-                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-                quant_config=quant_config,
+-                prefix=maybe_prefix(prefix, "visual"),
+-            )
++            if cpu_vision_enabled():
++                # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (gpu_model_runner.py).
++                self.visual = CpuVisionTower(
++                    config.vision_config, out_dtype=vllm_config.model_config.dtype
++                )
++                self.mm_encoder_inputs_on_cpu = True
++            else:
++                self.visual = Qwen3_VisionTransformer(
++                    config.vision_config,
++                    norm_eps=getattr(config, "rms_norm_eps", 1e-6),
++                    quant_config=quant_config,
++                    prefix=maybe_prefix(prefix, "visual"),
++                )
+ 
+         with self._mark_language_model(vllm_config):
+             self.language_model = Qwen3_5ForCausalLM(
+diff -ruN a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
+--- a/v1/worker/gpu_model_runner.py	2026-10-09 00:59:06.000000000 +0300
++++ b/v1/worker/gpu_model_runner.py	2026-10-29 00:35:38.307550849 +0200
+@@ -3110,10 +3110,14 @@
+                 )
+ 
+         encoder_outputs: list[torch.Tensor] = []
++        # agx-ai: a model whose encoder runs on the CPU gets its inputs there, so that they never take VRAM.
++        on_cpu = getattr(model, "mm_encoder_inputs_on_cpu", False)
++        mm_device = "cpu" if on_cpu else self.device
++        mm_pin_memory = PIN_MEMORY and not on_cpu
+         # Track the current index in mm_kwargs/mm_lora_refs to map groups to request IDs
+         current_item_idx = 0
+         for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
+-            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
++            mm_kwargs, device=mm_device, pin_memory=mm_pin_memory
+         ):
+             batch_outputs: MultiModalEmbeddings
+ 
+@@ -3146,8 +3150,8 @@
+                         _, _, micro_batch_mm_inputs = next(
+                             group_and_batch_mm_kwargs(
+                                 [video_mm_kwargs_item],
+-                                device=self.device,
+-                                pin_memory=PIN_MEMORY,
++                                device=mm_device,
++                                pin_memory=mm_pin_memory,
+                             )
+                         )
+ 

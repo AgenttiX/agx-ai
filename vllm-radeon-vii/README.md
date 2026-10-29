@@ -6,13 +6,15 @@ GPU at a time. The image is [`aiinfos/vllm-gfx906-mobydick`](https://github.com/
 (vLLM v0.30.0 with ROCm 7.14 and custom gfx906 kernels) with a few fixes ([`Dockerfile`](Dockerfile),
 [`vllm-gfx906.patch`](vllm-gfx906.patch)), built by
 [`../.github/workflows/deploy-docker-vllm-radeon-vii.yml`](../.github/workflows/deploy-docker-vllm-radeon-vii.yml).
-The model is selected in [`docker-compose.yml`](docker-compose.yml). There are two configurations, both entirely on
-the GPU, text only, with an int8 KV cache, prefix caching and 8 GiB of CPU KV offloading (2026-10-14):
+The model is selected in [`docker-compose.yml`](docker-compose.yml). There are two configurations, both with the
+language model entirely on the GPU, an int8 KV cache, prefix caching and 8 GiB of CPU KV offloading (2026-10-14), and
+images and videos with the vision tower on the CPU, which takes no VRAM and no context
+([images and videos](#images-and-videos-2026-10-29)):
 
 | Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
-| [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT, int4 bit-exact with Google's Q4_0 (built locally, see below) | 47104 | 16280 MiB of 16368 | 11.2 GiB (8 GiB of it the KV offloading) | 110 t/s, chat 106 t/s; 69/58/45 t/s at 6.4k/16k/32k tokens of context | 804/532/342 t/s at 6.4k/16k/32k, 263 t/s for 45.6k | [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) is better for this model |
-| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) | Qwen3.8-27B GPTQ int4 with int4 embedding and lm_head | 33792 | 16285 MiB of 16368 | 11.0 GiB (8 GiB of it the KV offloading) | 44 t/s, chat 43 t/s; 37/30/25 t/s at 6.4k/16k/28k | 240/179/136 t/s at 6.4k/16k/28k, 125 t/s for 32.3k | faster than llama.cpp up to ~28k tokens of context, which fits more context |
+| [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT, int4 bit-exact with Google's Q4_0 (built locally, see below) | 47104 | 16280 MiB of 16368 | 11.2 GiB (8 GiB of it the KV offloading) | 110 t/s, chat 106 t/s; 69/58/45 t/s at 6.4k/16k/32k tokens of context | 804/532/342 t/s at 6.4k/16k/32k, 263 t/s for 45.6k | [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) is better for this model, also for images and videos; an image ~9 s, a video 6 frames |
+| [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) | Qwen3.8-27B GPTQ int4 with int4 embedding and lm_head | 33792 | 16285 MiB of 16368 | 11.0 GiB (8 GiB of it the KV offloading) | 44 t/s, chat 43 t/s; 37/30/25 t/s at 6.4k/16k/28k | 240/179/136 t/s at 6.4k/16k/28k, 125 t/s for 32.3k | faster than llama.cpp up to ~28k tokens of context, which fits more context; an image ~30 s (llama.cpp: ~14 s), a video ~2000 tokens |
 
 **Compared with the llama.cpp presets on this GPU:**
 
@@ -66,6 +68,10 @@ are at the end.
 docker run --rm -v "$PWD/../vllm":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
     -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm-gfx906:latest \
     /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct
+# A checkpoint built before 2026-10-29 lacks the vision tower's linear weights: add them (1.1 GB, vision.safetensors)
+docker run --rm -v "$PWD/../vllm":/src:ro -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub \
+    -v ~/.cache/vllm-models:/out --entrypoint python3 ghcr.io/agenttix/agx-ai/vllm-gfx906:latest \
+    /src/repack_gemma4_qat.py --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct --vision-only
 # Qwen: download the checkpoint (14.8 GB) into the Hugging Face cache
 docker run --rm -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub --entrypoint hf \
     ghcr.io/agenttix/agx-ai/vllm-gfx906:latest download JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB --revision mtp-int8
@@ -197,6 +203,71 @@ handle the verification batches of speculative decoding.
   connectors register GPU memory that the VMM allocator could remap. The native CPU offloading only copies with device
   pointers, and the KV cache is allocated once and never freed, so the patch exempts it. The alternative,
   `enable-cumem-allocator`, makes the engine exit without an error message after loading the weights.
+- **Videos of checkpoints without a video preprocessor config** (Gemma 4) failed with `unhashable type: 'dict'`: vLLM
+  looks up the video processor of the model type in transformers, whose mapping is `{backend: class name}` since
+  transformers 5.19. The patch takes the class name.
+
+[`cpu-vision.patch`](cpu-vision.patch) and the modules it imports run the vision towers on the CPU, see
+[images and videos](#images-and-videos-2026-10-29).
+
+## Images and videos (2026-10-29)
+
+Both checkpoints have their vision towers (Gemma 1.1 GiB, Qwen 0.86 GiB in 16 bits), but on the GPU they and their
+activations would cost ~1-2 GiB of the 0.9-1.3 GiB of the KV cache, so the configurations were text only
+(`language-model-only`). Now the towers run on the CPU, in FP32 with 32 threads, as in
+[`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#images-and-videos):
+
+- [`cpu_vision_gemma4.py`](cpu_vision_gemma4.py) builds transformers' Gemma 4 vision model (the same module that
+  vLLM uses on the GPU) on the CPU and encodes images and video frames with it; vLLM's embedder projects its output
+  on the GPU (1152 values per token).
+- [`cpu_vision_qwen.py`](cpu_vision_qwen.py) is the Qwen3-VL tower of HyperQwen's configuration, with the output in
+  the model's FP16.
+- [`cpu-vision.patch`](cpu-vision.patch) creates them in `gemma4_mm.py` and `qwen3_5.py` (with
+  `GEMMA4_VISION_DEVICE=cpu` and `QWEN38_VISION_DEVICE=cpu`, set in [`docker-compose.yml`](docker-compose.yml)), and
+  makes vLLM's V1 model runner leave the pixel values of such a model on the CPU.
+- [`cpu_onednn.py`](cpu_onednn.py): the PyTorch of the image has no MKL or other BLAS library, so its CPU matrix
+  multiplications fall back to a single-threaded loop (~7 GFLOP/s). A Gemma image took 925 s. The module computes the
+  linear layers with oneDNN, which the build has (~100 times as fast: 0.035 instead of 3.3 s for a 2520 x 1152 x 4304
+  product), and the attention one head at a time with oneDNN instead of SDPA (1.9 times as fast). A Gemma image then
+  took 12.5 s, with the same output (largest difference 0.002 of values up to 945).
+- The configurations allow up to 64 images per request (as agent sessions collect screenshots) and 1 video, and skip
+  vLLM's encoder profiling, which would take minutes on the CPU.
+
+**The Gemma checkpoint lacked the vision tower's linear weights.** The pattern of
+[`../vllm/repack_gemma4_qat.py`](../vllm/repack_gemma4_qat.py) for the linear weights that come from the GGUF
+(`.layers.N.self_attn.q_proj.` etc.) also matched those of the vision tower, which therefore were neither fetched
+nor written, and with `language-model-only` no one noticed. vLLM loaded the tower with uninitialized weights: Gemma
+answered that it saw no image. The script now matches only the language model, and `--vision-only` adds the 189
+missing tensors to an existing checkpoint as `vision.safetensors` (see [setup](#setup)). The other configurations
+with these checkpoints are text only.
+
+**Gemma's videos have at most 6 frames.** vLLM processes Gemma 4's images and videos with bidirectional attention,
+so each one has to fit in a single prefill chunk (`max-num-batched-tokens`, 512 here; larger chunks need more VRAM),
+and a frame takes 78 tokens. The limit is `"num_frames": 6` in `limit-mm-per-prompt` and in `media-io-kwargs` (468
+tokens). Images take 280 tokens. Qwen's images and videos are chunked like text: images are scaled down to
+1 megapixel (~1000 tokens), videos sampled at 2 frames per second, at most 64 frames and 4.2 megapixels over all
+frames (~2000 tokens). With 12.6 megapixels (~4600 tokens, the limit of HyperQwen's configuration), the VRAM peak
+rose to 16340 MiB, 55 MiB over that of the longest text prompt; with 4.2 megapixels it is 16295 MiB.
+
+Measured with generated test media (greedy, without thinking; all answers correct unless noted):
+
+| Model | Input | Prompt tokens | Time of the request | VRAM peak |
+|---|---|---|---|---|
+| Gemma | 1280x960 image with text and three shapes | 297 | 8.0 s (an image again: 0.1 s, from the caches) | 16230 MiB |
+| Gemma | 16 1280x960 images, each with its number | 4320 | 106 s | 16230 MiB |
+| Gemma | 46k tokens of code and the image | 46286 | 179 s | 16230 MiB |
+| Gemma | 20-s 640x360 video (a red square moving to the right, "ALPHA" and then "OMEGA") | 480 | 13 s | 16230 MiB |
+| Gemma | the same in 1080p, 30 s | 480 | 11 s | 16230 MiB |
+| Qwen | the image | 1001 | 31.8 s | 16258 MiB |
+| Qwen | 16 images | 15614 | 447 s | |
+| Qwen | the 640x360 video, 4.2 megapixels | 2022 | 24 s | 16295 MiB |
+| Qwen | the 1080p video, 4.2 megapixels | 2272 | 28.5 s | 16295 MiB |
+| Qwen | 26k tokens of code and the 1080p video, 12.6 megapixels | 31989 | 300 s | 16342 MiB |
+
+Gemma's answers about the videos had the text right, but with 6 frames the square's movement partly wrong. The
+peaks of the text-only stress tests are 16280 (Gemma) and 16285 MiB (Qwen), so neither context had to be reduced.
+Qwen's tower is ~4 times as slow per image as in HyperQwen's image (7.5 s for the same image), which has MKL;
+llama.cpp's encoder on the CPU takes ~14 s for it ([`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md)).
 
 ## Memory (2026-10-09, before the changes of 2026-10-14)
 
