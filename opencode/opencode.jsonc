@@ -6,6 +6,7 @@
   "permissions": [
     // Default
     { "action": "shell", "resource": "*", "effect": "ask" },
+    // { "action": "shell", "resource": "*", "effect": "allow" },
     //Allow
     { "action": "shell", "resource": "* --help *", "effect": "allow" },
     { "action": "shell", "resource": "* --version", "effect": "allow" },
@@ -27,14 +28,17 @@
     { "action": "shell", "resource": "chromium * --screenshot=* *", "effect": "allow" },
     { "action": "shell", "resource": "clinfo *", "effect": "allow" },
     { "action": "shell", "resource": "conda * --dry-run *", "effect": "allow" },
-    { "action": "shell", "resource": "conda list", "effect": "allow" },
+    { "action": "shell", "resource": "conda list *", "effect": "allow" },
     { "action": "shell", "resource": "convert *", "effect": "allow" },
     { "action": "shell", "resource": "curl *", "effect": "allow" },
-    { "action": "shell", "resource": "docker compose pull", "effect": "allow" },
+    { "action": "shell", "resource": "docker compose pull *", "effect": "allow" },
     { "action": "shell", "resource": "docker version *", "effect": "allow" },
     { "action": "shell", "resource": "docker pull *", "effect": "allow" },
     { "action": "shell", "resource": "dpkg -l *", "effect": "allow" },
+    { "action": "shell", "resource": "echo *", "effect": "allow" },
+    { "action": "shell", "resource": "head *", "effect": "allow" },
     { "action": "shell", "resource": "lsb_release *", "effect": "allow" },
+    { "action": "shell", "resource": "ls *", "effect": "allow" },
     { "action": "shell", "resource": "lspci *", "effect": "allow" },
     { "action": "shell", "resource": "montage *", "effect": "allow" },
     { "action": "shell", "resource": "mypy *", "effect": "allow" },
@@ -51,6 +55,8 @@
     { "action": "shell", "resource": "pyrefly *", "effect": "allow" },
     { "action": "shell", "resource": "pytest *", "effect": "allow" },
     { "action": "shell", "resource": "ruff *", "effect": "allow" },
+    { "action": "shell", "resource": "ss *", "effect": "allow" },
+    { "action": "shell", "resource": "tail *", "effect": "allow" },
     { "action": "shell", "resource": "uname *", "effect": "allow" },
     { "action": "shell", "resource": "vulkaninfo *", "effect": "allow" },
     { "action": "shell", "resource": "where *", "effect": "allow" },
@@ -95,10 +101,10 @@
     { "action": "websearch", "resource": "*", "effect": "allow" }
   ],
   "plugins": [
-    "opencode-plugin-litellm@latest",
+    "opencode-plugin-litellm@latest"
     // Reviews "ask" permissions similarly to the auto mode of Claude Code.
     // Configured in permission-reviewer.jsonc.
-    { "package": "opencode-permission-reviewer", "options": {} }
+    // { "package": "opencode-permission-reviewer", "options": {} }
   ],
   "providers": {
     "litellm": {
