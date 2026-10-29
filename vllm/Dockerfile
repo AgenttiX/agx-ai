@@ -10,7 +10,7 @@
 # It also includes the Gemma 4 checkpoint scripts (repack_gemma4_qat.py, quantize_gemma4_ct_embedding.py) as commands,
 # and on x86-64 the pth-flash-attn kernel (an attention backend plugin, --attention-backend CUSTOM) for int8 KV caches
 # on sm_80/86/89.
-FROM vllm/vllm-openai:v0.31.0
+FROM vllm/vllm-openai:v0.32.0
 
 COPY vllm.patch /tmp/vllm.patch
 RUN patch -p1 -d /usr/local/lib/python3.12/dist-packages/vllm < /tmp/vllm.patch \
