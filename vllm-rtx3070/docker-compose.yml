@@ -123,8 +123,10 @@ services:
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Images and videos with the vision tower on the CPU, 16 threads as for stock vLLM (the 24 threads of the
       # container include SMT siblings). The image's defaults limit images to 1 megapixel and videos to 64 frames
-      # with 12 megapixels over all frames.
+      # with 12 megapixels over all frames. Up to 64 images per request instead of 4, as agent sessions collect
+      # screenshots (the limit only checks the requests; see ../vllm-rtx3090-hyperqwen/README.md).
       QWEN38_VISION_THREADS: "16"
+      QWEN38_VISION_MAX_IMAGES: "64"
     ipc: host
     cap_add:
       - SYS_PTRACE

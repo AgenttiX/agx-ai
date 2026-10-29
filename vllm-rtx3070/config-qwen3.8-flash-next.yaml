@@ -48,8 +48,10 @@ tool-call-parser: qwen3_coder
 # ../vllm/vllm.patch): no VRAM for it and an unchanged text speed. The CPU needs ~3 ms per 16x16 patch with 16
 # threads, so the sizes are limited as on agx-z2e: images to 1 megapixel (~1000 tokens, ~15 s until the first token),
 # videos to 64 frames sampled at 2 per second (only these are decoded) and 12.6 M pixels over all frames (~6000 tokens,
-# 66-74 s for a 30-s 1080p clip). Encoder profiling with a dummy input of the maximum size would take minutes on the CPU.
-limit-mm-per-prompt: {"image": 4, "video": 1}
+# 66-74 s for a 30-s 1080p clip). Up to 64 images per request, as agent sessions collect screenshots (the limit only
+# checks the requests; see ../vllm-rtx3090-hyperqwen/README.md). Encoder profiling with a dummy input of the maximum
+# size would take minutes on the CPU.
+limit-mm-per-prompt: {"image": 64, "video": 1}
 mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 12582912}}
 media-io-kwargs: {"video": {"max_frames": 64}}
 skip-mm-profiling: true

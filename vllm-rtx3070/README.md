@@ -16,7 +16,7 @@ time. All use the API key of the llama.cpp server. [`docker-compose.yml`](docker
 | Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
 | `vllm`: [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2, int8 KV cache | 98304 | 7582 MiB | ~12 GiB pinned weights, 16 GiB CPU KV cache | chat 32 t/s; 30 / 27 t/s at 6.4k / 36.5k | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k | **llama.cpp is 1.7 times as fast** for this model on this GPU (see below) |
-| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 57344 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 t/s at 6.4k / 55k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k | images and videos (vision tower on the CPU); no CPU KV offloading; prefix cache blocks of 1600 tokens |
+| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 57344 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 t/s at 6.4k / 55k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k | up to 64 images and 1 video per request (vision tower on the CPU: ~15 s per image, 55-75 s per video); no CPU KV offloading; prefix cache blocks of 1600 tokens |
 | `vllm`: [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | The same model with stock vLLM (the GPU reads the experts over PCIe), FP8 KV cache | 57344 | 7342 MiB | ~107 GiB pinned weights, 8 GiB CPU KV cache | chat 15.4 t/s; 15.4 / 15.4 t/s at 6.4k / 32k | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k | images and videos; CPU KV offloading (an evicted conversation comes back from RAM); prefix cache blocks of 3136 tokens |
 
 **Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with the same
@@ -391,7 +391,24 @@ the end of the step):
 - **Context**: the same 57344 tokens as stock vLLM. The int8 KV cache needs ~16.5 KB per token (73910 tokens in 1.14 GiB), and its blocks
   (and thus the prefix cache's granularity) are 1600 tokens instead of 3136. Smaller prefill groups saved ~300 MiB of
   VRAM with no measurable effect on the speed.
-- **Images and videos** work as with stock vLLM: a 1280x960 image took 15.6 s until the first token (1033 tokens).
+- **Images and videos** work as with stock vLLM, with the same vision tower on the CPU and no VRAM for it (measured
+  on the production server on 2026-10-28 with the test media of [Qwen3.8-Flash-Next](#qwen38-flash-next); greedy,
+  without thinking; all answers correct):
+
+  | Input | Prompt tokens | Time until the first token |
+  |---|---|---|
+  | Image 1280x960, scaled to 1 megapixel | 1004 | 14.7 s |
+  | 16 images 1280x960 in one request, each with a number | 15615 | 229 s (again, from the prefix cache: 7.1 s) |
+  | Video, 20 s, 640x360, 30 fps | 4608 | 54.8 s |
+  | Video, 30 s, 1920x1080, 30 fps | 5998 | 73.4 s |
+
+  The container peaked at 71.1 GiB of RAM with the 1080p video (76 GiB limit) and the server processes at 7646 MiB
+  of VRAM with the 16 images, within the peak of the text tests. Up to 64 images per request are allowed
+  (`QWEN38_VISION_MAX_IMAGES`, as in [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md); the
+  launcher's default is 4), as agent sessions collect screenshots: the limit only checks the requests, and the VRAM
+  and RAM peaks depend on the size of the largest image or video, not on their number. Each image that is not in the
+  prefix cache takes ~14 s on the CPU and ~1000 tokens of context, so 64 images would take ~15 min and 64k tokens
+  (more than the context).
 - **RAM**: the container used 69.5 GiB (the 57.9 GiB arena with all cold experts, the vision tower, the pinned
   embedding), with the n-gram table read from the checkpoint through the host's ZFS cache. The memory limit is
   76 GiB, and 71 GiB of the 144 GiB stay available otherwise.
@@ -416,6 +433,40 @@ much as stock vLLM's BF16 KV cache did (0.0056). The int8 activations add a litt
 were not measurable. Both missed answers are two-step lookups (5/12 vs 7/12), which vary most between runs. The int8
 activations are kept for their speed (chat 24.6 instead of 19.6 t/s with 8 threads); `QWEN38_CPU_EXPERTS_INT16=1`
 instead would be practically exact.
+
+### Other optimizations (2026-10-28)
+
+Optimizations of the other configurations that had not been tried on this GPU, on test servers with the
+configuration of [`docker-compose.yml`](docker-compose.yml) otherwise (one run each; baseline the same day: chat
+24.4 t/s, 25.0 t/s at 6.4k tokens of context, 24.3 t/s in code edits, prompt processing 343 t/s at 6.4k, peak
+7658 MiB). The n-gram drafter and `--mamba-ssm-cache-dtype` were passed with a modified copy of the runtime's
+launcher (`qwen38-serve`), which has no option for them:
+
+| Variant | Chat | Gen. 6.4k | Edit (copy) | Draft acceptance (chat / 6.4k / edit) | CPU / GPU / tail per step |
+|---|---|---|---|---|---|
+| Baseline (current) | 24.4 | 25.0 | 24.3 | | 22 / 17 / 1.7 ms |
+| No async scheduling (`QWEN38_ASYNC_SCHEDULING=0`) | 22.8 | | 22.9 | | 20 / 17 / 5.6 ms |
+| n-gram drafting from the context (3 tokens, matches of 2-4 tokens), no async scheduling | 8.0 | 13.1 | **40.8** | 24 / 10 / 91 % | 58 / 21 / 9.4 ms |
+| The same with matches of 8-16 tokens | 6.2 | 11.8 | 37.4 | 74 / 23 / 99 % | 60 / 20 / 9.7 ms |
+| FP16 recurrent state (`mamba-ssm-cache-dtype: float16`) | 25.2 | 24.3 | 25.1 | | 22 / 17 / 1.7 ms |
+
+- **Lookup (n-gram) drafting** was rejected on agx-z2e because it would replace MTP, but this GPU has no VRAM for
+  MTP anyway. Edits got 1.7 times as fast (40.8 t/s), but everything else 2-4 times slower, so it is not used. The
+  runtime takes up to 4 tokens per decode step, but with drafting, every step costs ~90 ms instead of ~41 ms (the
+  CPU computes ~1140 instead of ~370 cold experts per step), even when nothing is drafted: steps without drafts were
+  even slower (chat 6.2 t/s with the stricter matches). vLLM's GPU n-gram drafter (`ngram_gpu`), which would keep
+  the async scheduling, needs torch.compile, which the runtime disables (`No compilation mode is set`). The CPU
+  drafter needs `QWEN38_ASYNC_SCHEDULING=0` (-6 % alone) and `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=0`, as drafting
+  changes the block size to 1664 tokens and the runtime only accepts multiples of 3200 by default. Making it pay off
+  would need the runtime's decode path to compute only the real tokens of a step and to stay in its CUDA graphs
+  without drafts.
+- **The FP16 recurrent state** (from HyperQwen, used by [`../vllm-rtx3090`](../vllm-rtx3090/README.md) and
+  [`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md)) changes nothing here: the block size stays 1600 tokens (set by
+  the attention page, which the state page must not exceed) and the KV cache 73910 tokens, as there is only one
+  sequence. The speed differences are within the run-to-run variation.
+- **Not applicable**: the int8 KV cache with pth-flash-attn, DFlash2 and its lookup drafting (Qwen3.8-27B only, see
+  [`../vllm-rtx3090`](../vllm-rtx3090/README.md)); CPU KV offloading (does not work with this runtime, see above);
+  more hot experts or MTP (no VRAM). The vision tower on the CPU of HyperQwen is the same module as here.
 
 ## Commands
 
