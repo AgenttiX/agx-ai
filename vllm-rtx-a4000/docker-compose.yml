@@ -69,7 +69,9 @@ services:
     # both GPUs: its patched vLLM 0.31.0, re-quantized checkpoint and DFlash2 drafter. Faster than vllm-llm in all
     # tests, e.g. PaperQA2 1.5 times as fast (README.md). Its launcher is configured with the environment below.
     # Once: docker compose run --rm hyperqwen-prepare
-    image: ghcr.io/syv-ai/hyperqwen@sha256:0cf71b42d3017f9af0f7a46ef5817eedc5a39b6cc9c789ccd8a54138d9292ea0
+    # The image is HyperQwen's image of its commit ce9615c with the vision tower on the CPU, from
+    # ../vllm-rtx3090-hyperqwen (built by ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml).
+    image: ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest
     container_name: vllm-llm-hyperqwen
     profiles: [hyperqwen]
     deploy:
@@ -83,7 +85,8 @@ services:
     # (ipc: host), as the launcher deletes the CPU KV offload files of /dev/shm that no process of its container
     # maps, which would include those of other vLLM containers.
     shm_size: 2gb
-    # ~6 GiB: the processes and the token embedding (EMBED_UVA, pinned).
+    # ~16 GiB: the processes, the token embedding (EMBED_UVA, pinned) and the vision tower (1.7 GiB in each worker),
+    # up to ~1.5 GiB more while a video is encoded.
     mem_limit: 24g
     env_file:
       - ../llama-cpp/llama-cpp.env
@@ -102,19 +105,40 @@ services:
       SPEC: dflash2
       CTX: long
       PTH_FA: "1"
-      # The KV cache per GPU: 5.6 GB, ~275k tokens, for the full context of the model next to the embedding
-      # server (config-embedding-tp2-qwen.yaml). Peak 15.8 GiB of the 16 GiB with a full-context prompt.
-      KV_MEM: "5600000000"
+      # The KV cache per GPU: 5.2 GB, 278161 tokens, for the full context of the model (vLLM needs ~1.06 times the
+      # context) next to the embedding server (config-embedding-tp2-qwen-4b.yaml). Peak 15807 of 16376 MiB with a
+      # full-context prompt, concurrent prompts, embeddings and videos.
+      KV_MEM: "5200000000"
       MAX_LEN: "262144"
       # The token embedding in pinned RAM instead of VRAM.
       EMBED_UVA: "1"
-      # No CPU KV offloading (KV_OFFLOAD_GB): the KV cache on the GPUs holds ~300k tokens, so an evicted conversation
+      # No CPU KV offloading (KV_OFFLOAD_GB): the KV cache on the GPUs holds ~280k tokens, so an evicted conversation
       # would be gone from a CPU cache of a few GiB too (see README.md).
       # vLLM checks at startup that this share of the GPU is free (the embedding server may have started first); the
       # KV cache has a fixed size (KV_MEM).
       GPU_UTIL: "0.80"
-      # The custom all-reduce uses peer-to-peer copies, see above. The same model name as vllm-llm.
-      EXTRA_ARGS: "--tensor-parallel-size 2 --disable-custom-all-reduce --served-model-name Qwen/Qwen3.8-27B"
+      # Image and video input with the vision tower on the CPU (FP32, no VRAM; ../vllm-rtx3090-hyperqwen/cpu_vision.py)
+      # instead of the launcher's VISION=1 default, which runs it on the GPU. With tensor parallelism, the two workers
+      # split the frames and the images between them and exchange the embeddings; 8 threads each (16 in total, as the
+      # machine is shared), or 16 for the one that computes alone (a single image). vLLM's Qwen3-VL video loader
+      # decodes only the sampled frames.
+      VISION: "1"
+      VISION_OFFLOAD: "0"
+      QWEN38_VISION_DEVICE: cpu
+      QWEN38_VISION_THREADS: "8"
+      VLLM_VIDEO_LOADER_BACKEND: qwen3_vl
+      # The custom all-reduce uses peer-to-peer copies, see above. The same model name as vllm-llm. The vision limits
+      # of ../vllm-rtx3090-hyperqwen: up to 64 images per request, scaled down to 1 megapixel each, and 1 video,
+      # sampled at 2 frames per second, at most 64 frames and 12.6 megapixels over all frames (~6000 tokens); no
+      # encoder profiling, which would take minutes on the CPU. No spaces in the values: the launcher splits
+      # EXTRA_ARGS at them.
+      EXTRA_ARGS: >-
+        --tensor-parallel-size 2 --disable-custom-all-reduce
+        --served-model-name Qwen/Qwen3.8-27B
+        --limit-mm-per-prompt {"image":64,"video":1}
+        --mm-processor-kwargs {"max_pixels":1048576,"videos_kwargs":{"max_pixels":12582912}}
+        --media-io-kwargs {"video":{"max_frames":64}}
+        --skip-mm-profiling
     # The API key is that of the llama.cpp server, so that clients work with both.
     entrypoint: ["/bin/sh", "-c", "VLLM_API_KEY=\"$$LLAMA_API_KEY\" exec bash docker/entrypoint.sh single"]
     ports:
@@ -134,7 +158,7 @@ services:
 
   hyperqwen-prepare:
     # Downloads and re-quantizes the model into ~/.cache/vllm-models/hyperqwen (~22 GB, a few minutes on the CPU).
-    image: ghcr.io/syv-ai/hyperqwen@sha256:0cf71b42d3017f9af0f7a46ef5817eedc5a39b6cc9c789ccd8a54138d9292ea0
+    image: ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest
     profiles: [hyperqwen-prepare]
     command: prepare
     cpus: 8

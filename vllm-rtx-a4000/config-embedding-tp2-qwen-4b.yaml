@@ -1,0 +1,28 @@
+# vllm serve --config for Qwen3-Embedding-4B on both GPUs next to Qwen3.8-27B with HyperQwen (configuration 3), with
+# its layers in RAM. In the retrieval test (README.md), the 4B model found the right chunk among the top 10 for 92 % of
+# the questions, the 0.6B model (config-embedding-tp2-qwen.yaml) for 89 %. On the GPUs, it would need ~2 GiB more per
+# GPU than the 0.6B model, i.e. ~100k tokens less context for the LLM. Tensor parallelism splits it evenly, as the
+# LLM gets the same KV cache on both GPUs.
+model: Qwen/Qwen3-Embedding-4B
+served-model-name: Qwen/Qwen3-Embedding-4B
+runner: pooling
+tensor-parallel-size: 2
+disable-custom-all-reduce: true
+# The longest PaperQA2 chunks (5000 characters of reference lists or tables) are ~3500 tokens.
+max-model-len: 8192
+# vLLM requires this fraction of the GPU memory to be free at startup, even with kv-cache-memory-bytes, and the LLM may
+# have taken its memory already (0.1 = 1.56 GiB failed next to it).
+gpu-memory-utilization: 0.05
+# Per GPU: ~9.5k tokens (74 KiB per token on each GPU), one maximum-length input or a few chunks at a time
+kv-cache-memory-bytes: 700000000
+max-num-seqs: 8
+# 4096 instead of 2048 tokens per batch: 5895 instead of 5017 t/s, as each copy of the layers serves more tokens.
+max-num-batched-tokens: 4096
+# All 36 layers in pinned RAM (3.6 GB per GPU in BF16), copied to the GPU one by one ahead of their use, 2 layers ahead
+# (1 layer: 5895 t/s, 2: 7153 t/s, 3: 7560 t/s with 120 MiB more VRAM, 4: 7242 t/s). 1692 MiB per GPU in total, vs
+# 1486 MiB for the 0.6B model without offloading. In BF16, as the prefetch offloading fails with vLLM's FP8
+# quantization ("Cannot copy out of meta tensor"); FP8 retrieved as well as BF16 in the test.
+offload-backend: prefetch
+offload-group-size: 1
+offload-num-in-group: 1
+offload-prefetch-step: 2

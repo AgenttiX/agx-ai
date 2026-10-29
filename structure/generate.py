@@ -439,8 +439,8 @@ def build(specs: bool) -> str:
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
                 # vllm-rtx-a4000/README.md, configurations 3 (Qwen3.8-27B with HyperQwen) and 2 (Gemma 4 26B-A4B);
                 # benchmark/results/big-machine.jsonl: 6.4k-token prompt (depth test)
-                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "92", "1389"), (gemma_moe, "254", "4760"),
-                 ("Qwen3-Embedding-0.6B", "", "")],
+                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "102", "1449"), (gemma_moe, "254", "4760"),
+                 ("Qwen3-Embedding-4B", "", "")],
                 ["ubuntu.svg"], [(vllm, "vLLM", "CUDA, 2 GPUs")]),
     ]
     if not specs:

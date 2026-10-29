@@ -10,9 +10,9 @@ tensor-parallel-size: 2
 disable-custom-all-reduce: true
 # The longest PaperQA2 chunks (5000 characters of reference lists or tables) are ~3500 tokens.
 max-model-len: 8192
-# vLLM requires this fraction of the GPU memory to be free at startup, even with kv-cache-memory-bytes. The LLM
-# starts at the same time and may have taken its memory already, so the check is effectively disabled.
-gpu-memory-utilization: 0.1
+# vLLM requires this fraction of the GPU memory to be free at startup, even with kv-cache-memory-bytes, and the LLM may
+# have taken its memory already (0.1 = 1.56 GiB failed next to HyperQwen), so the check is effectively disabled.
+gpu-memory-utilization: 0.05
 # Per GPU: ~8.7k tokens (56 KiB per token on each GPU), one maximum-length input or a few chunks at a time
 kv-cache-memory-bytes: 500000000
 max-num-seqs: 8

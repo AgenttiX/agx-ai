@@ -218,7 +218,8 @@ and [`../vllm`](../vllm/README.md), so the KV cache and the context stay the sam
 - [`cpu_vision.py`](cpu_vision.py): transformers' `Qwen3VLVisionModel` in FP32 on the CPU (the same module as in
   [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next); Qwen3.8 has no deepstack features), installed as
   `vllm/model_executor/models/qwen3_vl_cpu_vision.py`, with `QWEN38_VISION_DEVICE=cpu` and 32 threads
-  (`QWEN38_VISION_THREADS`).
+  (`QWEN38_VISION_THREADS`). With tensor parallelism ([`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md)), the workers
+  split the frames of the videos and the images between them and exchange the embeddings (bit-identical results).
 - [`hyperqwen-vision.patch`](hyperqwen-vision.patch): Qwen3.5/3.8 (`qwen3_5.py`) creates it instead of vLLM's vision
   transformer and sets `mm_encoder_inputs_on_cpu`, and the encoder runner of vLLM's V2 model runner (which DFlash2
   uses) leaves the pixel values of such a model on the CPU, so that only the embeddings are copied to the GPU. The same

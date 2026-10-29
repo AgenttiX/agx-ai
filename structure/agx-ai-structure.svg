@@ -234,9 +234,9 @@
 <use href="#logo-ubuntu" x="1446" y="587.5" width="46" height="46"/>
 <text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
 <text x="1452" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
-<text x="1452" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (92 | 1389)</tspan></text>
+<text x="1452" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
 <text x="1452" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
-<text x="1452" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-0.6B</text>
+<text x="1452" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-4B</text>
 <rect x="1358.51" y="799" width="186.978" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1364.51" y="803" width="22" height="22"/>
 <text x="1392.51" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>

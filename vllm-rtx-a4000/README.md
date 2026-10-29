@@ -7,13 +7,13 @@ GPUs. [`../../phd-research/phd_code/tools/paperqa_ask.py`](../../phd-research/ph
 them with `PAPERQA_BACKEND=vllm`.
 
 **Summary.** For PaperQA2, the time per question is dominated by the generated tokens (the evidence summaries), not
-by prompt processing. With the same model, vLLM answers 2.2-2.5 times as fast as llama.cpp and builds the index 2-7
+by prompt processing. With the same model, vLLM answers 2-2.5 times as fast as llama.cpp and builds the index 2-7
 times as fast, as it batches the concurrent requests, processes prompts faster and, for Qwen3.8-27B, runs
 [HyperQwen](#hyperqwen-and-the-int8-kv-cache-2026-10-26) (see [Comparison with llama.cpp](#comparison-with-llama-cpp)).
 The largest effect is the model and its thinking, though: Gemma 4 26B-A4B without thinking answers a question in
-~10 s, Qwen3.8-27B in ~25 s without thinking and ~43 s with reasoning effort "low", with the most complete answers.
-[Recommendation](#recommendation): configuration 3 (Qwen3.8-27B with HyperQwen and Qwen3-Embedding-0.6B on both GPUs),
-the default.
+~10 s, Qwen3.8-27B in ~27 s without thinking and ~45 s with reasoning effort "low", with the most complete answers.
+[Recommendation](#recommendation): configuration 3 (Qwen3.8-27B with HyperQwen, with image and video input, and
+Qwen3-Embedding-4B with its layers in RAM, on both GPUs), the default.
 
 ## Configurations
 
@@ -26,7 +26,7 @@ The profile `llm` starts stock vLLM with `LLM_CONFIG`, the profile `hyperqwen` H
 |---|---|---|---|---|---|---|
 | 1 | 0+1 | Qwen3.8-27B, TP 2, MTP | - (with 8: CPU) | 229376 | 55 t/s | 56-61 s (1 + 8) |
 | 2 | 0+1 | Gemma 4 26B-A4B QAT, TP 2, MTP | - (with 8: CPU) | 262144 | 198 t/s | 8-11 s without thinking (2 + 8) |
-| 3 | 0+1 | Qwen3.8-27B, HyperQwen, TP 2, DFlash2 | Qwen3-Embedding-0.6B, TP 2 | 262144 | 98 t/s | 40-46 s, 24-26 s without thinking |
+| 3 | 0+1 | Qwen3.8-27B, HyperQwen, TP 2, DFlash2, images and videos (vision tower on the CPU) | Qwen3-Embedding-4B, TP 2, layers in RAM | 262144 | 104 t/s | 42-50 s, 26-29 s without thinking |
 | 3a | 0+1 | Qwen3.8-27B, TP 2, MTP | Qwen3-Embedding-0.6B, TP 2 | 196608 | 53 t/s | 61-70 s, 31-34 s without thinking |
 | 4 | 0+1 | Gemma 4 26B-A4B QAT, TP 2, MTP | Qwen3-Embedding-4B (FP8), TP 2 | 114688 | 195 t/s | 10-11 s without thinking |
 | 5 | 1 | Qwen3.8-27B (int4 embedding) | - (with 7: GPU 0) | 40960 | 27 t/s | 130-150 s, 53-55 s without thinking (5 + 7) |
@@ -36,8 +36,9 @@ The profile `llm` starts stock vLLM with `LLM_CONFIG`, the profile `hyperqwen` H
 
 PaperQA2 times: the three test questions below, with the default `PAPERQA_THINKING=low` unless noted. Gemma with
 thinking took 68-116 s per question and failed one of the three (see [PaperQA2](#paperqa2)). Configuration 3a is the
-stock-vLLM alternative to 3 (block 3a in `.env`), and HyperQwen also
-runs without the embedding server (`COMPOSE_PROFILES=hyperqwen`), faster than 1.
+stock-vLLM alternative to 3 (block 3a in `.env`, text only), and HyperQwen also runs without the embedding server
+(`COMPOSE_PROFILES=hyperqwen`), faster than 1. With `EMBEDDING_CONFIG=config-embedding-tp2-qwen.yaml`, configuration 3
+uses Qwen3-Embedding-0.6B on the GPUs instead (40-46 s per question; index of the 75 papers in 126 instead of 348 s).
 
 The YAML files for `vllm serve --config` are `config-*.yaml`; each one explains its settings. The compose file sets
 the environment shared by all of them (`NCCL_P2P_DISABLE`, `PYTORCH_CUDA_ALLOC_CONF`, the caches) and memory limits,
@@ -76,7 +77,10 @@ docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingfac
 docker run --rm --memory 40g -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub -v ~/.cache/vllm-models:/out \
     --entrypoint repack_gemma4_qat.py ghcr.io/agenttix/agx-ai/vllm:latest \
     --out /out/gemma-4-26B-A4B-it-qat-q4_0-ct-embed16-head8 --embed-bits 16 --lm-head-bits 8
-# HyperQwen: its checkpoints into ~/.cache/vllm-models/hyperqwen (~22 GB of downloads, ~6 min)
+# HyperQwen: the image with the vision tower on the CPU (also built by
+# ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml), and its checkpoints into
+# ~/.cache/vllm-models/hyperqwen (~22 GB of downloads, ~6 min)
+docker build -t ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest ../vllm-rtx3090-hyperqwen
 docker compose run --rm hyperqwen-prepare
 # Select the configuration in .env, stop the llama.cpp server if it uses the same GPUs, and start
 docker compose -f ../llama-cpp-rtx-a4000/docker-compose.yml down
@@ -84,7 +88,7 @@ docker compose up -d
 ```
 
 The first start compiles kernels for 2-4 min; later starts take 1-2.5 min (the caches are in the `vllm-cache`
-volume), with HyperQwen 6-7 min (its caches are in the `hyperqwen-cache` volume). To switch configurations, stop all
+volume), with HyperQwen 2.5-7 min (its caches are in the `hyperqwen-cache` volume). To switch configurations, stop all
 profiles first: `docker compose --profile llm --profile hyperqwen --profile embedding --profile embedding-cpu down`.
 For a one-off configuration, the variables of `.env` can also be given on the command line, e.g.
 `COMPOSE_PROFILES=llm LLM_CONFIG=config-gemma-4-26b-a4b-qat-1gpu.yaml LLM_GPUS=1 docker compose up -d`.
@@ -94,8 +98,9 @@ For a one-off configuration, the variables of `.env` can also be given on the co
 - The GPU configurations use `ghcr.io/agenttix/agx-ai/vllm:latest`: `vllm/vllm-openai:v0.31.0` (CUDA 13.0) with the
   fixes of [`../vllm/vllm.patch`](../vllm/vllm.patch) and the pth-flash-attn kernel, see
   [`../vllm/README.md`](../vllm/README.md).
-- HyperQwen uses its own image of its commit `ce9615c` (2026-10-22, vLLM 0.31.0), pinned by digest, as
-  [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md).
+- HyperQwen uses the image of [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md)
+  (`ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest`): HyperQwen's image of its commit `ce9615c` (2026-10-22,
+  vLLM 0.31.0) with the vision tower on the CPU.
 - The CPU embedding server uses `vllm/vllm-openai-cpu:v0.31.0` unchanged.
 
 ## Peer-to-peer copies between the GPUs are broken
@@ -122,6 +127,7 @@ MTP), while the weights alone would allow ~45 t/s.
 | Qwen3.8-27B, 1 GPU | [`JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB`](https://huggingface.co/JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB) (`mtp-int8` revision): GPTQ int4, group size 128, embedding and lm_head int4 | 13.1 GiB |
 | Gemma 4 26B-A4B QAT, 2 GPUs | Built from Google's Q4_0 GGUF (bit-exact int4, group size 32) with `--embed-bits 16 --lm-head-bits 8` | 8.8 GiB per GPU with the MTP drafter |
 | Gemma 4 26B-A4B QAT, 1 GPU | The same with the embedding and the lm_head in int4 | 14.0 GiB |
+| Qwen3-Embedding-4B (3) | [`Qwen/Qwen3-Embedding-4B`](https://huggingface.co/Qwen/Qwen3-Embedding-4B) in BF16, its 36 layers in pinned RAM (3.6 GB per GPU) | 1.7 GiB per GPU with the runtime |
 | Gemma 4 MTP drafter | [`google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant`](https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant) (BF16), shares the KV cache of the main model | (included above) |
 
 All run with the Marlin kernels (`MarlinLinearKernel`, and the `MARLIN` WNA16 MoE backend for Gemma's experts,
@@ -138,11 +144,13 @@ and Marlin padding (19.2 GB), too large here. EmbeddingGemma 2 is not supported 
 - **2 GPUs, LLM and embedding model** (3, 3a, 4): both are split with tensor parallelism, as the LLM gets the same KV
   cache on both GPUs. Both KV caches are set explicitly (`kv-cache-memory-bytes`, HyperQwen's `KV_MEM`). vLLM still
   checks at startup that `gpu-memory-utilization` of the GPU memory is free, and the two servers start at the same
-  time, so the embedding server has `0.1` and the LLM a value below what the embedding server leaves free. Next to the
-  4B embedding model (3.5 GiB per GPU with its runtime, FP8), the stock Qwen with a BF16 KV cache had only ~1 GiB of KV
-  cache per GPU (~26k tokens), so configurations 3 and 3a use the 0.6B model (1.5 GiB per GPU). With HyperQwen's
-  smaller weights (7.3 instead of 9.5 GiB per GPU), configuration 3 has 5.6 GB of KV cache per GPU (int8, 299648
-  tokens) for the full 262144 tokens of context; 3a has 3.9 GB (int8, 209818 tokens) for 196608 tokens. Gemma's KV
+  time, or the embedding server restarts next to a running LLM, so the embedding server has `0.05` (`0.1`, 1.56 GiB,
+  failed next to HyperQwen) and the LLM a value below what the embedding server leaves free. Next to the 4B embedding
+  model on the GPUs (3.5 GiB per GPU with its runtime, FP8), the stock Qwen with a BF16 KV cache had only ~1 GiB of KV
+  cache per GPU (~26k tokens), so configuration 3a uses the 0.6B model (1.5 GiB per GPU). With HyperQwen's smaller
+  weights (7.3 instead of 9.5 GiB per GPU), configuration 3 has 5.2 GB of KV cache per GPU (int8, 278161 tokens) for
+  the full 262144 tokens of context, and the 4B embedding model with its layers in RAM (1.7 GiB per GPU, see
+  [below](#images-videos-and-qwen3-embedding-4b-2026-10-29)); 3a has 3.9 GB (int8, 209818 tokens) for 196608 tokens. Gemma's KV
   cache is compact, so configuration 4 uses the 4B model and gets 114688 tokens (121k in the KV cache). With 2.1 GB of
   KV cache (131072 tokens), the embedding server ran out of memory under load after both had started at the same time.
 - **1 GPU** (5, 6): on GPU 1, which has no desktop session. As on the Radeon VII, the KV cache is set explicitly
@@ -151,7 +159,7 @@ and Marlin padding (19.2 GB), too large here. EmbeddingGemma 2 is not supported 
 - Every configuration was stress-tested with a prompt of almost the full context and concurrent requests, while
   embedding batches ran on the same GPUs (`llama_cpp_bench_http.py --mixed`), configurations 3 and 4 after starting
   both servers at the same time with `docker compose up -d`. The peaks were 15600-15960 MiB of the 16376 MiB
-  (configuration 3: 15723 MiB, with a 255k-token prompt 15697 MiB).
+  (configuration 3: 15807 MiB, also with images and videos).
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is needed for the single-GPU Gemma to load at all: without it,
   the Marlin repacking of the experts after loading ran out of memory.
 
@@ -254,6 +262,97 @@ the other tests.
   (8 instead of 4 sequences, 206289 instead of 195715 tokens with 4 GB), but is not needed for PaperQA2's 4
   concurrent requests.
 
+## Images, videos and Qwen3-Embedding-4B (2026-10-29)
+
+Configuration 3 got image and video input and the larger embedding model, with the same 262144 tokens of context.
+
+**Images and videos.** HyperQwen runs with the image of [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#images-and-videos):
+the vision tower of Qwen3.8-27B in FP32 on the CPU (transformers' Qwen3-VL vision model), its inputs on the CPU, and
+only the embeddings copied to the GPUs. It takes no VRAM, so the KV cache is unchanged. The limits are the same as
+there: up to 64 images per request, scaled down to 1 megapixel each, and 1 video, sampled at 2 frames per second, at
+most 64 frames and 12.6 megapixels over all frames (~6000 tokens). With tensor parallelism, every worker runs the
+encoder with the same inputs. [`cpu_vision.py`](../vllm-rtx3090-hyperqwen/cpu_vision.py) therefore splits the frames
+of the videos and the images between the two workers, each computes its share, and they exchange the embeddings over
+NCCL. The tower attends within each frame, and its position embeddings depend only on the height and width of a frame,
+so the result is bit-identical to computing all frames at once (tested with a small random model: videos, several
+images, both mixed). Each worker uses 8 threads, 16 in total as for the other CPU work on this shared machine; a worker
+that computes alone (a single image) uses 16.
+
+Measured with generated test media (greedy, without thinking; all answers correct, e.g. the text and the shapes of the
+image, the movement of a red square and the change of a word in the videos):
+
+| Input | Prompt tokens | Time of the request |
+|---|---|---|
+| 1280x960 image with text and three shapes | 1000 | 11.0 s (again: 1.0 s, from the caches) |
+| 16 1280x960 images, each with its number | 15608 | 151-179 s |
+| 20-s 640x360 video, 30 fps | 4596 | 35-44 s |
+| 30-s 1920x1080 video, 30 fps | 5986 | 46-58 s (mean of 5 new videos: 51 s) |
+| 95k tokens of code and the 1080p video | 95257 | 94 s |
+
+The times vary with the load of the other users' jobs (load average 32-37 of 64 threads). The first worker alone
+with 16 threads took 51-58 s (mean 55 s) for the 1080p video; with 32 threads 48 s for the video and 8.3 s for the
+image, not used on this shared machine. The VRAM peak with media was the same as without (15681 MiB per GPU with
+5.6 GB of KV cache), and the container takes ~3.5 GiB more RAM (the tower's weights in both workers).
+
+**A video stops the other requests.** vLLM runs the encoder within the engine's step, so while the CPU computes an
+image or a video, no other request generates tokens: a text generation paused for 10.6 s while an image was encoded,
+and for 50.5 s for the 1080p video (median gap between its tokens: 31 ms). The same holds for
+[`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md). PaperQA2 uses no images.
+
+**Qwen3-Embedding-4B with its layers in RAM.** On the GPUs, the 4B model would need ~2 GiB more per GPU than the
+0.6B model, i.e. ~100k tokens less context. An embedding server processes large batches of chunks, so it can stream
+its weights from RAM: vLLM's prefetch offloading (`offload-backend: prefetch`) keeps all 36 layers in pinned RAM and
+copies each one to the GPU ahead of its use ([`config-embedding-tp2-qwen-4b.yaml`](config-embedding-tp2-qwen-4b.yaml)).
+Next to HyperQwen (16 x 1024 or 32 x 1024 tokens, embeddings per second):
+
+| Embedding server | VRAM per GPU | Embeddings | Single text |
+|---|---|---|---|
+| 0.6B, on the GPUs (before) | 1486 MiB | 26400-28200 t/s | 0.05 s |
+| 4B BF16, layers in RAM, 2048-token batches, 1 layer ahead | 1578 MiB | 5017 t/s | 0.34 s |
+| 4B, 4096-token batches, 1 layer ahead | 1560 MiB | 5895 t/s | 0.32 s |
+| **4B, 4096-token batches, 2 layers ahead (configuration 3)** | **1692 MiB** | **7153-7158 t/s** | **0.23 s** |
+| 4B, 4096-token batches, 3 layers ahead | 1812 MiB | 7560 t/s | 0.22 s |
+| 4B, 4096-token batches, 4 layers ahead | 1892 MiB | 7242 t/s | 0.23 s |
+
+As fast as the 4B model on one GPU without offloading (7000 t/s), with 3.6 GB of pinned RAM per GPU. vLLM's FP8
+quantization fails with the prefetch offloading ("Cannot copy out of meta tensor"), so the model runs in BF16, which
+retrieved as well as FP8 in the [retrieval test](#embedding-models) (R@10 0.922 for both, 0.892 for the 0.6B model).
+With 4096-token batches, the server ran out of VRAM next to HyperQwen's previous KV cache of 5.6 GB, which held
+299648 tokens; 262144 tokens of context need only ~1.06 times that, so `KV_MEM` is now 5.2 GB (278161 tokens; HyperQwen
+13380 instead of 14148 MiB per GPU).
+
+Configuration 3 with these changes, measured as in the previous section (2026-10-29):
+
+| Test | 3 on 2026-10-26 (0.6B) | **3 now (4B in RAM, vision)** |
+|---|---|---|
+| Generation, 256 tokens | 90.4 | 92.6 |
+| Chat, 6 requests | 98.0 | 103.7 |
+| Code context of 6.4k / 32k / 80k / 200k tokens | 91.7 / 89.5 / 85.8 / 86.3 | 102.1 / 94.3 / 92.3 / 86.8 |
+| Prompt of 16k tokens | (1366) | (1452) |
+| Edit | 243.5 | 245.8 |
+| 4 x (8000-token prompt + 256 generated) | 25.0 s | 24.7 s |
+| 8 x (8000-token prompt + 256 generated), with embeddings | 99.8 s (embeddings 12406 t/s) | 110.9 s (embeddings 3207 t/s) |
+| PaperQA2, thinking "low" (q1 / q2 / q3) | 40 / 41 / 46 s | 42 / 44 / 50 s |
+| PaperQA2, no thinking | 24 / 25 / 26 s | 26 / 27 / 29 s |
+| Building the PaperQA2 index (75 papers) | 126 s | 348 s |
+| Peak VRAM per GPU | 15723 MiB | 15807 MiB |
+
+The text speed is the same (the differences are within the run-to-run variation). The PaperQA2 questions take ~2 s
+longer: the 4B model's excerpts gave 14-17 % longer prompts, and its answers cited more different papers (question 2:
+4 papers instead of 2, question 3: 4 instead of 3). The stress test (a 255k-token prompt, 4 and 8 concurrent
+30k-token prompts with embedding batches, and a video, 16 images and a 95k-token prompt with a video at the same time)
+peaked at 15781 MiB per GPU, without errors.
+
+Other findings:
+
+- **Not faster:** NCCL's low-latency protocol (`NCCL_PROTO=LL`) for the all-reduces through host memory: generation
+  the same (edits 241 vs 246 t/s), prompt processing 16 % slower (1222 vs 1449 t/s at 6.4k).
+- The other configurations of this repository have no further optimizations for this one: their CUDA graph and
+  prefill chunk settings, MTP 3, FlashInfer and the clock limit of the RTX 3070 were slower or are not needed, and
+  HyperQwen's `INT8_ACT` (prompt processing +23-63 % on the RTX 3090, but chat 136 -> 40 t/s, +4 % perplexity) and
+  `DFLASH_TOKENS=15` (not with pth-flash-attn) do not fit a generation-bound use. The largest remaining one is
+  `iommu=pt` (see [Peer-to-peer copies](#peer-to-peer-copies-between-the-gpus-are-broken)), which needs root.
+
 ## Embedding models
 
 Which embedding model finds the right excerpts on the actual corpus? [`../benchmark/embedding_retrieval_eval.py`](../benchmark/embedding_retrieval_eval.py)
@@ -337,7 +436,7 @@ see its README), with the same benchmark and the same PaperQA2 questions:
 
 | | llama.cpp | vLLM |
 |---|---|---|
-| **Qwen3.8-27B, 2 GPUs** | UD-Q4_K_M, tensor split, MTP, + Qwen3-Embedding-4B Q6_K | HyperQwen (W4A16), TP 2, DFlash2, + Qwen3-Embedding-0.6B (3) |
+| **Qwen3.8-27B, 2 GPUs** | UD-Q4_K_M, tensor split, MTP, + Qwen3-Embedding-4B Q6_K | HyperQwen (W4A16), TP 2, DFlash2, + Qwen3-Embedding-0.6B (3 on 2026-10-26; with the 4B model: 42-50 s and 26-29 s per question) |
 | Context | 98304 | 262144 |
 | Chat / 32k context | 52.5 / 47.7 t/s | 98.0 / 89.5 t/s |
 | Prompt processing (16k) | 981 t/s | 1366 t/s |
@@ -379,13 +478,16 @@ see its README), with the same benchmark and the same PaperQA2 questions:
 
 ## Recommendation
 
-For PaperQA2 on this machine: **vLLM, configuration 3** (Qwen3.8-27B with HyperQwen and Qwen3-Embedding-0.6B, both
-with tensor parallelism on both GPUs, the default in [`.env`](.env)), with `PAPERQA_BACKEND=vllm`:
+For PaperQA2 on this machine: **vLLM, configuration 3** (Qwen3.8-27B with HyperQwen and Qwen3-Embedding-4B with its
+layers in RAM, both with tensor parallelism on both GPUs, the default in [`.env`](.env)), with `PAPERQA_BACKEND=vllm`:
 
-- ~43 s per question at reasoning effort "low", or ~25 s without thinking (`PAPERQA_THINKING=0`) with answers of
-  nearly the same quality. Stock vLLM (3a) needs 1.5 times as long, llama.cpp 2.2 times as long with the same model.
-- The index of all 75 papers is rebuilt in ~2 min.
-- 262144 tokens of context for other clients, at ~86-98 t/s from short chats to 200k tokens of context.
+- ~45 s per question at reasoning effort "low", or ~27 s without thinking (`PAPERQA_THINKING=0`) with answers of
+  nearly the same quality. Stock vLLM (3a) needs 1.5 times as long, llama.cpp 2 times as long with the same model.
+- The better of the tested embedding models for this corpus (the right excerpt among the top 10 for 92 instead of 89 %
+  of the questions); the index of all 75 papers is rebuilt in ~6 min. The 0.6B model
+  (`EMBEDDING_CONFIG=config-embedding-tp2-qwen.yaml`) rebuilds it in ~2 min, with ~2 s shorter questions.
+- 262144 tokens of context for other clients, at ~87-104 t/s from short chats to 200k tokens of context, and images
+  and videos (the vision tower on the CPU, which pauses the other requests while it computes).
 
 If speed matters more than depth, **configuration 4** with `PAPERQA_THINKING=0`: Gemma 4 answers in ~10 s, with
 shallower answers. Gemma's thinking is not worth it in PaperQA2: it made the questions 6-9 times as slow, looped once
