@@ -17,7 +17,7 @@ gpu-memory-utilization: 0.95
 # PaperQA2 sends 4 concurrent requests by default (PAPERQA_CONCURRENCY in paperqa_ask.py).
 max-num-seqs: 8
 # int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (CUSTOM, from HyperQwen, as in
-# ../vllm-agx-z2e): twice the context of BF16, and much faster generation at long contexts (README.md).
+# ../vllm-rtx3090): twice the context of BF16, and much faster generation at long contexts (README.md).
 # FlashAttention 2 (the default on Ampere) supports no quantized KV cache.
 kv-cache-dtype: int8_per_token_head
 attention-backend: CUSTOM

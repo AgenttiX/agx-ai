@@ -26,7 +26,7 @@ max-num-batched-tokens: 1024
 # CUDA graphs only for decoding and the batch sizes of 4 sequences with 2 drafted tokens each.
 compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4, 6, 8, 9, 12]}
 # int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (CUSTOM, from HyperQwen, as in
-# ../vllm-agx-z2e): twice the context of BF16, and generation at 32k / 80k tokens of context 54 / 53 instead of
+# ../vllm-rtx3090): twice the context of BF16, and generation at 32k / 80k tokens of context 54 / 53 instead of
 # 31 / 21 t/s. FlashAttention 2 (the default on Ampere) supports no quantized KV cache.
 kv-cache-dtype: int8_per_token_head
 attention-backend: CUSTOM

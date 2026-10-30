@@ -201,7 +201,7 @@ with 32, i.e. more threads do not help next to the other users' jobs. llama.cpp 
 
 Configurations 3 and 1 (Qwen3.8-27B on both GPUs) with the optimizations of the RTX 3090 configurations of agx-z2e:
 
-- From [`../vllm-agx-z2e`](../vllm-agx-z2e/README.md#qwen38-27b): the int8 KV cache read by the pth-flash-attn
+- From [`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-27b): the int8 KV cache read by the pth-flash-attn
   kernel of [`../vllm`](../vllm/README.md) (`attention-backend: CUSTOM`, also for the MTP drafter), and the recurrent
   state in FP16. Now in the stock-vLLM configurations (1, 3a).
 - From [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md): HyperQwen's image, checkpoint and DFlash2
