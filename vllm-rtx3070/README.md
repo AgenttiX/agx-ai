@@ -16,11 +16,11 @@ time. All use the API key of the llama.cpp server. [`docker-compose.yml`](docker
 | Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
 | `vllm`: [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2, int8 KV cache | 98304 | 7582 MiB | ~12 GiB pinned weights, 16 GiB CPU KV cache | chat 32 t/s; 30 / 27 t/s at 6.4k / 36.5k | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k | **llama.cpp is 1.7 times as fast** for this model on this GPU (see below) |
-| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 57344 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 t/s at 6.4k / 55k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k | up to 64 images and 1 video per request (vision tower on the CPU: ~15 s per image, 55-75 s per video); no CPU KV offloading; prefix cache blocks of 1600 tokens |
+| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 75776 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 / 24.1 t/s at 6.4k / 55k / 74.6k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k, 513 t/s at 70k | up to 64 images and 1 video per request (vision tower on the CPU: ~15 s per image, 55-75 s per video); no CPU KV offloading; prefix cache blocks of 1600 tokens |
 | `vllm`: [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | The same model with stock vLLM (the GPU reads the experts over PCIe), FP8 KV cache | 57344 | 7342 MiB | ~107 GiB pinned weights, 8 GiB CPU KV cache | chat 15.4 t/s; 15.4 / 15.4 t/s at 6.4k / 32k | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k | images and videos; CPU KV offloading (an evicted conversation comes back from RAM); prefix cache blocks of 3136 tokens |
 
-**Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with the same
-context, and processes long prompts faster (581 vs ~410-455 t/s), but short ones slightly slower (353 vs 377 t/s at
+**Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with 32 % more
+context (75776 vs 57344 tokens), and processes long prompts faster (581 vs ~410-455 t/s), but short ones slightly slower (353 vs 377 t/s at
 6.4k tokens). It also reprocesses less of a returning conversation, as its prefix cache blocks are half as large. Stock
 vLLM keeps evicted conversations in its CPU KV cache, which the runtime does not support, and its answers were
 slightly closer to those of the reference in the quality test (see [CPU experts](#cpu-experts-2026-10-26)).
@@ -388,9 +388,16 @@ the end of the step):
   per expert).
 - **Prompt processing** streams all cold experts through the GPU for every 2048-token chunk, as stock vLLM reads
   them, but faster at long prompts (581 vs ~400-455 t/s) and slightly slower at 6.4k (353 vs 377 t/s).
-- **Context**: the same 57344 tokens as stock vLLM. The int8 KV cache needs ~16.5 KB per token (73910 tokens in 1.14 GiB), and its blocks
-  (and thus the prefix cache's granularity) are 1600 tokens instead of 3136. Smaller prefill groups saved ~300 MiB of
-  VRAM with no measurable effect on the speed.
+- **Context**: 57344 tokens at first, as with stock vLLM; since 2026-10-30, 75776 tokens, the largest context that
+  the same KV cache holds (77105 tokens for this context, 1.02 times as much; the next step of 1024 tokens would not
+  fit). The int8 KV cache needs ~16.5 KB per token (73910-77105 tokens in 1.14 GiB, depending on the context), and its
+  blocks (and thus the prefix cache's granularity) are 1600 tokens instead of 3136. Smaller prefill groups saved
+  ~300 MiB of VRAM with no measurable effect on the speed. The VRAM peak does not grow with the context: with 73728
+  tokens of context, a 72.5k-token prompt peaked at 7648 MiB, and the depth test at 70k tokens gave 513 t/s of prompt
+  processing and 22.6 t/s of generation; with 75776 tokens, 74.6k tokens of context peaked at 7658 MiB, the same as
+  57344 tokens with a 55k-token prompt, with 24.1 t/s of generation and chat at 24.8 t/s (one run each, 2026-10-30).
+  Prompt processing was lower in the synthetic 72.5k-token prompt test (306 t/s, not the code of the depth test) and
+  in the depth test at 74.6k (301 t/s), probably as the request of an aborted run of that test was still running.
 - **Images and videos** work as with stock vLLM, with the same vision tower on the CPU and no VRAM for it (measured
   on the production server on 2026-10-28 with the test media of [Qwen3.8-Flash-Next](#qwen38-flash-next); greedy,
   without thinking; all answers correct):
