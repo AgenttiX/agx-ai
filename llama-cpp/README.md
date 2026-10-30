@@ -1,5 +1,7 @@
 # Shared llama.cpp settings
 
+The llama.cpp optimizations tried in this repository are collected in [`OPTIMIZATIONS.md`](OPTIMIZATIONS.md).
+
 Files used by the llama.cpp configurations of this repository (and, for the API key, by the vLLM configurations):
 
 - [`config.ini`](config.ini): the server-wide settings of the llama.cpp router (`--config`), mounted as

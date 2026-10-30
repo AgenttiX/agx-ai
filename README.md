@@ -24,6 +24,7 @@ These are the configurations that run the local LLMs.
 - [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
 - [llama.cpp](https://llama-cpp.com/)
   - [Shared server settings (config.ini)](llama-cpp/README.md)
+  - [Optimizations tried in this repository](llama-cpp/OPTIMIZATIONS.md) (Claude Code skill: `/optimize-llama-cpp`)
   - [Native Windows config](llama-cpp-windows/README.md)
   - [AMD Radeon VII (16 GB): custom ROCm container](llama-cpp-radeon-vii/README.md)
   - [NVIDIA RTX A4000 (2x 16 GB): PaperQA2 RAG](llama-cpp-rtx-a4000/README.md)
@@ -41,6 +42,7 @@ These are the configurations that run the local LLMs.
   - [ThinkPad L14 Gen 5 NPU: EmbeddingGemma 2 with OpenVINO](openvino-l14-npu-embeddinggemma2/README.md)
   - [ThinkPad L14 Gen 5 NPU: Gemma 4 E4B with a third-party server](openvino-l14-npu-e4b/README.md)
 - [vLLM](https://vllm.ai/)
+  - [Optimizations tried in this repository](vllm/OPTIMIZATIONS.md) (Claude Code skill: `/optimize-vllm`)
   - [AMD Radeon VII (16 GB): custom ROCm container](vllm-radeon-vii/README.md)
   - [NVIDIA RTX 3070 (8 GB)](vllm-rtx3070/README.md)  
   - [NVIDIA RTX 3090 (24 GB)](vllm-rtx3090/README.md)
