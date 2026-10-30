@@ -25,6 +25,7 @@ abbreviated as `agx` in the hostnames.
   create a workflow in `./.github/workflows/` for building the container.
 - For setups that modify the vLLM Docker image but don't use a different base image,
   prefer to modify the generic image in `./vllm` instead of creating a new container.
+  You may update the version of its base image as needed.
   However, keep that image compatible with the other configurations.
 
 ## Updating an LLM backend configuration
@@ -32,11 +33,13 @@ abbreviated as `agx` in the hostnames.
   For each model in the configuration, include the model, context size, VRAM use, RAM use,
   token generation speed, prompt processing speed, and notes (if there are any significant remarks).
   If the same model works significantly better on the same hardware with a different backend, mention this.
+- Keep `./llama-cpp/OPTIMIZATIONS.md` up to date with all llama.cpp optimizations, and `./vllm/OPTIMIZATIONS.md` with all vLLM optimizations.
 
 ## Benchmarking
 - Use the scripts in `./benchmark/` for benchmarking.
   You may update the scripts as needed, but keep them compatible with the other backends.
-- If you create scripts that are specific to a particular backend configuration, store them in its directory in the repository.
+- If you crate new testing scripts, store them in `./benchmark/`.
+  However, if they are specific to a particular backend configuration, store them in its directory instead.
 
 ## Commands
 - Run all lints and type checks: `./lint.sh`
