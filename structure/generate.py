@@ -45,6 +45,7 @@ HW_FILL = "#f1f7ee"
 HW_STROKE = "#8fb67f"
 LLAMA = "#ff8236"
 VLLM = "#30a2ff"
+OPENVINO = "#6b4fbb"
 MODEL = "#b4531c"
 
 
@@ -109,7 +110,10 @@ class Machine:
     cx: float  # Center x coordinate
     name: tuple[str, bool]  # (title, public), the hostname is shown only in the specs version
     lines: list[tuple[str, bool]]  # (text, public) of the hardware and software, see spec() and pub()
-    models: list[tuple[str, str, str]]  # (model, generation t/s, prompt processing t/s), the speeds may be empty
+    # (runtime logo, model, generation t/s, prompt processing t/s), the runtime and the speeds may be empty.
+    # The models that run on vLLM or OpenVINO are drawn in the color of its runtime tag.
+    # A (text, public) line between the models shows e.g. the GPU of the models below it.
+    models: list[tuple[str, str, str, str] | tuple[str, bool]]
     screen: list[str]  # Logos of the operating system and the virtualization, shown on the screen of the device
     runtimes: list[tuple[str, str, str]]  # (logo, title, detail) of what runs on the machine
 
@@ -117,7 +121,7 @@ class Machine:
         """Return the machine without the hostname and the hardware specifications, except for the GPUs."""
         return Machine(
             self.kind, self.cx, self.name if self.name[1] else ("", True), [line for line in self.lines if line[1]],
-            self.models, self.screen, self.runtimes,
+            [model for model in self.models if len(model) == 4 or model[1]], self.screen, self.runtimes,
         )
 
     def text_lines(self) -> int:
@@ -330,7 +334,7 @@ class Figure:
         text_w = text_width(detail, 14) + (0 if wordmark else text_width(title, 14, bold=True) + text_width(" ", 14))
         w = 6 + logo_w + 8 + text_w + 14
         x = cx - w / 2
-        stroke = {"llama-cpp.svg": LLAMA, "vllm.png": VLLM}.get(logo, "#6b4fbb")
+        stroke = {"llama-cpp.svg": LLAMA, "vllm.png": VLLM}.get(logo, OPENVINO)
         self.rect(x, y, w, 30, fill="#ffffff", stroke=stroke, rx=15, width=1.5)
         if wordmark:
             self.logo(logo, x + 10, y + 6, 18, logo_w)
@@ -357,12 +361,17 @@ class Figure:
         for line, _ in m.lines:
             y += 18
             self.text(m.cx, y, line, size=14, color=MUTED, anchor="middle")
-        for model, *speeds in m.models:
+        for entry in m.models:
             y += 18
+            if len(entry) == 2:
+                self.text(m.cx, y, entry[0], size=14, color=MUTED, anchor="middle")
+                continue
+            runtime, model, *speeds = entry
             speed_text = " | ".join(speed for speed in speeds if speed)
             speed_span = f'<tspan font-weight="normal"> ({escape(speed_text)})</tspan>' if speed_text else ""
             self.add(
-                f'<text x="{m.cx:g}" y="{y:g}" font-size="14" font-weight="bold" fill="{MODEL}" '
+                f'<text x="{m.cx:g}" y="{y:g}" font-size="14" font-weight="bold" '
+                f'fill="{ {"vllm.png": VLLM, "openvino.svg": OPENVINO}.get(runtime, MODEL)}" '
                 f'text-anchor="middle">{escape(model)}{speed_span}</text>'
             )
         y = top + 116 + 18 * text_lines + 20
@@ -407,40 +416,44 @@ def build(specs: bool) -> str:
     machines = [
         Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
                 # llama-cpp-l14/README.md: 26B-A4B without MTP and checkpoints, chat with a 3.5k-token prompt;
+                # E4B in the final configuration, chat with a 3.5k-token prompt;
                 # openvino-l14-npu-e4b/README.md: E4B on the NPU, 684-token prompt
-                [(gemma_moe, "8.9", "106"), ("Gemma 4 E4B", "8.1–8.6", "185")], ["kubuntu.svg"],
+                [(llama, gemma_moe, "8.9", "106"), (llama, "Gemma 4 E4B", "7.8", "155"),
+                 ("openvino.svg", "Gemma 4 E4B", "8.1–8.6", "185")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
         Machine("laptop", 402, pub("ThinkPad T480"), [spec("Core i7-8550U, 32 GB RAM"), pub("GeForce MX150 (2 GB)")],
                 # llama-cpp-t480/README.md: 4096-token prompt
-                [(gemma_moe, "6.7", "80")], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
+                [(llama, gemma_moe, "6.7", "80")], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("laptop", 654, spec("Windows laptop"),
                 [spec("Core i7-1260P, 32 GB RAM"), pub("T550 Laptop GPU (4 GB)")],
                 # llama-cpp-t550/README.md, natively on Windows: 26B-A4B chat (the generation test was not valid),
                 # E4B; 4096-token prompts
-                [(gemma_moe, "7.9", "92"), ("Gemma 4 E4B", "31", "144")], ["windows.svg"],
+                [(llama, gemma_moe, "7.9", "92"), (llama, "Gemma 4 E4B", "31", "144")], ["windows.svg"],
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
-                [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)"), pub("Radeon VII (16 GB)")],
+                [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)")],
                 # RTX 3090: vllm-rtx3090-hyperqwen/README.md (Qwen3.8-27B), vllm-rtx3090/README.md (Qwen3.8-Flash-Next
                 # with vllm-rtx3090-flash-next);
                 # Gemma 4 31B with llama-cpp-rtx3090/README.md, which is twice as fast as vLLM for it.
                 # Radeon VII: llama-cpp-radeon-vii/README.md (image v0.6.0), which is faster than vllm-radeon-vii.
                 # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test)
-                [("Qwen3.8-27B", "128", "1220"), ("Qwen3.8-Flash-Next", "33", "1750"),
-                 ("Gemma 4 31B QAT", "77", "1060"), (gemma_moe, "124", "1260")], ["kubuntu.svg"],
+                [(vllm, "Qwen3.8-27B", "128", "1220"), (vllm, "Qwen3.8-Flash-Next", "33", "1750"),
+                 (llama, "Gemma 4 31B QAT", "77", "1060"), pub("Radeon VII (16 GB)"),
+                 (llama, gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),
         Machine("server", 1210, spec("agx-ai (agx-h12)"), [spec("EPYC 7302, 256 GB RAM"), pub("RTX 3070 (8 GB)")],
                 # Gemma 4 26B-A4B with llama-cpp-rtx3070/README.md, which is 1.7 times as fast as vLLM for it:
                 # 36.5k-token prompt (depth test); Qwen3.8-Flash-Next: vllm-rtx3070/README.md (the flash-next service
                 # with vllm-rtx3090-flash-next), 6.4k-token prompt (depth test); benchmark/results/agx-ai.jsonl
-                [(gemma_moe, "55", "1547"), ("Qwen3.8-Flash-Next", "24.5", "353")], ["proxmox.svg", "ubuntu.svg"],
+                [(llama, gemma_moe, "55", "1547"), (vllm, "Qwen3.8-Flash-Next", "24.5", "353")],
+                ["proxmox.svg", "ubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, experts on the CPU")]),
         Machine("server", 1452, spec("RTX A4000 server"),
                 [spec("Threadripper PRO 3975WX"), spec("192 GB RAM"), pub("2 × RTX A4000 (16 GB)")],
                 # vllm-rtx-a4000/README.md, configurations 3 (Qwen3.8-27B with HyperQwen) and 2 (Gemma 4 26B-A4B);
                 # benchmark/results/big-machine.jsonl: 6.4k-token prompt (depth test)
-                [("PaperQA2 RAG", "", ""), ("Qwen3.8-27B", "102", "1449"), (gemma_moe, "254", "4760"),
-                 ("Qwen3-Embedding-4B", "", "")],
+                [("", "PaperQA2 RAG", "", ""), (vllm, "Qwen3.8-27B", "102", "1449"), (vllm, gemma_moe, "254", "4760"),
+                 (vllm, "Qwen3-Embedding-4B", "", "")],
                 ["ubuntu.svg"], [(vllm, "vLLM", "CUDA, 2 GPUs")]),
     ]
     if not specs:

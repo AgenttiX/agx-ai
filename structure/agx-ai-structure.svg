@@ -120,7 +120,8 @@
 <use href="#logo-kubuntu" x="122" y="577" width="56" height="56"/>
 <text x="150" y="689" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad L14 Gen 5</text>
 <text x="150" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
-<text x="150" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
+<text x="150" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (7.8 | 155)</tspan></text>
+<text x="150" y="743" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
 <rect x="48.9903" y="799" width="202.019" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="54.9903" y="803" width="22" height="22"/>
 <text x="82.9903" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">Vulkan, iGPU</tspan></text>
@@ -160,10 +161,10 @@
 <rect x="983" y="591" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
 <circle cx="1000" cy="645" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
 <text x="925" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
-<text x="925" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1220)</tspan></text>
-<text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
-<text x="925" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
+<text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1220)</tspan></text>
+<text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
+<text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
+<text x="925" y="761" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
 <text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>
 <rect x="824.504" y="799" width="200.992" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="830.504" y="803" width="22" height="22"/>
@@ -201,7 +202,7 @@
 <use href="#logo-ubuntu" x="1207" y="614.5" width="40" height="40"/>
 <text x="1210" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
 <text x="1210" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
-<text x="1210" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
+<text x="1210" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
 <rect x="1079.94" y="799" width="260.128" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1085.94" y="803" width="22" height="22"/>
 <text x="1113.94" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts on the CPU</tspan></text>
@@ -234,9 +235,9 @@
 <use href="#logo-ubuntu" x="1446" y="587.5" width="46" height="46"/>
 <text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
 <text x="1452" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
-<text x="1452" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
-<text x="1452" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
-<text x="1452" y="761" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Qwen3-Embedding-4B</text>
+<text x="1452" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
+<text x="1452" y="743" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
+<text x="1452" y="761" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3-Embedding-4B</text>
 <rect x="1358.51" y="799" width="186.978" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1364.51" y="803" width="22" height="22"/>
 <text x="1392.51" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>
