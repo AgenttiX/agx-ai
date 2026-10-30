@@ -1,0 +1,18 @@
+# vllm serve --config for EmbeddingGemma 2 (text only) on the CPU (Threadripper 3970X, Zen 2). The threads and the
+# KV cache size are set in docker-compose.yml. See README.md for the measurements behind these settings.
+model: google/embeddinggemma-2
+served-model-name: google/embeddinggemma-2
+runner: pooling
+# FP32: the Zen 2 CPU has no BF16 instructions, and bfloat16 (and float16) were 5 times slower. The BF16 checkpoint
+# converts to FP32 exactly.
+dtype: float32
+# The context of the model card
+max-model-len: 8192
+# Many short texts per step: 64 sequences were 40 % faster than 8 for 100-token texts (v0.32.0), and as fast for
+# 500-token texts. 4096-16384 batched tokens were within the noise (32768 was slower for 500-token texts).
+max-num-seqs: 64
+max-num-batched-tokens: 8192
+# Text only: the vision and audio encoders are not used.
+limit-mm-per-prompt: {"image": 0, "video": 0, "audio": 0}
+# Matryoshka truncation with the dimensions parameter of the API (the dimensions of the model card); vLLM renormalizes.
+hf-overrides: {"matryoshka_dimensions": [128, 256, 512, 768]}

@@ -1,0 +1,23 @@
+# EmbeddingGemma 2 on the CPU of agx-z2e (Threadripper 3970X) with llama.cpp. See README.md.
+# The same port as ../vllm-zen2-embeddinggemma2 (9933): run only one of the two.
+services:
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama-cpp-zen2-embeddinggemma2
+    environment:
+      # The image sets LLAMA_ARG_PORT=8080, which would override the port of config.ini.
+      LLAMA_ARG_PORT: "9931"
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    restart: unless-stopped
+    ports:
+      - "9933:9931"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset.ini:/etc/llama.cpp/preset.ini:ro
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

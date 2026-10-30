@@ -1,0 +1,37 @@
+# EmbeddingGemma 2 on the CPU of agx-z2e (Threadripper 3970X) with vLLM. See README.md.
+# The same port as ../llama-cpp-zen2-embeddinggemma2 (9933): run only one of the two.
+# The API key is that of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that clients work
+# with both.
+services:
+  vllm:
+    # The CPU build of vLLM, unchanged: a nightly build (0.33.0rc1.dev320), as v0.32.0 runs the bidirectional attention
+    # of EmbeddingGemma 2 as causal on the CPU and gives wrong embeddings (fixed by vllm-project/vllm#63738 on
+    # 2026-10-27, see README.md). Switch to v0.33.0 once it is released.
+    # No GPUs: with them (and libcuda), Triton would select its CUDA driver instead of the CPU one.
+    image: vllm/vllm-openai-cpu:nightly-335dd77b09161c5d63139b4e7ae51bb9928305b1
+    container_name: vllm-zen2-embeddinggemma2
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # GiB of RAM for the KV cache
+      VLLM_CPU_KVCACHE_SPACE: "4"
+      # The default (auto) pins one thread to each physical core and leaves one core for the engine and the API server.
+    ipc: host
+    restart: unless-stopped
+    ports:
+      - "9933:8000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - vllm-cache:/root/.cache/vllm
+      - ./config.yaml:/etc/vllm/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+
+volumes:
+  vllm-cache:
