@@ -859,6 +859,10 @@ def main() -> int:
         embedding_model = args.embedding_model or pick_models(emb_models, None, None)[1] or emb_models[0]["id"]
     if args.no_embedding or "embedding" not in args.tests:
         embedding_model = None
+    if set(args.tests) == {"embedding"} and embedding_model is not None and args.model is None:
+        # Only the embedding test: do not touch a chat model, which a router would load (and evict the embedding
+        # model for, with models-max = 1).
+        chat_model = None
     if chat_model is None:
         if set(args.tests) != {"embedding"} or embedding_model is None:
             raise SystemExit("No chat model found; pass --model")

@@ -150,7 +150,10 @@ What has given the largest gains, roughly in order:
 - Fewer threads than the CPU has is usually best for tg, and pp may want more: rtx3070 host 12 of 16 (4/8/12/16 =
   35/48/59/56 t/s); t480 and frame `threads = 4`, `threads-batch = 8`; t550 8 (16 uses E-cores and halves tg); l14
   8-10 (LP E-cores slow it down); rtx3090 Flash-Next 24 = 32 (bandwidth-bound). CPU pinning (`-C`, `--cpu-strict`)
-  did not help.
+  did not help, except ~3 % for the compute-bound embedding model on the Threadripper (`cpu-range = 0-31`,
+  `cpu-strict = 1` and the `-batch` variants).
+- **Never the SMT siblings for compute-bound work:** EmbeddingGemma 2 on the Threadripper 3970X with 8/16/32/64
+  threads = 1000/1650/2300/880 t/s (500-token texts).
 - In an LXC container, check the cpuset (`/sys/fs/cgroup/cpuset.cpus.effective`) to avoid oversubscribing SMT
   siblings.
 - Two models on one CPU at once (rtx3070 GPU + CPU models): 16 threads each collapsed the GPU model to 3-4 t/s; use
@@ -178,6 +181,7 @@ What has given the largest gains, roughly in order:
 - `mmap` where models are unloaded when idle (rtx-a4000): reloading from the page cache takes seconds instead of
   ~50 s.
 - `mmap` + `mlock` for CPU-only models; in LXC this needs `lxc.prlimit.memlock: unlimited` and compose `ulimits`.
+  In presets, this is `load-mode = mmap+mlock` (b12004 has no `mlock` preset key) and compose `ulimits: memlock: -1`.
 
 ## Router, slots and caches (`config.ini`)
 
@@ -206,6 +210,14 @@ What has given the largest gains, roughly in order:
 - `embedding = 1`, `pooling = last` (Qwen3-Embedding), `parallel = 1`, `ctx-size = 4096`, `batch-size = 4096`,
   `ubatch-size = 2048` (rtx-a4000). The compute buffer grows ~600 MiB per 1024 ubatch. Qwen3-Embedding-4B retrieved
   as well as 8B at 1.6x the speed and 1.5 GiB less VRAM per GPU.
+- **Bidirectional models (EmbeddingGemma 2):** an input has to fit into one ubatch, so `ubatch-size = batch-size =
+  ctx-size = 8192`. On the Threadripper 3970X CPU (zen2-embeddinggemma2): 8 slots (the texts of a request share a
+  ubatch; 4 was as fast for 500-token texts, 16 slower), BF16 = F16 = F32 = Q8_0 within 5 % (compute-bound), flash
+  attention off 2.4x slower, 2200-2300 t/s. vLLM's CPU image was 2x faster for the same model.
+- **Routers list the whole Hugging Face cache:** a request for another cached model loads it and, with
+  `models-max = 1`, evicts the embedding model. Dedicated embedding routers set `LLAMA_ARG_MODELS_AUTOLOAD=false`
+  (the `load-on-startup` model still loads). `llama_cpp_bench_http.py --tests embedding` triggered this until
+  2026-10-31.
 
 ## Backends, images and builds
 

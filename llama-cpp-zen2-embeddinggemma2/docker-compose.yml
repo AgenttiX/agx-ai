@@ -2,14 +2,21 @@
 # The same port as ../vllm-zen2-embeddinggemma2 (9933): run only one of the two.
 services:
   llama-cpp:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    # The CPU image (it loads its haswell kernels: AVX2, FMA, F16C), pinned
+    image: ghcr.io/ggml-org/llama.cpp:server-b12004
     container_name: llama-cpp-zen2-embeddinggemma2
     environment:
       # The image sets LLAMA_ARG_PORT=8080, which would override the port of config.ini.
       LLAMA_ARG_PORT: "9931"
+      # The router lists all models of the Hugging Face cache. Do not load any of them on request: this is the
+      # embedding server of the CPU, and with models-max = 1 an LLM would evict the embedding model.
+      LLAMA_ARG_MODELS_AUTOLOAD: "false"
     env_file:
       - ../llama-cpp/llama-cpp.env
     restart: unless-stopped
+    # For mlock in preset.ini
+    ulimits:
+      memlock: -1
     ports:
       - "9933:9931"
     volumes:
