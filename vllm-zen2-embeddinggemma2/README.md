@@ -7,7 +7,7 @@ llama.cpp, which is half as fast on this CPU; run only one of the two.
 
 | Model | Context | VRAM | RAM | 500-token texts | 100-token texts | Single text | Notes |
 |---|---|---|---|---|---|---|---|
-| EmbeddingGemma 2 (Google's BF16 checkpoint run in FP32), up to 64 sequences per step, 31 pinned threads | 8192 | none | 6.0-6.3 GiB | 4300-4700 t/s | 4900-5000 t/s | 0.18 s (500 tokens), 0.07 s (100 tokens) | 2 times faster than llama.cpp (2200-2300 t/s); needs a vLLM newer than v0.32.0 (see below) |
+| EmbeddingGemma 2 (Google's BF16 checkpoint run in FP32), up to 64 sequences per step, 31 pinned threads | 8192 | none | 5.9-6.4 GiB | 4260-4700 t/s | 4650-5000 t/s | 0.18 s (500 tokens), 0.07 s (100 tokens) | 2 times faster than llama.cpp (2200-2300 t/s); needs a vLLM newer than v0.32.0 (see below) |
 
 ## Hardware and software
 
@@ -101,3 +101,49 @@ starting with "zen2 vLLM").
   batched tokens (4096-16384) made no difference beyond the noise.
 - vLLM batches all texts of a request (up to 64 sequences and 8192 tokens) into one forward pass, while llama.cpp
   processes at most one text per slot (8) in a ubatch, which likely explains part of the difference.
+
+## Optimization with the optimize-vllm skill (2026-10-31)
+
+Most steps of [`.claude/skills/optimize-vllm`](../.claude/skills/optimize-vllm/SKILL.md) are for LLMs on GPUs (KV
+cache dtype, CUDA graphs, speculative decoding, context headroom, KV offloading, tensor parallelism) and do not apply.
+The image, dtype and scheduler were measured above. The remaining CPU settings, on the nightly image with the
+configuration above, in this order (two runs each, the baseline at the start and the end):
+
+| Variant | 500-token texts | 100-token texts |
+|---|---|---|
+| Baseline (start) | 4390-4400 t/s | 4740-4750 t/s |
+| `attention-backend: CPU_ATTN` (vLLM logs `TRITON_ATTN` otherwise) | 4290-4310 t/s | 4580-4740 t/s |
+| `enforce-eager: true` (no `torch.compile`) | 3370-3440 t/s | 3630-3660 t/s |
+| `VLLM_CPU_OMP_THREADS_BIND=nobind`, `OMP_NUM_THREADS=32` (the catalog's setting for a shared machine) | 3750-4100 t/s | 4490-4560 t/s |
+| **`VLLM_CPU_KVCACHE_SPACE=1`** (instead of 4) | 4190-4240 t/s | 4750-4830 t/s |
+| Baseline (end) | 4280-4290 t/s | 4650-4720 t/s |
+
+- The attention backend made no difference beyond the noise, so it is left to vLLM.
+- `torch.compile` (the default) is worth 25 %.
+- The automatic thread binding (one thread per physical core, one core left for the engine) beat leaving 32 threads to
+  the scheduler by 5-12 %.
+- The bidirectional attention keeps no KV cache, so `VLLM_CPU_KVCACHE_SPACE` was lowered to 1 GiB. The RAM use did not
+  change (5.9 GiB idle, 6.4 GiB after inputs of 8000 tokens), so the 4 GiB were never touched.
+- zentorch's SDPA for encoder attention (vllm-project/vllm#54508) needs AVX-512 and is not in the image.
+- The final configuration: 4260 t/s (64 x 500 tokens), 4760 t/s (64 x 100 tokens), 3230 t/s (16 x 2000 tokens),
+  1540 t/s (2 x 8000 tokens, 5.2 s for one), and a cosine similarity of 1.00000 with sentence-transformers.
+
+Not tried:
+- An int8 (W8A8) checkpoint: the CPU backend has oneDNN int8 kernels, but Zen 2 has no VNNI, the model is
+  compute-bound in small matrices (hidden size 512), and it would need a quantization and a retrieval test.
+- Several concurrent clients (the benchmark sends one request of 64 texts; vLLM batches concurrent requests in the
+  same steps, so the throughput should be similar).
+- `VLLM_CPU_SGL_KERNEL` (needs AMX).
+
+Commands:
+
+```sh
+docker compose down
+cd ../benchmark
+# A variant of config.yaml (without the comments) and environment variables:
+GPUS=none DOCKER_ARGS="-e VLLM_CPU_KVCACHE_SPACE=1" ./vllm_test_server.sh \
+    vllm/vllm-openai-cpu:nightly-335dd77b09161c5d63139b4e7ae51bb9928305b1 /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
+./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --tests embedding \
+    --embed-texts 64 --embed-tokens 500 --server-config /tmp/config-variant.yaml --label "..."
+docker rm -f vllm-test
+```

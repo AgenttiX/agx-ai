@@ -15,9 +15,11 @@ services:
       - ../llama-cpp/llama-cpp.env
     environment:
       HF_HUB_OFFLINE: "1"
-      # GiB of RAM for the KV cache
-      VLLM_CPU_KVCACHE_SPACE: "4"
-      # The default (auto) pins one thread to each physical core and leaves one core for the engine and the API server.
+      # GiB of RAM for the KV cache. The bidirectional attention keeps no KV cache, and 1 was as fast as 4 (2 x 8000
+      # tokens and 64 sequences work).
+      VLLM_CPU_KVCACHE_SPACE: "1"
+      # The default thread binding (auto) pins one OpenMP thread to each physical core and leaves one core for the
+      # engine and the API server. nobind with OMP_NUM_THREADS=32 was 5-12 % slower.
     ipc: host
     restart: unless-stopped
     ports:

@@ -202,8 +202,16 @@ What has given the largest gains, roughly in order:
 - `runner: pooling`, `max-model-len: 8192`, explicit `kv-cache-memory-bytes`, `max-num-seqs` 8-16. Qwen3-Embedding-4B
   retrieved as well as 8B; 0.6B is 6x faster at R@10 0.892 vs 0.922. vLLM: ~7000 t/s vs ~3200 for one llama.cpp
   slot.
-- CPU image (`vllm/vllm-openai-cpu`): `dtype: float32` on CPUs without BF16, `VLLM_CPU_OMP_THREADS_BIND=nobind`,
-  `OMP_NUM_THREADS`, `VLLM_CPU_KVCACHE_SPACE`; do not give it GPUs.
+- CPU image (`vllm/vllm-openai-cpu`): `dtype: float32` on CPUs without BF16 (Zen 2: BF16 5x, FP16 6x slower),
+  `VLLM_CPU_KVCACHE_SPACE` (1 GiB is enough for bidirectional models, which keep no KV cache); do not give it GPUs.
+  Threads: `VLLM_CPU_OMP_THREADS_BIND=nobind` with `OMP_NUM_THREADS` on a machine shared with other users
+  (rtx-a4000); on a dedicated machine the default `auto` (one thread per physical core) was 5-12 % faster than
+  `nobind` with 32 threads (zen2-embeddinggemma2). Keep `torch.compile` (`enforce-eager` -25 %).
+- **EmbeddingGemma 2 on the CPU needs vLLM > 0.32.0:** v0.32.0's CPU attention ran its `ENCODER_ONLY` layers as
+  causal (cosine 0.77-0.91 with sentence-transformers), fixed by vllm-project/vllm#63738 (nightly from 2026-10-27).
+  Check new embedding models against sentence-transformers; the CPU attention only honours `ENCODER_ONLY` through
+  the fix or the `EncoderOnlyAttention` wrapper. Matryoshka `dimensions` need
+  `hf-overrides: {"matryoshka_dimensions": [...]}`. On the Threadripper 3970X: 4300-4700 t/s, 2x llama.cpp.
 
 ## Images and patches
 
@@ -231,6 +239,8 @@ What has given the largest gains, roughly in order:
 - Recurring reasons vLLM loses: ~1-1.35 GiB of runtime overhead on 16 GB cards, Triton attention scaling worse with
   the context on GPUs without tensor cores, page padding of sliding-window models, and the MTP drafter not fitting.
   llama.cpp also starts in ~15 s and unloads when idle; vLLM holds its VRAM and starts in 1.5-7 min.
+- **Embeddings on the CPU:** vLLM's CPU image was 2x faster than llama.cpp for EmbeddingGemma 2 on the Threadripper
+  3970X (it batches up to 64 texts per step; llama.cpp one per slot).
 
 ## Methodology
 

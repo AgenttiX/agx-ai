@@ -12,6 +12,8 @@ max-model-len: 8192
 # 500-token texts. 4096-16384 batched tokens were within the noise (32768 was slower for 500-token texts).
 max-num-seqs: 64
 max-num-batched-tokens: 8192
+# The attention backend is left to vLLM (it logs TRITON_ATTN): attention-backend: CPU_ATTN was as fast (-2 %).
+# torch.compile (the default) is 25 % faster than enforce-eager: true.
 # Text only: the vision and audio encoders are not used.
 limit-mm-per-prompt: {"image": 0, "video": 0, "audio": 0}
 # Matryoshka truncation with the dimensions parameter of the API (the dimensions of the model card); vLLM renormalizes.
