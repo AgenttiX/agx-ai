@@ -204,6 +204,10 @@ What has given the largest gains, roughly in order:
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is
   repacked on the CPU at load (more RAM).
+- **CPU (Zen 2, AVX2), compute-bound embedding models:** the speed does not follow the bits per weight. Qwen3-Embedding-4B:
+  f16/Q8_0/Q4_0/Q4_K_M/Q5_K_M/Q6_K = 200/220/253/295/295/300 t/s; Qwen3-Embedding-0.6B: f16/Q8_0/Q6_K/Q4_K_M =
+  1155/1285/1385/1575 t/s; EmbeddingGemma 2: BF16 = F16 = F32 = Q8_0 within 5 %. The repacked Q4_0 lost to the
+  K-quants. Check the embeddings against FP32 (0.6B: Q8_0 0.998-0.999, Q6_K 0.989-0.995, 4-bit 0.91-0.98).
 
 ## Embedding servers
 
@@ -214,6 +218,10 @@ What has given the largest gains, roughly in order:
   ctx-size = 8192`. On the Threadripper 3970X CPU (zen2-embeddinggemma2): 8 slots (the texts of a request share a
   ubatch; 4 was as fast for 500-token texts, 16 slower), BF16 = F16 = F32 = Q8_0 within 5 % (compute-bound), flash
   attention off 2.4x slower, 2200-2300 t/s. vLLM's CPU image was 2x faster for the same model.
+- **Causal embedding models (Qwen3-Embedding) on the CPU:** `pooling = last`, any ubatch of 1024-8192 (inputs are
+  split), 4 slots, Q8_0 for 0.6B (1290 t/s on the Threadripper 3970X) and Q6_K for 4B (300 t/s). vLLM was 1.5x faster
+  for 0.6B but 1.7x slower for 4B (FP32). A test server without the router needs `--kv-unified`, or each slot gets
+  only `ctx-size / parallel` tokens.
 - **Routers list the whole Hugging Face cache:** a request for another cached model loads it and, with
   `models-max = 1`, evicts the embedding model. Dedicated embedding routers set `LLAMA_ARG_MODELS_AUTOLOAD=false`
   (the `load-on-startup` model still loads). `llama_cpp_bench_http.py --tests embedding` triggered this until

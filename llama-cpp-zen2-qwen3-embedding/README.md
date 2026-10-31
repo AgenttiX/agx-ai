@@ -91,8 +91,8 @@ starting with "zen2 llama.cpp b12004 Qwen3-Embedding").
 - One thread per physical core, pinned (~4 % faster), and flash attention (2.6 times faster for 500-token texts),
   as for EmbeddingGemma 2.
 - The model is causal, so long inputs are split into ubatches, and 1024-8192 made no difference.
-- The 0.6B model is compute-bound: Q8_0 was 11-19 % faster than f16. The 4B model reads more weights per token, and
-  Q6_K was 17-43 % faster than Q8_0.
+- Q8_0 was 11-19 % faster than f16 for the 0.6B model, and Q6_K 17-43 % faster than Q8_0 for the 4B model (see the
+  optimization below for the other types).
 - Cosine similarity with sentence-transformers (FP32 on the CPU; six texts of 6-1500 tokens): 0.6B f16 1.00000,
   0.6B Q8_0 0.9983-0.9994, 4B Q8_0 0.9994-0.9996, 4B Q6_K 0.9933-0.9978. vLLM (FP32): 1.00000 for both.
 
@@ -116,6 +116,41 @@ then ranked all chunks for each question, without an instruction, as PaperQA2 do
 - Q8_0 retrieves as well as f16 for the 0.6B model (two questions of 291 dropped out of the top 5).
 - On this corpus, the 4B model is no better than the 0.6B model (within a few questions), at 4.4 times the time. On
   the PaperQA2 corpus of physics papers, it was 3 points better at R@10, so the choice depends on the documents.
+
+## Optimization with the optimize-llama-cpp skill (2026-10-31)
+
+The image, flash attention, ubatch, threads, slots, pinning, mlock and the router settings were measured above or in
+[`../llama-cpp-zen2-embeddinggemma2`](../llama-cpp-zen2-embeddinggemma2/README.md); the steps of the skill for GPUs
+(MTP, KV cache type, `n-cpu-moe`, vision encoder, VRAM headroom) do not apply. The remaining candidates were the
+quantization types, as llama.cpp repacks Q4_0 for AVX2. Q6_K, Q4_K_M and Q4_0 of the 0.6B model and Q4_0 of the 4B
+model were converted from the f16 GGUFs with `llama-quantize` (b12004); the others are Qwen's. Final settings, two
+runs each, the cosine similarity with sentence-transformers (FP32) for the six texts of the quality check:
+
+| 0.6B (64 texts) | 500-token texts | 100-token texts | Cosine similarity |
+|---|---|---|---|
+| f16 | 1150-1160 t/s | 1170-1180 t/s | 1.00000 |
+| **Q8_0** (this preset) | **1280-1290 t/s** | **1380-1400 t/s** | 0.9983-0.9994 |
+| Q6_K | 1380-1390 t/s | 1340-1350 t/s | 0.9886-0.9945 |
+| Q4_K_M | 1560-1590 t/s | 1670-1700 t/s | 0.955-0.976 |
+| Q4_0 | 1515-1517 t/s | 1673-1677 t/s | 0.907-0.944 |
+
+| 4B (16 texts) | 500-token texts | 100-token texts | Cosine similarity |
+|---|---|---|---|
+| f16 | 200 t/s | 200 t/s | 1.00000 |
+| Q8_0 | 210-230 t/s | 231-234 t/s | 0.9994-0.9996 |
+| **Q6_K** (this preset) | **300 t/s** | **273 t/s** | 0.9933-0.9978 |
+| Q5_K_M | 295 t/s | 269 t/s | 0.990-0.995 |
+| Q4_K_M | 293-295 t/s | 299-300 t/s | 0.976-0.987 |
+| Q4_0 | 253 t/s | 261-262 t/s | 0.956-0.975 |
+| Q6_K with 16 threads (cores 0-15) | 181 t/s | 168 t/s | |
+
+- The speed does not follow the bits per weight: the K-quant kernels (Q6_K, Q5_K_M, Q4_K_M) were the fastest for the
+  4B model, and the repacked Q4_0 was slower than them.
+- For the 0.6B model, the 4-bit types are 20-25 % faster than Q8_0, but their embeddings are clearly further from FP32
+  (0.91-0.98), so they were not tested for retrieval. Q6_K gains only 7 % for 500-token texts and loses 3 % for
+  100-token texts. Q8_0 stays.
+- For the 4B model, Q6_K stays; Q4_K_M is as fast with 4-bit losses.
+- With 16 threads, the 4B model was 40 % slower, so it is compute-bound like the 0.6B model.
 
 ## Commands
 

@@ -96,8 +96,9 @@ did not fit into the cache (18,688 tokens), and the results agree with the salte
 - 16384 batched tokens were 6 % faster than 8192 for 500-token texts; the KV cache has to hold them (224 KiB per
   token in FP32 for the 0.6B model, 288 KiB for the 4B model), hence `VLLM_CPU_KVCACHE_SPACE=6`.
 - The prefix cache costs nothing and is left on (it helps when many queries share an instruction).
-- The 4B model in FP32 has 16 GB of weights, which likely makes it memory-bound on this CPU: llama.cpp with the Q6_K
-  GGUF (3.3 GB) is up to 1.7 times faster for 500-token texts and as fast for 100-token texts. vLLM has no BF16 or int8 path that would help on Zen 2 (see
+- For the 4B model, llama.cpp with the Q6_K GGUF is up to 1.7 times faster for 500-token texts and as fast for
+  100-token texts, and even its f16 GGUF (200 t/s) is faster than vLLM in FP32. The model is compute-bound on this CPU
+  (16 llama.cpp threads were 40 % slower than 32), and llama.cpp's Q6_K kernels are its fastest. vLLM has no BF16 or int8 path that would help on Zen 2 (see
   [`../vllm-zen2-embeddinggemma2`](../vllm-zen2-embeddinggemma2/README.md)).
 - The settings of the EmbeddingGemma 2 configuration (FP32, automatic thread binding, `torch.compile`) were kept;
   they are measured in [`../vllm-zen2-embeddinggemma2/README.md`](../vllm-zen2-embeddinggemma2/README.md).
