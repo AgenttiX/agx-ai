@@ -11,7 +11,7 @@
 # as they only appear when something first uses the GPU. Without them, Proxmox fails to autostart the agx-ai
 # LXC container with "TASK ERROR: Device /dev/nvidia-uvm-tools does not exist".
 #
-# Settings can be overridden in /etc/default/nvidia-power-limit.
+# Settings can be overridden in /etc/default/nvidia-limit.
 set -u
 
 # Power limit in W (nvidia-smi -pl). Empty = not changed (the default of the card is 240 W). E.g. 170 for the power
@@ -25,13 +25,13 @@ GPU_BUS_ID="00000000:81:00.0"
 WAIT_TIMEOUT_S=300
 WAIT_INTERVAL_S=5
 
-if [ -r /etc/default/nvidia-power-limit ]; then
+if [ -r /etc/default/nvidia-limit ]; then
     # shellcheck source=/dev/null
-    . /etc/default/nvidia-power-limit
+    . /etc/default/nvidia-limit
 fi
 
 log() {
-    echo "nvidia-power-limit: $*"
+    echo "nvidia-limit: $*"
 }
 
 create_device_nodes() {

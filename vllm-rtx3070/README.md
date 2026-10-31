@@ -49,7 +49,7 @@ no display, and 7839 MiB of its 8192 MiB are usable.
 | CPU | AMD EPYC 7302 (Zen 2, 16 cores, 32 threads; AVX2, no AVX-512), of which the container gets 24 threads (see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)) |
 | RAM | 256 GB DDR4-2400 ECC RDIMM: 8 × 32 GB SK Hynix HMA84GR7AFR4N-UH (dual-rank), one per channel in all 8 channels (theoretical 153.6 GB/s); 144 GiB available to the container (128 GiB until 2026-10-13). ~60 GB/s copy bandwidth in the container (PyTorch, 16 threads) |
 | NPU | none |
-| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../nvidia-power-limit`](../nvidia-power-limit/README.md), PCIe 4.0 x16 |
+| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../nvidia-limit`](../nvidia-limit/README.md), PCIe 4.0 x16 |
 | GPU architecture | Ampere (GA104, sm_86) |
 | VRAM | 8 GB GDDR6 (8192 MiB) |
 

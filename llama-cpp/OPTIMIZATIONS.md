@@ -245,7 +245,7 @@ What has given the largest gains, roughly in order:
 
 - RTX 3070 "fell off the bus" (Xid 79) under long full-load prompts: a 170 W power limit or a clock lock
   (`nvidia-smi -lgc 210,1600`: -25 % power, -6 % pp, same tg), set at boot by
-  [`../nvidia-power-limit`](../nvidia-power-limit).
+  [`../nvidia-limit`](../nvidia-limit).
 - Laptops: check the actual power limit (`nvidia-smi -q -d POWER`; the T550 was capped at 20 W instead of 30 W, -35 %)
   and close background apps ([`../llama-cpp-t550/free-ram.ps1`](../llama-cpp-t550/free-ram.ps1)).
 

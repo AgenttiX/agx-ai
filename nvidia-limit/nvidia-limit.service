@@ -1,6 +1,6 @@
 [Unit]
 Description=Lock the NVIDIA GPU core clock (and optionally set the power limit) and create the NVIDIA device nodes
-Documentation=file:///usr/local/sbin/nvidia-power-limit.sh
+Documentation=file:///usr/local/sbin/nvidia-limit.sh
 After=systemd-modules-load.service nvidia-persistenced.service
 Wants=nvidia-persistenced.service
 # Run before Proxmox autostarts the guests, as the agx-ai LXC container needs /dev/nvidia-uvm-tools.
@@ -9,7 +9,7 @@ Before=pve-guests.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/nvidia-power-limit.sh
+ExecStart=/usr/local/sbin/nvidia-limit.sh
 # The script waits up to 300 s for the GPU. Proxmox waits for this before starting the guests.
 TimeoutStartSec=360
 

@@ -1,4 +1,4 @@
-# NVIDIA power limit
+# NVIDIA clock and power limits
 
 A script and a systemd service that lock the core clock (and optionally set the power limit) of the RTX 3070 on the
 Proxmox host `agx-h12` at boot, and create the NVIDIA device nodes for the `agx-ai` LXC container.
@@ -15,11 +15,11 @@ The clock lock and the power limit reset at every reboot of the host. Install th
 `agx-h12` (from this directory):
 
 ```sh
-sudo install -m 755 nvidia-power-limit.sh /usr/local/sbin/nvidia-power-limit.sh
-sudo install -m 644 nvidia-power-limit.service /etc/systemd/system/nvidia-power-limit.service
+sudo install -m 755 nvidia-limit.sh /usr/local/sbin/nvidia-limit.sh
+sudo install -m 644 nvidia-limit.service /etc/systemd/system/nvidia-limit.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now nvidia-power-limit.service
-systemctl status nvidia-power-limit.service
+sudo systemctl enable --now nvidia-limit.service
+systemctl status nvidia-limit.service
 nvidia-smi -q -d CLOCK | grep -A2 "Locked\|Max Clocks"
 ```
 
@@ -28,7 +28,7 @@ installing the new one as above):
 
 ```sh
 sudo systemctl disable --now gpu-power-limit.service
-[ -e /etc/default/gpu-power-limit ] && sudo mv /etc/default/gpu-power-limit /etc/default/nvidia-power-limit
+[ -e /etc/default/gpu-power-limit ] && sudo mv /etc/default/gpu-power-limit /etc/default/nvidia-limit
 sudo rm /etc/systemd/system/gpu-power-limit.service /usr/local/sbin/gpu-power-limit.sh
 ```
 
@@ -38,19 +38,19 @@ card's default of 240 W, see [Locking the GPU clock](../llama-cpp-rtx3070/README
 `/dev/nvidia-uvm-tools`, before Proxmox starts the guests. Previously, the autostart of the `agx-ai` container failed
 with `TASK ERROR: Device /dev/nvidia-uvm-tools does not exist`, as the node only appears when something first uses
 the GPU, so the container can now be set to start at boot. The settings (`POWER_LIMIT_W`, `MAX_CLOCK_MHZ`,
-`GPU_BUS_ID`, `WAIT_TIMEOUT_S`) can be overridden in `/etc/default/nvidia-power-limit`, e.g.:
+`GPU_BUS_ID`, `WAIT_TIMEOUT_S`) can be overridden in `/etc/default/nvidia-limit`, e.g.:
 
 ```sh
-echo 'MAX_CLOCK_MHZ=1700' | sudo tee -a /etc/default/nvidia-power-limit
-sudo systemctl restart nvidia-power-limit.service
+echo 'MAX_CLOCK_MHZ=1700' | sudo tee -a /etc/default/nvidia-limit
+sudo systemctl restart nvidia-limit.service
 ```
 
 An empty value leaves that setting unchanged; `POWER_LIMIT_W` is empty by default. To also set the 170 W power
 limit, e.g. as a safety net against short power spikes:
 
 ```sh
-echo 'POWER_LIMIT_W=170' | sudo tee -a /etc/default/nvidia-power-limit
-sudo systemctl restart nvidia-power-limit.service
+echo 'POWER_LIMIT_W=170' | sudo tee -a /etc/default/nvidia-limit
+sudo systemctl restart nvidia-limit.service
 ```
 
 Restarting the service does not raise a power limit that was set earlier (also not one set by an earlier version of

@@ -27,7 +27,7 @@ processed, see [Prompt cache](#prompt-cache).
 
 **This GPU requires the core clock lock of 1600 MHz or the 170 W power limit.** It is from a friend's old
 cryptocurrency mining setup and has therefore degraded over time, so this is specific to this card, not to the
-RTX 3070 in general. The clock lock is set by [`../nvidia-power-limit`](../nvidia-power-limit/README.md) on the host.
+RTX 3070 in general. The clock lock is set by [`../nvidia-limit`](../nvidia-limit/README.md) on the host.
 Without either, the GPU crashes under long prompts, see [Xid 79 crashes](#xid-79-crashes) and
 [Locking the GPU clock](#locking-the-gpu-clock).
 
@@ -36,7 +36,7 @@ Without either, the GPU crashes under long prompts, see [Xid 79 crashes](#xid-79
 ### Clock lock (and power limit) on agx-h12
 
 The clock lock is set at boot by the script and the systemd service in
-[`../nvidia-power-limit`](../nvidia-power-limit/README.md), which also has the installation instructions.
+[`../nvidia-limit`](../nvidia-limit/README.md), which also has the installation instructions.
 
 ### Locking the GPU clock
 
@@ -64,7 +64,7 @@ Suggested test sequence, each with 20 consecutive near-full-context prompts whil
 3. If 2 passes, 1750 MHz without the power limit for more speed. If it fails, 1400 MHz.
 4. Optionally the memory clock at 5001 MHz, if the GPU still runs hot.
 Keep the setting that passes with the highest prompt processing speed, and set it in
-`/etc/default/nvidia-power-limit`.
+`/etc/default/nvidia-limit`.
 
 Results with `n-cpu-moe = 25`, ctx 77824 and 20 consecutive 75k-token prompts (the power and temperature without
 the clock lock are from the 20-run test with `n-cpu-moe = 24` and 63k-token prompts):
@@ -79,7 +79,7 @@ The clock lock reduces power by 25 % and temperature by 8-10 °C for 6 % slower 
 is not slower, as it is mostly limited by the experts on the CPU. As the GPU stays well below 170 W, the power limit
 only cuts short spikes, which the 5 s samples of `nvidia-smi dmon` do not show. Without the power limit, the results
 are practically identical, so the clock lock alone prevents the crashes (for comparison, `ubatch-size = 2048` without
-any limits crashed on the 5th prompt). [`../nvidia-power-limit`](../nvidia-power-limit/README.md) originally set both, the power limit as
+any limits crashed on the 5th prompt). [`../nvidia-limit`](../nvidia-limit/README.md) originally set both, the power limit as
 a safety net against spikes. Since 2026-10-13, it locks only the clock by default, as the power limit made no
 difference in these tests, and the tests of 2026-10-12 and -13 (e.g. a 119k-token prompt with the Gemma GPU model,
 80k with Qwen3.8-Flash-Next and the vLLM tests of [`../vllm-rtx3070`](../vllm-rtx3070) with prompts of up to 96k tokens)
