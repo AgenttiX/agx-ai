@@ -167,7 +167,7 @@
 <text x="925" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">agx-z2e</text>
 <text x="925" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper 3970X, 128 GB RAM</text>
 <text x="925" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
-<text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1220)</tspan></text>
+<text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1713)</tspan></text>
 <text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>

@@ -436,8 +436,9 @@ def build(specs: bool) -> str:
                 # with vllm-rtx3090-flash-next);
                 # Gemma 4 31B with llama-cpp-rtx3090/README.md, which is twice as fast as vLLM for it.
                 # Radeon VII: llama-cpp-radeon-vii/README.md (image v0.6.0), which is faster than vllm-radeon-vii.
-                # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test)
-                [(vllm, "Qwen3.8-27B", "128", "1220"), (vllm, "Qwen3.8-Flash-Next", "33", "1750"),
+                # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test); Qwen3.8-27B: prompt
+                # processing with the GPU unlock (2026-10-31), generation from 2026-10-26 (the unlock did not change it)
+                [(vllm, "Qwen3.8-27B", "128", "1713"), (vllm, "Qwen3.8-Flash-Next", "33", "1750"),
                  (llama, "Gemma 4 31B QAT", "77", "1060"), pub("Radeon VII (16 GB)"),
                  (llama, gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),

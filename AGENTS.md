@@ -34,6 +34,9 @@ abbreviated as `agx` in the hostnames.
   token generation speed, prompt processing speed, and notes (if there are any significant remarks).
   If the same model works significantly better on the same hardware with a different backend, mention this.
 - Keep `./llama-cpp/OPTIMIZATIONS.md` up to date with all llama.cpp optimizations, and `./vllm/OPTIMIZATIONS.md` with all vLLM optimizations.
+- When achieving a new performance record, check whether the computer is listed in `./structure/generate.py`, and whether it has the LLM model listed.
+  If yes, then update the performance numbers in it.
+  If the computer is listed but the LLM model is not, then mention this to the user.
 
 ## Benchmarking
 - Use the scripts in `./benchmark/` for benchmarking.
