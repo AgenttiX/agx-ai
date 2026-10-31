@@ -91,6 +91,12 @@ Check after a suspend:
 journalctl -k -b | grep -E 'gpu_unlock|PM: suspend'
 ```
 
+## Results
+
+- [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#gpu-unlock) (Qwen3.8-27B W4A16, vLLM, 2026-10-31):
+  prompt processing 40-52 % faster (1247 vs 822 t/s at 100k tokens of context), generation unchanged except
+  +11-13 % past 100k tokens of context.
+
 ## Recovery
 
 - To boot once without the unlock, press Shift or Esc during boot to show the GRUB menu (`GRUB_TIMEOUT_STYLE=hidden`),

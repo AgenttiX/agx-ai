@@ -234,6 +234,10 @@ What has given the largest gains, roughly in order:
 
 - RTX 3070: a 1600 MHz clock lock or 170 W limit is needed, as with llama.cpp. LXC does not permit
   `ulimits: memlock: -1`. Faster RAM and the `performance` governor are untried for CPU-expert runtimes.
+- GeForce RTX 30 series: [gpu-unlock](../nvidia-unlock/README.md) removes the half-rate cap of FP16/BF16 tensor-core
+  math with FP32 accumulation. On the RTX 3090 with HyperQwen (W4A16 Marlin), prompt processing was 40-52 % faster
+  and generation unchanged except +11-13 % past 100k tokens of context
+  (see [`../vllm-rtx3090-hyperqwen/README.md`](../vllm-rtx3090-hyperqwen/README.md#gpu-unlock)).
 
 ## vLLM or llama.cpp?
 

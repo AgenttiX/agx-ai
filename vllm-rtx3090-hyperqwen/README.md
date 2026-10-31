@@ -12,7 +12,7 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 
 | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
-| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1220 t/s at 6.4k, 820 t/s at 100k, 740 t/s at 136k | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the vision tower on the CPU (1 megapixel: ~7 s; 30-s 1080p video: ~40 s), which adds ~150 MiB to the VRAM peak and no other VRAM |
+| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1710 t/s at 6.4k, 1250 t/s at 100k, 1140 t/s at 128k with the [GPU unlock](#gpu-unlock) (without: 1220 / 820 / 750 t/s) | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the vision tower on the CPU (1 megapixel: ~7 s; 30-s 1080p video: ~40 s), which adds ~150 MiB to the VRAM peak and no other VRAM |
 
 Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
 with [`../vllm/vllm.patch`](../vllm/vllm.patch), GPTQ int4, MTP 2, Triton attention), measured on the same day with the
@@ -259,6 +259,30 @@ the conversation's images again (64 images: ~7.5 min), and each image takes ~100
 The text speed is the same as without vision within the run-to-run variation (back to back on 2026-10-28, a warm
 GPU: chat 119.5 vs 119.2 t/s, edits 269 vs 273 t/s, 105.6 / 84.4 vs 110.3 / 90.5 t/s at 6.4k / 32k tokens of context
 with a lower draft acceptance in that run, prompt processing within 2 %).
+
+## GPU unlock
+
+On 2026-10-31, with [gpu-unlock](../nvidia-unlock/README.md) 2.0.0 enabled (FP16/BF16 tensor-core math with FP32
+accumulation at the full rate instead of the half rate of GeForce cards), the production container with the same
+image and settings, measured once with the same tests (`--tests chat depth edit --repeat 2 --depth 6400 32000 100000
+128000 --edit-depth 0 32000`, label "z2e vllm-rtx3090-hyperqwen with gpu-unlock 2.0.0"), against the run of
+2026-10-26 before the unlock:
+
+| | Chat | Gen. 6.4k / 32k / 100k / 128k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 128k | Peak VRAM |
+|---|---|---|---|---|---|
+| Before (2026-10-26) | 136.4 | 128.4 / 109.7 / 79.9 / 67.1 | 290.3 / 266.7 | 1223 / 1066 / 822 / 753 | 21130 MiB |
+| **With the unlock** | 123.8 | 111.2 / 97.0 / 88.9 / 75.7 | 284.3 / 282.7 | **1713 / 1551 / 1247 / 1136** | 21500 MiB |
+| Change | -9 % | -13 % / -12 % / +11 % / +13 % | -2 % / +6 % | **+40 % / +45 % / +52 % / +51 %** | |
+
+- **Prompt processing is 40-52 % faster**, the more the longer the context: the W4A16 Marlin GEMMs and the attention
+  of the prefill run on the FP16 tensor cores. The time to the first token of a 100k-token prompt falls from 122 s to
+  80 s. The edit after 32k tokens of context gets a faster prompt (1589 vs 1056 t/s) as well.
+- **Generation did not get faster at short contexts.** It is limited by the memory bandwidth, which the unlock does not
+  change. The lower chat and 6.4k/32k figures are within the variation between days: the runs of 2026-10-28
+  (before the unlock) gave chat 119.2-119.5 t/s and 102.3-110.3 / 82.3-90.5 t/s at 6.4k / 32k, i.e. the same as or
+  lower than now. The generation at 100k and 128k (+11-13 %) is higher than on either earlier day, probably because the attention over
+  the long KV cache in DFlash2's 8-token verify batches is partly compute-bound.
+- The peak VRAM (21500 MiB) is the same as in the runs of 2026-10-28 (21478-21500 MiB).
 
 ## Other notes
 
