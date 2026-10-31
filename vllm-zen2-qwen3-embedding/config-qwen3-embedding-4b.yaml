@@ -1,0 +1,17 @@
+# vllm serve --config for Qwen3-Embedding-4B on the CPU (Threadripper 3970X, Zen 2). The threads and the KV cache
+# size are set in docker-compose.yml. See README.md for the measurements behind these settings.
+model: Qwen/Qwen3-Embedding-4B
+served-model-name: Qwen/Qwen3-Embedding-4B
+runner: pooling
+# FP32: the Zen 2 CPU has no BF16 instructions (BF16 and FP16 were 5-6 times slower for EmbeddingGemma 2, see
+# ../vllm-zen2-embeddinggemma2/README.md). The BF16 checkpoint converts to FP32 exactly.
+dtype: float32
+# Inputs of up to 8192 tokens (the model supports 32768)
+max-model-len: 8192
+# 64 sequences and 16384 batched tokens as for the 0.6B model (16 sequences and 8192 tokens were as fast within the
+# noise). The KV cache (VLLM_CPU_KVCACHE_SPACE) must hold them.
+max-num-seqs: 64
+max-num-batched-tokens: 16384
+# vLLM enables the prefix cache for this causal model. Off was as fast.
+# Matryoshka truncation with the dimensions parameter of the API (any size up to 2560, see the model card)
+hf-overrides: {"is_matryoshka": true}

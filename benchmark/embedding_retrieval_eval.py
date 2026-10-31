@@ -39,11 +39,12 @@ import urllib.request
 from llama_cpp_bench_http import host_name, read_env_key
 import numpy as np
 
-QUESTION_PROMPT = """Below is an excerpt of a physics paper. Write one specific question that this excerpt answers, \
-as a researcher would ask it when searching a library of papers on the topic. The question must be answerable from \
-this excerpt alone, must not refer to "the excerpt", "the paper" or "the authors", and should name the concepts \
-involved instead of quoting long phrases. If the excerpt is only a reference list, a title page, author \
-affiliations, acknowledgements or otherwise has no substantive content, answer only SKIP.
+QUESTION_PROMPT = """Below is an excerpt of a document (e.g. a paper, documentation or source code). Write one \
+specific question that this excerpt answers, as someone would ask it when searching a library of such documents on the \
+topic. The question must be answerable from this excerpt alone, must not refer to "the excerpt", "the paper", \
+"the code" or "the authors", and should name the concepts involved instead of quoting long phrases. If the excerpt \
+is only a reference list, a title page, author affiliations, acknowledgements or otherwise has no substantive content, \
+answer only SKIP.
 
 Excerpt:
 {text}

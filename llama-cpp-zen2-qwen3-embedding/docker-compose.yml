@@ -1,0 +1,32 @@
+# Qwen3-Embedding on the CPU of agx-z2e (Threadripper 3970X) with llama.cpp. See README.md.
+# The same port as ../vllm-zen2-qwen3-embedding and the EmbeddingGemma 2 configurations (9933): run only one of them.
+services:
+  llama-cpp:
+    # The CPU image (it loads its haswell kernels: AVX2, FMA, F16C), pinned
+    image: ghcr.io/ggml-org/llama.cpp:server-b12004
+    container_name: llama-cpp-zen2-qwen3-embedding
+    environment:
+      # The image sets LLAMA_ARG_PORT=8080, which would override the port of config.ini.
+      LLAMA_ARG_PORT: "9931"
+      # The router lists all models of the Hugging Face cache. Do not load any of them on request: this is an
+      # embedding server, and with models-max = 1 an LLM would evict the embedding model.
+      LLAMA_ARG_MODELS_AUTOLOAD: "false"
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    restart: unless-stopped
+    # For mlock in the presets
+    ulimits:
+      memlock: -1
+    ports:
+      - "9933:9931"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      # Select the model here
+      - ./preset-qwen3-embedding-0.6b.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-qwen3-embedding-4b.ini:/etc/llama.cpp/preset.ini:ro
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

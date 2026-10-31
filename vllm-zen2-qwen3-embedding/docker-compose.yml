@@ -1,0 +1,40 @@
+# Qwen3-Embedding on the CPU of agx-z2e (Threadripper 3970X) with vLLM. See README.md.
+# The same port as ../llama-cpp-zen2-qwen3-embedding and the EmbeddingGemma 2 configurations (9933): run only one of
+# them. The API key is that of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that clients
+# work with both.
+services:
+  vllm:
+    # The CPU build of vLLM, unchanged: the same nightly build (0.33.0rc1.dev320) as ../vllm-zen2-embeddinggemma2.
+    # v0.32.0 was as fast for Qwen3-Embedding-0.6B (its causal attention is not affected by the bug of README.md there).
+    # No GPUs: with them (and libcuda), Triton would select its CUDA driver instead of the CPU one.
+    image: vllm/vllm-openai-cpu:nightly-335dd77b09161c5d63139b4e7ae51bb9928305b1
+    container_name: vllm-zen2-qwen3-embedding
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # GiB of RAM for the KV cache in FP32: it has to hold max-num-batched-tokens (16384), i.e. 3.5 GiB for the 0.6B
+      # model (224 KiB per token) and 4.5 GiB for the 4B model (288 KiB per token).
+      VLLM_CPU_KVCACHE_SPACE: "6"
+      # The default thread binding (auto) pins one OpenMP thread to each physical core and leaves one core for the
+      # engine and the API server.
+    ipc: host
+    restart: unless-stopped
+    ports:
+      - "9933:8000"
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - vllm-cache:/root/.cache/vllm
+      # Select the model here
+      - ./config-qwen3-embedding-0.6b.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-qwen3-embedding-4b.yaml:/etc/vllm/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+
+volumes:
+  vllm-cache:

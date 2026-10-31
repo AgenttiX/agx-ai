@@ -231,6 +231,15 @@ class VllmServer(Server):
             "total_slots": 1,
         }
 
+    def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
+        """Embed a batch of texts with a random ``cache_salt``.
+
+        vLLM enables the prefix cache for causal pooling models (e.g. Qwen3-Embedding), so repeated texts would
+        otherwise be served from it.
+        """
+        return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float",
+                                               "cache_salt": os.urandom(8).hex()})
+
     def tokenize(self, model: str, text: str) -> list[int]:
         """Convert text to token IDs."""
         return self.request("/tokenize", {"model": model, "prompt": text, "add_special_tokens": False})["tokens"]
