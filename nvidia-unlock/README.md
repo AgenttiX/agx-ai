@@ -74,18 +74,22 @@ journalctl -k -b | grep -E 'gpu_unlock|NVRM: loading'
 lspci -nnk -s 0000:01:00.0
 ```
 
-## Suspend (not verified)
+## Suspend (works)
 
-gpu-unlock re-applies the unlock after resume from a PM notifier that runs just before the notifier
-from which `nvidia` resumes its cards with `NVreg_UseKernelSuspendNotifiers=1`.
-On this computer, the driver uses `UseKernelSuspendNotifiers: 0` (the package default, see `/proc/driver/nvidia/params`)
-together with `NVreg_PreserveVideoMemoryAllocations=1` and the `nvidia-suspend`/`nvidia-resume` systemd services.
-In that case `nvidia` probably resumes the card before the notifier of `gpu_unlock`,
-which then finds GSP-RM running and leaves the card as it is,
-so the card would run at the locked speed after a suspend.
-Check `journalctl -k -b | grep gpu_unlock` after a suspend.
-A possible fix is `options nvidia NVreg_UseKernelSuspendNotifiers=1` in `/etc/modprobe.d/`
-followed by `sudo update-initramfs -u`, but this changes the suspend handling of the driver and needs testing.
+Tested on 2026-10-31 with a suspend to RAM (S3, `deep`) and resume:
+the unlock is re-applied during the resume, before `PM: suspend exit`,
+and the kernel log shows `gpu_unlock: unlocked again after resume` with `ret=0` for both passes.
+The `nvidia-resume` systemd service runs only after this, and there were no NVRM errors or Xids after the resume.
+
+This works with the package defaults of the driver: `UseKernelSuspendNotifiers: 0`
+(see `/proc/driver/nvidia/params`) together with `NVreg_PreserveVideoMemoryAllocations=1`
+and the `nvidia-suspend`/`nvidia-resume` systemd services.
+Changing `NVreg_UseKernelSuspendNotifiers` is therefore not needed.
+
+Check after a suspend:
+```bash
+journalctl -k -b | grep -E 'gpu_unlock|PM: suspend'
+```
 
 ## Recovery
 
