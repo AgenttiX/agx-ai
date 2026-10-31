@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Locks the core clock (and optionally sets the power limit) of the NVIDIA GPU on the Proxmox host agx-h12 at boot.
 #
-# The RTX 3070 crashes with Xid 79 ("GPU has fallen off the bus") under long full loads at the default settings,
-# but has been stable with a 170 W power limit, and with the core clock locked to 1600 MHz (with or without the power
-# limit). By default, only the clock is locked: the GPU then stays at ~120-130 W, well below 170 W, and the results
+# The RTX 3070 is from an old cryptocurrency mining setup and has degraded over time: it crashes with Xid 79 ("GPU has
+# fallen off the bus") under long full loads at the default settings, but has been stable with a 170 W power limit,
+# and with the core clock locked to 1600 MHz (with or without the power limit). By default, only the clock is locked: the GPU then stays at ~120-130 W, well below 170 W, and the results
 # were the same with and without the power limit. See ../llama-cpp-rtx3070/README.md.
 # The settings reset at every reboot, hence this script.
 #

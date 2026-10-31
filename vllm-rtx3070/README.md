@@ -49,12 +49,13 @@ no display, and 7839 MiB of its 8192 MiB are usable.
 | CPU | AMD EPYC 7302 (Zen 2, 16 cores, 32 threads; AVX2, no AVX-512), of which the container gets 24 threads (see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md)) |
 | RAM | 256 GB DDR4-2400 ECC RDIMM: 8 × 32 GB SK Hynix HMA84GR7AFR4N-UH (dual-rank), one per channel in all 8 channels (theoretical 153.6 GB/s); 144 GiB available to the container (128 GiB until 2026-10-13). ~60 GB/s copy bandwidth in the container (PyTorch, 16 threads) |
 | NPU | none |
-| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../nvidia-power-limit`](../nvidia-power-limit), PCIe 4.0 x16 |
+| GPU | NVIDIA GeForce RTX 3070, headless; driver 610.57.04 (CUDA 13.3), core clock locked to 1600 MHz by [`../nvidia-power-limit`](../nvidia-power-limit/README.md), PCIe 4.0 x16 |
 | GPU architecture | Ampere (GA104, sm_86) |
 | VRAM | 8 GB GDDR6 (8192 MiB) |
 
-**The 1600 MHz clock lock (or the 170 W power limit) is required**, as for llama.cpp: without it, long prompts can
-crash the GPU (Xid 79), see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md#xid-79-crashes). During these
+**The 1600 MHz clock lock (or the 170 W power limit) is required**, as for llama.cpp: this GPU is from a friend's
+old cryptocurrency mining setup and has therefore degraded over time, so without the lock, long prompts can crash it
+(Xid 79), see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md#xid-79-crashes). During these
 tests, the clock lock was active (1590 MHz at ~125 W under full load) and the power limit was the default 240 W,
 which is now also the default of the script.
 
@@ -503,7 +504,7 @@ groups of 32 and chunks of 2048 tokens; one run each, 2026-10-30/31):
 - **GPU fault**: the first chat request of the verification benchmark of 86016 tokens on the production server
   (2026-10-31 01:12) ended in `CUDA error: unspecified launch failure`, after which the driver no longer found the
   GPU (`nvidia-smi`: "Unknown Error"). It was not an out-of-memory error, and the same settings had passed on the
-  test server, but the GPU must be reset (or the host rebooted) before the remaining production tests.
+  test server, but the GPU needs a cold boot of the host (see [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070/README.md#xid-79-crashes)) before the remaining production tests.
 - **Prefill chunks of 4096 tokens** (as on [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md)) do
   not fit even with groups of 16: the activations of the larger chunk need more than the groups free.
 - **`expandable_segments`** changed neither the peak nor the KV cache: the runtime allocates its buffers once, so
