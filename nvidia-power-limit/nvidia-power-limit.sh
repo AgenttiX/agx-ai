@@ -4,20 +4,20 @@
 # The RTX 3070 crashes with Xid 79 ("GPU has fallen off the bus") under long full loads at the default settings,
 # but has been stable with a 170 W power limit, and with the core clock locked to 1600 MHz (with or without the power
 # limit). By default, only the clock is locked: the GPU then stays at ~120-130 W, well below 170 W, and the results
-# were the same with and without the power limit. See ../README.md.
+# were the same with and without the power limit. See ../llama-cpp-rtx3070/README.md.
 # The settings reset at every reboot, hence this script.
 #
 # The script also creates the NVIDIA device nodes, including /dev/nvidia-uvm and /dev/nvidia-uvm-tools,
 # as they only appear when something first uses the GPU. Without them, Proxmox fails to autostart the agx-ai
 # LXC container with "TASK ERROR: Device /dev/nvidia-uvm-tools does not exist".
 #
-# Settings can be overridden in /etc/default/gpu-power-limit.
+# Settings can be overridden in /etc/default/nvidia-power-limit.
 set -u
 
 # Power limit in W (nvidia-smi -pl). Empty = not changed (the default of the card is 240 W). E.g. 170 for the power
 # limit that was also stable without the clock lock.
 POWER_LIMIT_W=
-# Maximum core clock in MHz (nvidia-smi -lgc). Empty = not locked. See ../README.md.
+# Maximum core clock in MHz (nvidia-smi -lgc). Empty = not locked. See ../llama-cpp-rtx3070/README.md.
 MAX_CLOCK_MHZ=1600
 # PCI bus ID of the GPU, as shown by nvidia-smi
 GPU_BUS_ID="00000000:81:00.0"
@@ -25,13 +25,13 @@ GPU_BUS_ID="00000000:81:00.0"
 WAIT_TIMEOUT_S=300
 WAIT_INTERVAL_S=5
 
-if [ -r /etc/default/gpu-power-limit ]; then
+if [ -r /etc/default/nvidia-power-limit ]; then
     # shellcheck source=/dev/null
-    . /etc/default/gpu-power-limit
+    . /etc/default/nvidia-power-limit
 fi
 
 log() {
-    echo "gpu-power-limit: $*"
+    echo "nvidia-power-limit: $*"
 }
 
 create_device_nodes() {
