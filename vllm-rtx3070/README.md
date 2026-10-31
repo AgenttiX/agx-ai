@@ -16,11 +16,11 @@ time. All use the API key of the llama.cpp server. [`docker-compose.yml`](docker
 | Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
 | `vllm`: [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), experts in RAM, MTP 2, int8 KV cache | 98304 | 7582 MiB | ~12 GiB pinned weights, 16 GiB CPU KV cache | chat 32 t/s; 30 / 27 t/s at 6.4k / 36.5k | 1100 t/s at 6.4k, 870 t/s at 36.5k, 580 t/s at 96k | **llama.cpp is 1.7 times as fast** for this model on this GPU (see below) |
-| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 75776 | 7658 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.6 t/s; 24.5 / 24.3 / 24.1 t/s at 6.4k / 55k / 74.6k; 24.2 t/s in code edits | 353 t/s at 6.4k, 581 t/s at 24-55k, 513 t/s at 70k | up to 64 images and 1 video per request (vision tower on the CPU: ~15 s per image, 55-75 s per video); no CPU KV offloading; prefix cache blocks of 1600 tokens |
+| **`flash-next`** | Qwen3.8-Flash-Next W4A16 with int8 dense layers and an int4 lm_head, experts in RAM and computed on the CPU (int8 activations), int8 KV cache, no MTP | 86016 | 7610 MiB | 72 GiB container limit: 57.9 GiB of experts, the n-gram table (47.6 GiB) through the page cache | chat 24.2 t/s; 24.0 / 24.0 t/s at 6.4k / 85k; 22.8 t/s in code edits | 320-355 t/s at 6.4k, 525-545 t/s at 32k, 482 t/s at 85k | up to 64 images and 1 video per request (vision tower on the CPU: ~15 s per image, 55-75 s per video); no CPU KV offloading; prefix cache blocks of 1600 tokens |
 | `vllm`: [`config-qwen3.8-flash-next.yaml`](config-qwen3.8-flash-next.yaml) | The same model with stock vLLM (the GPU reads the experts over PCIe), FP8 KV cache | 57344 | 7342 MiB | ~107 GiB pinned weights, 8 GiB CPU KV cache | chat 15.4 t/s; 15.4 / 15.4 t/s at 6.4k / 32k | 377 t/s at 6.4k, 404 t/s at 32k, 455 t/s at 56k | images and videos; CPU KV offloading (an evicted conversation comes back from RAM); prefix cache blocks of 3136 tokens |
 
-**Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with 32 % more
-context (75776 vs 57344 tokens), and processes long prompts faster (581 vs ~410-455 t/s), but short ones slightly slower (353 vs 377 t/s at
+**Qwen3.8-Flash-Next: the `flash-next` service is 1.6 times as fast** as stock vLLM in generation with 50 % more
+context (86016 vs 57344 tokens), and processes long prompts faster (525-545 vs ~404-455 t/s), but short ones slightly slower (320-355 vs 377 t/s at
 6.4k tokens). It also reprocesses less of a returning conversation, as its prefix cache blocks are half as large. Stock
 vLLM keeps evicted conversations in its CPU KV cache, which the runtime does not support, and its answers were
 slightly closer to those of the reference in the quality test (see [CPU experts](#cpu-experts-2026-10-26)).
@@ -375,7 +375,7 @@ the end of the step):
 | 16 threads, one per core | 0.75 GiB | 28672 | 22.8 | 23.4 / - | 430 / - t/s | 23 / 18 / 1.7 ms | 7574 MiB |
 | 8 threads, GPU share 0.4 | 0.75 GiB | 28672 | 23.6 | 23.5 / - | 358 / - t/s | 20 / 20.5 / 1.8 ms | 7574 MiB |
 | 8 threads, prefill groups of 48 | 0.98 GiB | 49152 | 24.6 | 23.9 / 26.1 (46k) | 343 / 593 (46k) t/s | 19 / 18 / 1.7 ms | 7674 MiB |
-| **8 threads, prefill groups of 32 (current)** | 1.14 GiB, 73910 tokens | 57344 | 24.6 | 24.5 / 24.3 (55k) | 353 / 581 (55k) t/s | 20-24 / 18 / 1.7 ms | 7658 MiB |
+| **8 threads, prefill groups of 32 (current until 2026-10-30)** | 1.14 GiB, 73910 tokens | 57344 | 24.6 | 24.5 / 24.3 (55k) | 353 / 581 (55k) t/s | 20-24 / 18 / 1.7 ms | 7658 MiB |
 | The same with int16 activations (practically exact) | 1.14 GiB | 57344 | 19.6 | | | 27-37 / 20 / 1.7 ms | |
 
 - **Generation: 1.6 times as fast as stock vLLM** (24.5 vs 15.4 t/s), and as fast at 55k tokens of context.
@@ -388,7 +388,8 @@ the end of the step):
   per expert).
 - **Prompt processing** streams all cold experts through the GPU for every 2048-token chunk, as stock vLLM reads
   them, but faster at long prompts (581 vs ~400-455 t/s) and slightly slower at 6.4k (353 vs 377 t/s).
-- **Context**: 57344 tokens at first, as with stock vLLM; since 2026-10-30, 75776 tokens, the largest context that
+- **Context**: 57344 tokens at first, as with stock vLLM; since 2026-10-31, 86016 tokens with prefill groups of 16
+  and a larger KV cache (see [Memory and prefill](#memory-and-prefill-2026-10-30)). Before that, 75776 tokens, the largest context that
   the same KV cache holds (77105 tokens for this context, 1.02 times as much; the next step of 1024 tokens would not
   fit). The int8 KV cache needs ~16.5 KB per token (73910-77105 tokens in 1.14 GiB, depending on the context), and its
   blocks (and thus the prefix cache's granularity) are 1600 tokens instead of 3136. Smaller prefill groups saved
@@ -421,7 +422,7 @@ the end of the step):
   76 GiB, and 71 GiB of the 144 GiB stay available otherwise.
 - **No CPU KV offloading**: it does not work with this runtime (see
   [`../vllm-rtx3090`](../vllm-rtx3090/README.md#other-settings-2026-10-14)), so a conversation evicted from the GPU
-  prefix cache (73910 tokens) is computed again. Stock vLLM keeps it in its CPU KV cache.
+  prefix cache (87381 tokens) is computed again. Stock vLLM keeps it in its CPU KV cache.
 
 **Quality** in the same retrieval test as above (44 questions in a 17360-token context, the top 5 token probabilities
 at every answer position), compared with stock vLLM (FP8 KV, int8 lm_head):
@@ -474,6 +475,42 @@ launcher (`qwen38-serve`), which has no option for them:
 - **Not applicable**: the int8 KV cache with pth-flash-attn, DFlash2 and its lookup drafting (Qwen3.8-27B only, see
   [`../vllm-rtx3090`](../vllm-rtx3090/README.md)); CPU KV offloading (does not work with this runtime, see above);
   more hot experts or MTP (no VRAM). The vision tower on the CPU of HyperQwen is the same module as here.
+
+### Memory and prefill (2026-10-30)
+
+The memory and prefill settings of the `optimize-vllm` skill, on test servers with the configuration of
+[`docker-compose.yml`](docker-compose.yml) otherwise (then: 1.22 GB of KV cache, 75776 tokens of context, prefill
+groups of 32 and chunks of 2048 tokens; one run each, 2026-10-30/31):
+
+| Variant | KV cache | Chat | Gen. 6.4k / long | Prompt 6.4k / 32k / long | Peak (server) |
+|---|---|---|---|---|---|
+| Baseline | 77105 tokens | 24.6 | 24.4 / 24.9 (74k) | 336 / 564 / 307 (74k) t/s | 7658 MiB |
+| `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | 77105 tokens | 24.5 | 25.0 / 24.9 (74k) | 357 / 569 / 297 (74k) t/s | 7658 MiB |
+| Prefill chunks of 4096 tokens | 77105 tokens | out of memory at the first request | | | |
+| Prefill chunks of 4096 tokens, groups of 16 | 77105 tokens | out of memory at the first request | | | |
+| Prefill groups of 16 | 77105 tokens | 23.9 | 24.6 / 25.0 (74k) | 340 / 545 / 296 (74k) t/s | 7518 MiB |
+| Groups of 16, 1.34 GB, context 83968 | 86676 tokens | 24.2 | 24.0 / 23.9 (82k) | 321 / - / 530 (82k) t/s | 7620 MiB |
+| **Groups of 16, 1.34 GB, context 86016 (current)** | 87381 tokens | | - / 24.0 (85k) | - / - / 482 (85k) t/s | 7588 MiB |
+| Groups of 16, 1.40 GB, context 90112 | 91477 tokens | | - / 23.5 (89k) | - / - / 504 (89k) t/s | 7672 MiB |
+| The same on the production server, all tests (2026-10-31) | 91477 tokens | 24.3 | 24.2 / 23.3 (89k) | 355 / 525 / 494 (89k) t/s | 7692, then 7702 MiB |
+
+- **Prefill groups of 16 experts** instead of 32 lower the peak by 140 MiB (the model takes 5.13 instead of
+  5.28 GiB), with prompt processing within ~3 % (545 vs 564 t/s at 32k tokens; decode does not use the groups).
+  The freed VRAM holds 10k more tokens of KV cache (~15.3 KB per token): 86016 tokens of context instead of 75776,
+  at a server peak of 7588 MiB with an 85k-token prompt (7610 MiB in the default benchmark on the production server).
+  1.40 GB and 90112 tokens also worked, but on the production server the peak grew with each benchmark (7672, 7692,
+  7702 MiB: 7829 MiB on the whole GPU, 15 MiB below its capacity), which is too tight for a server that runs for days.
+- **GPU fault**: the first chat request of the verification benchmark of 86016 tokens on the production server
+  (2026-10-31 01:12) ended in `CUDA error: unspecified launch failure`, after which the driver no longer found the
+  GPU (`nvidia-smi`: "Unknown Error"). It was not an out-of-memory error, and the same settings had passed on the
+  test server, but the GPU must be reset (or the host rebooted) before the remaining production tests.
+- **Prefill chunks of 4096 tokens** (as on [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md)) do
+  not fit even with groups of 16: the activations of the larger chunk need more than the groups free.
+- **`expandable_segments`** changed neither the peak nor the KV cache: the runtime allocates its buffers once, so
+  there is little fragmentation to avoid. The speed differences are within the run-to-run variation.
+- **Not tried**: `--hf-overrides` of `max_position_embeddings` (the launcher has no passthrough for it, and vLLM
+  sizes its buffers by `max_model_len`, not by the checkpoint's 262144 positions); a smaller chunk than 2048 tokens
+  for more KV cache (slower prompt processing, which is already the bottleneck for long prompts).
 
 ## Commands
 

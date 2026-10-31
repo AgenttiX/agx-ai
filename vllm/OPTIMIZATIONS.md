@@ -182,8 +182,10 @@ What has given the largest gains, roughly in order:
 - **Flash-Next runtime with CPU experts** (flash-next): hot experts on the GPU (`QWEN38_HOT_ONLY`,
   `QWEN38_GPU_SHARE_FRAC=0.3`), cold experts computed on the CPU with AVX2 int8 activations
   (`QWEN38_CPU_EXPERTS_INT8=1` from `cpu-moe.patch`: +27 % chat, KL equal to the noise), 1 thread per CCX
-  (`QWEN38_CPU_EXPERTS_CPUS`; 8 beat 16-48), `QWEN38_STREAM_GROUP=32` (-300 MiB). Decoding is bound by the CPU memory
-  bandwidth; 1.6x stock UVA. The offline `cpu_moe_bench` reproduces the server within 7 %.
+  (`QWEN38_CPU_EXPERTS_CPUS`; 8 beat 16-48), `QWEN38_STREAM_GROUP=32` (-300 MiB vs 64; 16 saved another 140 MiB on the
+  RTX 3070 for +10k tokens of KV at -3 % prompt processing; prefill chunks of 4096 did not fit in 8 GB even then;
+  `expandable_segments` had no effect). Decoding is bound by the CPU memory bandwidth; 1.6x stock UVA. The offline
+  `cpu_moe_bench` reproduces the server within 7 %.
 - **Embedding model in RAM** (rtx-a4000): `offload-backend: prefetch`, `offload-group-size: 1`,
   `offload-num-in-group: 1`, `offload-prefetch-step: 2` (step 1/2/3: 5895/7153/7560 t/s).
 
