@@ -207,6 +207,11 @@ What has given the largest gains, roughly in order:
   Threads: `VLLM_CPU_OMP_THREADS_BIND=nobind` with `OMP_NUM_THREADS` on a machine shared with other users
   (rtx-a4000); on a dedicated machine the default `auto` (one thread per physical core) was 5-12 % faster than
   `nobind` with 32 threads (zen2-embeddinggemma2). Keep `torch.compile` (`enforce-eager` -25 %).
+- **Causal pooling models (Qwen3-Embedding) get the prefix cache by default:** repeated benchmark texts are then served
+  from it (4B: 175 -> 1030 t/s), so `llama_cpp_bench_http.py` sends a random `cache_salt` with vLLM embedding requests.
+  The cache costs nothing on the CPU. The KV cache (`VLLM_CPU_KVCACHE_SPACE`, FP32: 224 KiB per token for 0.6B,
+  288 KiB for 4B) must hold `max-num-batched-tokens` (16384 was 6 % faster than 8192). Matryoshka:
+  `hf-overrides: {"is_matryoshka": true}` (any `dimensions`).
 - **EmbeddingGemma 2 on the CPU needs vLLM > 0.32.0:** v0.32.0's CPU attention ran its `ENCODER_ONLY` layers as
   causal (cosine 0.77-0.91 with sentence-transformers), fixed by vllm-project/vllm#63738 (nightly from 2026-10-27).
   Check new embedding models against sentence-transformers; the CPU attention only honours `ENCODER_ONLY` through
@@ -239,8 +244,9 @@ What has given the largest gains, roughly in order:
 - Recurring reasons vLLM loses: ~1-1.35 GiB of runtime overhead on 16 GB cards, Triton attention scaling worse with
   the context on GPUs without tensor cores, page padding of sliding-window models, and the MTP drafter not fitting.
   llama.cpp also starts in ~15 s and unloads when idle; vLLM holds its VRAM and starts in 1.5-7 min.
-- **Embeddings on the CPU:** vLLM's CPU image was 2x faster than llama.cpp for EmbeddingGemma 2 on the Threadripper
-  3970X (it batches up to 64 texts per step; llama.cpp one per slot).
+- **Embeddings on the CPU (Threadripper 3970X):** vLLM was 2x faster than llama.cpp for EmbeddingGemma 2 and 1.5x for
+  Qwen3-Embedding-0.6B, but 1.7x slower for Qwen3-Embedding-4B, where llama.cpp's Q6_K kernels beat vLLM's FP32 (no
+  BF16 on Zen 2). The compute-bound small models favor vLLM's batching, larger ones llama.cpp's quantized kernels.
 
 ## Methodology
 

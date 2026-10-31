@@ -103,6 +103,33 @@ did not fit into the cache (18,688 tokens), and the results agree with the salte
 - The settings of the EmbeddingGemma 2 configuration (FP32, automatic thread binding, `torch.compile`) were kept;
   they are measured in [`../vllm-zen2-embeddinggemma2/README.md`](../vllm-zen2-embeddinggemma2/README.md).
 
+## Optimization with the optimize-vllm skill (2026-10-31)
+
+For the 4B model, llama.cpp with Q6_K is faster on this CPU (see above), so only the 0.6B model was optimized
+further. The steps of [`.claude/skills/optimize-vllm`](../.claude/skills/optimize-vllm/SKILL.md) for GPUs (KV cache
+dtype, CUDA graphs, speculative decoding, context headroom, KV offloading, tensor parallelism) do not apply; the image,
+the dtype, the scheduler and the prefix cache were measured above. The CPU settings that
+[`../vllm-zen2-embeddinggemma2`](../vllm-zen2-embeddinggemma2/README.md) settled for a bidirectional model were
+checked again for this causal one (with the KV cache), in this order:
+
+| Variant (0.6B, 64 texts) | 500-token texts | 100-token texts |
+|---|---|---|
+| This configuration (start) | 2090-2095 t/s | 2040-2095 t/s |
+| `enforce-eager: true` | 1840-1845 t/s | 1830-1850 t/s |
+| `attention-backend: CPU_ATTN` | 2070-2090 t/s | 1985-2070 t/s |
+| `VLLM_CPU_OMP_THREADS_BIND=nobind`, `OMP_NUM_THREADS=32` | 1860-1960 t/s | 1820-1970 t/s |
+| This configuration (end) | 2090-2096 t/s | 2055-2095 t/s |
+
+- The same result as for EmbeddingGemma 2: `torch.compile` is worth 12 % here, the attention backend makes no
+  difference, and the automatic thread binding beats `nobind` by 6-11 %. Nothing was changed.
+
+Not tried:
+- An int8 (W8A8) checkpoint (Zen 2 has no VNNI; the 4B model would need it to compete with llama.cpp's Q6_K).
+- Several concurrent clients (one request of 64 texts was measured; vLLM batches concurrent requests in the same
+  steps).
+- A `max-model-len` above 8192 (the model supports 32768; the KV cache would have to grow with it only if such inputs
+  are sent).
+
 ## Commands
 
 ```sh
