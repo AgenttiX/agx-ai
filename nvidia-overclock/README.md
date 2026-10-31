@@ -58,6 +58,30 @@ sudo update-grub
 ```
 and reboot. `iomem=relaxed` lets root processes map the memory regions of devices that have a driver, so it weakens
 the kernel's protection a little; leave it out if gddr6 works without it.
+On agx-z2e (2026-10-31), gddr6 works without it (the kernel has `CONFIG_STRICT_DEVMEM=y` but not
+`CONFIG_IO_STRICT_DEVMEM`, and no lockdown), and shows `VRAM Temps: |  62°C |` at idle.
+
+### Without sudo
+
+gddr6 opens `/dev/mem` (`root:kmem`, mode 0640) and maps the registers of the GPU from it. The kernel allows opening
+`/dev/mem` only with `CAP_SYS_RAWIO`, so a user needs both that capability and read access to the file. The narrowest
+way is to give them to the binary alone: the group `kmem` with setgid, and the capability as a file capability.
+```bash
+sudo chgrp kmem /usr/local/bin/gddr6
+sudo chmod 2755 /usr/local/bin/gddr6
+sudo setcap cap_sys_rawio+ep /usr/local/bin/gddr6
+gddr6
+```
+Reinstalling gddr6 (`./build_install.sh`) replaces the binary and drops these, so run them again after an update.
+With them, any local user can run gddr6, which reads only the temperature registers. The kernel ignores
+`LD_PRELOAD` and similar for binaries with capabilities, but a bug in gddr6 could expose more, as `/dev/mem` gives
+access to the registers of all devices (not to RAM, which `CONFIG_STRICT_DEVMEM` blocks).
+Adding the user to `kmem` instead of the setgid bit is not enough without the capability, and would give all of the
+user's processes read access to `/dev/mem`.
+
+Alternatives: a sudoers rule without a password
+(`mika ALL=(root) NOPASSWD: /usr/local/bin/gddr6` in `sudo visudo -f /etc/sudoers.d/gddr6`, still run with `sudo`), or
+a root service that writes the temperature periodically to a file or a metrics exporter that other programs read.
 
 Limits: [Tom's Hardware](https://www.tomshardware.com/uk/news/replacing-geforce-rtx-3090-thermal-pads-improves-temps-by-25c)
 gives Micron's rating of GDDR6X as up to 95 °C, and the RTX 3090 measured 104 °C in their test; the card lowers the
