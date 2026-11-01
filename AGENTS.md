@@ -10,6 +10,8 @@ abbreviated as `agx` in the hostnames.
   If it returns "censored", don't write the hostname in this repository.
   Instead, use its hardware model in place of the hostname for e.g. the benchmark files.
 - Committing directly to main is OK in this project.
+- This is a public repository.
+  Do not write sensitive information such as security configuration (e.g. Secure Boot status) in this repository.
 
 ## Creating a new LLM backend configuration
 - Use the directory naming convention of `BACKEND-ACCELERATOR`, e.g. `vllm-radeon-vii` by default.

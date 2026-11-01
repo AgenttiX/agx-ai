@@ -371,7 +371,7 @@ class Figure:
             speed_span = f'<tspan font-weight="normal"> ({escape(speed_text)})</tspan>' if speed_text else ""
             self.add(
                 f'<text x="{m.cx:g}" y="{y:g}" font-size="14" font-weight="bold" '
-                f'fill="{ {"vllm.png": VLLM, "openvino.svg": OPENVINO}.get(runtime, MODEL)}" '
+                f'fill="{ {"": INK, "vllm.png": VLLM, "openvino.svg": OPENVINO}.get(runtime, MODEL)}" '
                 f'text-anchor="middle">{escape(model)}{speed_span}</text>'
             )
         y = top + 116 + 18 * text_lines + 20

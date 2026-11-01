@@ -234,7 +234,7 @@
 <rect x="1440" y="557" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
 <use href="#logo-ubuntu" x="1446" y="587.5" width="46" height="46"/>
 <text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
-<text x="1452" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">PaperQA2 RAG</text>
+<text x="1452" y="707" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">PaperQA2 RAG</text>
 <text x="1452" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
 <text x="1452" y="743" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
 <text x="1452" y="761" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3-Embedding-4B</text>
