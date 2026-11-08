@@ -19,8 +19,8 @@ and cuBLAS DLLs (the separate `cudart-llama-bin-win-cuda-*.zip`), so the CUDA to
 ## Usage
 
 ```powershell
-.\install-llama-cpp.ps1                           # newest release with a CUDA 13.4 build
-.\install-llama-cpp.ps1 -Backend cuda-12.4        # for drivers older than CUDA 13.4 (see below)
+.\install-llama-cpp.ps1                           # newest release, its newest CUDA 13.* build (e.g. cuda-13.5)
+.\install-llama-cpp.ps1 -Backend cuda-12.4        # for drivers older than that CUDA version (see below)
 .\install-llama-cpp.ps1 -Build b11262 -Backend vulkan
 ..\llama-cpp-t550\windows\start.ps1               # a computer's start script, runs in the foreground
 .\stop-llama-server.ps1                           # stop it (e.g. from another window, or when it runs as a task)

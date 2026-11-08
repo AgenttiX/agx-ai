@@ -13,22 +13,38 @@ Needs no administrator rights. CUDA builds need only the NVIDIA driver, not the 
 Release tag, e.g. b11262, or "latest".
 
 .PARAMETER Backend
-cuda-13.4, cuda-12.4, vulkan or cpu (the part of the asset name after "bin-win-"; see the release page for others).
+cuda-13, cuda-13.5, cuda-12.4, vulkan or cpu (the part of the asset name after "bin-win-"; see the release page for
+others). A CUDA major version without the minor version (e.g. cuda-13) selects the newest CUDA 13.* build of the
+release.
 A CUDA build runs with a driver that supports at least the same major CUDA version (CUDA minor version
 compatibility), but the most reliable choice is a build whose CUDA version the driver supports ("CUDA Version" in
 nvidia-smi).
 
 .EXAMPLE
-.\install-llama-cpp.ps1                                # latest release, CUDA 13.4
+.\install-llama-cpp.ps1                                # latest release, newest CUDA 13.* build
 .\install-llama-cpp.ps1 -Build b11262 -Backend cuda-12.4
 #>
 param(
     [string]$Build = "latest",
-    [string]$Backend = "cuda-13.4",
+    [string]$Backend = "cuda-13",
     [string]$InstallDir = "$env:LOCALAPPDATA\llama.cpp"
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # the progress bar makes Invoke-WebRequest very slow
+
+function Resolve-Backend($release, [string]$backend) {
+    # Returns the backend of the release's Windows x64 build matching $backend, or $null if there is none.
+    # "cuda-13" matches the newest "cuda-13.<minor>" build, so the default does not break when a release moves to a
+    # newer CUDA minor version.
+    $tag = [regex]::Escape($release.tag_name)
+    if ($backend -match '^cuda-(\d+)$') {
+        $pattern = "^llama-$tag-bin-win-(cuda-$($Matches[1])\.\d+)-x64\.zip$"
+        return $release.assets.name | ForEach-Object { if ($_ -match $pattern) { $Matches[1] } } |
+            Sort-Object { [version]($_ -replace '^cuda-', '') } -Descending | Select-Object -First 1
+    }
+    if ($release.assets.name -contains "llama-$($release.tag_name)-bin-win-$backend-x64.zip") { return $backend }
+    return $null
+}
 
 $api = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
 if ($Build -eq "latest") {
@@ -36,13 +52,19 @@ if ($Build -eq "latest") {
     # that has this backend. Old build releases are deleted after a while.
     $release = $null
     foreach ($r in (Invoke-RestMethod "${api}?per_page=30")) {
-        if ($r.assets.name -contains "llama-$($r.tag_name)-bin-win-$Backend-x64.zip") { $release = $r; break }
+        if (Resolve-Backend $r $Backend) { $release = $r; break }
     }
     if (-not $release) { throw "None of the 30 newest releases has a $Backend build for Windows x64." }
 } else {
     $release = Invoke-RestMethod "$api/tags/$Build"
 }
 $tag = $release.tag_name
+$resolved = Resolve-Backend $release $Backend
+if (-not $resolved) {
+    $available = ($release.assets | Where-Object { $_.name -like "*win*" } | ForEach-Object { $_.name }) -join "`n  "
+    throw "Release $tag has no $Backend build for Windows x64. Windows assets:`n  $available"
+}
+$Backend = $resolved
 $names = @("llama-$tag-bin-win-$Backend-x64.zip")
 if ($Backend -like "cuda-*") { $names += "cudart-llama-bin-win-$Backend-x64.zip" }
 
