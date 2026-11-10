@@ -26,3 +26,11 @@ benchmark/scratch
 benchmark/results/dx2-*.jsonl
 benchmark/results/vxl-*.jsonl
 benchmark/results/full/
+
+# Test and coverage outputs
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
+test-results/

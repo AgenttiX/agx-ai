@@ -48,7 +48,7 @@ left 0.8-1.0 GiB free:
   [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#qwen38-flash-next).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
-[`../benchmark`](../benchmark/README.md), on test servers ([`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh),
+[`../agx_ai/benchmark`](../agx_ai/benchmark/README.md), on test servers ([`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py),
 port 9933) with the production containers stopped. The results are in
 [`../benchmark/results/agx-z2e-kubuntu.jsonl`](../benchmark/results/agx-z2e-kubuntu.jsonl) (labels starting with
 "z2e vLLM"). VRAM figures are those of the vLLM processes (`nvidia-smi --query-compute-apps`), i.e. without the desktop.
@@ -120,7 +120,7 @@ kernel for these batches, and larger query blocks for the prefill on sm_86 (see 
 | Generation at 100k | | | 16.7 (1398) | 84.1 (1399) |
 | Prompt of 32k / 96k tokens | 743 / 395 | 890 / 582 | 3044 / - | 3130 / - |
 
-The long-context retrieval answers of [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py)
+The long-context retrieval answers of [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py)
 are the same with and without the patch (Qwen: 88/88 identical at 17k and 61k tokens; Gemma: 43/44 identical, same
 score). Before the patch, FlashInfer with an FP8 cache was the fastest option at long contexts (Qwen: 55 t/s at 32k),
 but 37 % slower in chats (51.5 vs 81 t/s) because of the piecewise CUDA graphs.
@@ -160,7 +160,7 @@ Checked on 2026-10-26 with the current settings:
   instead of 1209 / 1054 / 812 t/s. MTP 2 stays.
 - **The CPU KV offloading** of 16 GiB is large enough: a 25030-token conversation that two 100k-token prompts had
   evicted from the GPU came back in 1.7 s instead of 25.0 s, with the same greedy answer
-  ([`../benchmark/vllm_prefix_return.py`](../benchmark/vllm_prefix_return.py)). This image stores ~36 KB per token
+  ([`../agx_ai/benchmark/vllm/prefix_return.py`](../agx_ai/benchmark/vllm/prefix_return.py)). This image stores ~36 KB per token
   (8.1 GB for the 225k tokens of the test), much less than HyperQwen's ~100 KB with its recurrent-state snapshots
   (see [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#cpu-kv-offloading)), so 16 GiB holds ~470k
   tokens.
@@ -458,17 +458,17 @@ Results with the settings of 2026-10-14 (24 CPU pool threads; `--tests generatio
 ```sh
 cd ../benchmark
 # Serving speed with a full-context prompt, chat and depth (the configuration of docker-compose.yml)
-./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 145000 --depth 6400 32000 100000 --repeat 1 \
     --server-config ../vllm-rtx3090/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)
 docker compose -f ../vllm-rtx3090/docker-compose.yml stop
 CACHE_VOLUME=vllm-rtx3090_vllm-cache GPUS=0 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" \
-    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+    uv run -m agx_ai.benchmark.vllm.test_server ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 1 --depth 6400 32000 --server-config /tmp/config-variant.yaml --label "..."
 # Long-context retrieval (output quality of a KV cache type or a patch)
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
     --tests retrieval --depth 16000 60000 --logprobs 0 --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-rtx3090/docker-compose.yml start
 ```

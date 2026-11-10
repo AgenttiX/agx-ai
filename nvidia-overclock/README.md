@@ -151,7 +151,7 @@ corrupt anything at first: it makes the memory slower again. The speed, not stab
    (here [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md)):
    ```bash
    cd ../benchmark
-   ./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+   uv run -m agx_ai.benchmark.bench_http --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
        --tests chat depth edit --repeat 2 --depth 6400 32000 100000 128000 --edit-depth 0 32000 --label "..."
    ```
    and `watch -n 1 sudo gddr6` in another terminal.
@@ -159,7 +159,7 @@ corrupt anything at first: it makes the memory slower again. The speed, not stab
    clocks) and run the depth test at 6.4k and 32k after each step. Generation should rise about in proportion;
    when it stops rising or falls, the errors cost more than the clock gives: go back one or two steps.
 3. Run the full test set at the chosen offset, and check the outputs with
-   [`../benchmark/llama_cpp_quality_http.py`](../benchmark/README.md) against the stock clocks.
+   [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/README.md) against the stock clocks.
 4. Keep the VRAM temperature below ~100 °C in the longest test, with a margin for summer.
 5. Record the offset, the speeds and the temperatures here and in the README of the vLLM configuration.
 

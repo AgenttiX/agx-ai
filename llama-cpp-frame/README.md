@@ -14,7 +14,7 @@ cache. The models and their settings are in [preset.ini](preset.ini), and the se
 | Gemma 4 12B QAT UD-Q4_K_XL | 16384 | 6.8 GiB | 4.2 t/s | 19 t/s (1024 tokens) | `ubatch-size = 128` (512 hangs the GPU); leaves only 3.2 GiB free |
 | Qwen3.5-9B Q4_0 | 16384 | 5.4 GiB | 6.1 t/s | 32 t/s (1024 tokens) | |
 
-All on the GPU (Vulkan), measured with the server ([../benchmark/llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py)):
+All on the GPU (Vulkan), measured with the server ([../agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/bench_http.py)):
 generation of 128-256 tokens, a 1024- or 2048-token prompt, and for E4B also the chat test; the 4k-context numbers
 are from `llama bench`. The memory use is the drop of `MemAvailable` (10.0 GiB without llama.cpp) when the model is
 loaded. All results are in `../benchmark/results/agx-frame*.jsonl`.
@@ -56,15 +56,15 @@ Use `127.0.0.1` instead of `localhost` on the Frame itself: Podman's port forwar
 `[::1]:9931`, and `localhost` resolves to `::1` first. For example:
 
 ```sh
-cd ../benchmark
-./llama_cpp_bench_http.py --url http://127.0.0.1:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+cd ..
+uv run -m agx_ai.benchmark.bench_http --url http://127.0.0.1:9931 --env-file llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat --prompt-tokens 2048
-./llama_cpp_bench_container.py --image ghcr.io/ggml-org/llama.cpp:full-vulkan \
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --image ghcr.io/ggml-org/llama.cpp:full-vulkan \
     --model /root/.cache/huggingface/hub/models--unsloth--gemma-4-E4B-it-qat-GGUF/snapshots/.../gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf \
     -- -ngl 99 -fa 1 -p 512 -n 128
 ```
 
-`llama_cpp_bench_container.py` uses Podman automatically when Docker is not installed, and `--exe` runs a local
+`llama_cpp/bench_container.py` uses Podman automatically when Docker is not installed, and `--exe` runs a local
 build instead of a container.
 
 ## Hardware and OS
@@ -139,7 +139,7 @@ With a longer context (E4B, `-d 4096`), the CPU falls behind:
 
 ## llama-server
 
-Measured with [llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py) (results in
+Measured with [bench_http.py](../agx_ai/benchmark/bench_http.py) (results in
 `../benchmark/results/agx-frame.jsonl`), Gemma 4 E4B, 1 slot, 32k context:
 
 | Configuration | Generation (256 tokens) | Prompt processing (2048 tokens) | Chat (6 prompts, up to 512 tokens) |

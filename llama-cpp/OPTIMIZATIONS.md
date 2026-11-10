@@ -169,7 +169,7 @@ What has given the largest gains, roughly in order:
 - On WSL with memory-mapped experts, the CPU encoder evicted experts from the page cache (tg 9.3 vs 19.7 t/s), so
   t550 Docker uses `no-mmproj = true`.
 - Qwen-VL warns that grounding needs `image-min-tokens = 1024` (left as a comment).
-- Test images with the `image` test of `llama_cpp_bench_http.py`; the media peaks should stay below the text
+- Test images with the `image` test of `bench_http.py`; the media peaks should stay below the text
   stress peaks.
 
 ## Loading (`load-mode`)
@@ -224,12 +224,12 @@ What has given the largest gains, roughly in order:
   only `ctx-size / parallel` tokens.
 - **Routers list the whole Hugging Face cache:** a request for another cached model loads it and, with
   `models-max = 1`, evicts the embedding model. Dedicated embedding routers set `LLAMA_ARG_MODELS_AUTOLOAD=false`
-  (the `load-on-startup` model still loads). `llama_cpp_bench_http.py --tests embedding` triggered this until
+  (the `load-on-startup` model still loads). `bench_http.py --tests embedding` triggered this until
   2026-10-31.
 
 ## Backends, images and builds
 
-- Compare backends on the same GGUF with `llama_cpp_bench_container.py --image` and `llama_cpp_test_server.sh`.
+- Compare backends on the same GGUF with `llama_cpp/bench_container.py --image` and `llama_cpp/test_server.py`.
   On radeon-vii, Vulkan (RADV) was ~10 % faster in short chats but slower beyond ~6k tokens and ~20 % slower in pp,
   so the gfx906 ROCm image ([`mixa3607/llama.cpp-gfx906`](https://github.com/mixa3607/ML-gfx906)) stays. On the
   l14, Vulkan beat SYCL for MoE models.
@@ -252,11 +252,11 @@ What has given the largest gains, roughly in order:
 ## Methodology
 
 - Benchmark the serving configuration on a test server
-  ([`../benchmark/llama_cpp_test_server.sh`](../benchmark/llama_cpp_test_server.sh), production container stopped)
-  with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) `--tests generation prompt chat depth image`.
+  ([`../agx_ai/benchmark/llama_cpp/test_server.py`](../agx_ai/benchmark/llama_cpp/test_server.py), production container stopped)
+  with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py) `--tests generation prompt chat depth image`.
   Judge speed by the `chat` and `depth` tests; the default generation test uses repeated text that flatters MTP.
-- Raw model speed (quants, ubatch, KV types, builds): `llama_cpp_bench_container.py` (`llama bench`).
-- Quality of a setting that saves memory: [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py)
+- Raw model speed (quants, ubatch, KV types, builds): `llama_cpp/bench_container.py` (`llama bench`).
+- Quality of a setting that saves memory: [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py)
   against an f16 reference with MTP off, and a noise floor from lossless changes (another ubatch size). Compare the
   KLD (mean, 99 %, first token) and the changed top tokens with the noise, not just the accuracy. `llama-perplexity`
   KLD is unusable for some instruction-tuned models (Gemma 4 26B-A4B).

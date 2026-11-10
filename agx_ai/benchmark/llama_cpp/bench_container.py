@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 r"""Run llama.cpp's own benchmark (``llama bench``, formerly llama-bench) inside a running llama-server container.
 
-Unlike ``llama_cpp_bench_http.py``, which measures the server as it serves, this measures the raw model with the
+Unlike ``bench_http.py``, which measures the server as it serves, this measures the raw model with the
 flags given here, independently of the server configuration. That makes it the tool for comparing quantisations,
 builds and hardware.
 
@@ -9,7 +8,7 @@ The benchmark loads the model itself, so the server's copy of the models is unlo
 to free the GPU memory, and the models are reloaded at the end. The GGUF path defaults to the one the server is
 serving, read from ``/props``; the Hugging Face cache is mounted at the same path inside the container.
 
-Note: LiteLLM on the personal agx-ai server (``../litellm/config.yaml``, ``health_check_interval: 60``) probes the
+Note: LiteLLM on the personal agx-ai server (``litellm/config.yaml``, ``health_check_interval: 60``) probes the
 models every minute over the network and makes the router reload models that were just unloaded. Turn it off there
 (``background_health_checks: false``) or stop that LiteLLM while benchmarking; otherwise the benchmark may run with
 the server's models back in VRAM.
@@ -24,12 +23,13 @@ on the same GGUF. The running server's models are still unloaded first if the se
 container instead if it has other models on the GPU.
 
 Examples (arguments after ``--`` go to ``llama bench``; match the server preset's device flags for comparability):
-    ./llama_cpp_bench_container.py --env-file ../llama-cpp/llama-cpp.env --label "UD-Q4_K_M" \\
+    uv run -m agx_ai.benchmark.llama_cpp.bench_container --env-file llama-cpp/llama-cpp.env --label "UD-Q4_K_M" \\
         -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
-    ./llama_cpp_bench_container.py --container llama-cpp-gpu \\
+    uv run -m agx_ai.benchmark.llama_cpp.bench_container --container llama-cpp-gpu \\
         --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
-    ./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \\
-        --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
+    uv run -m agx_ai.benchmark.llama_cpp.bench_container --url http://localhost:9932 \\
+        --env-file llama-cpp/llama-cpp.env --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" \\
+        -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 
 The Markdown table is printed and the JSON lines that ``llama bench`` emits are appended, with the label and date,
 to ``results/<hostname>-llama-bench.jsonl`` (``--hostname`` or ``LLAMA_BENCH_HOSTNAME`` overrides the hostname),
@@ -51,7 +51,8 @@ import sys
 import time
 from typing import Any
 
-from llama_cpp_bench_http import Server, host_name, read_env_key
+from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.benchmark.bench_http import Server, host_name, read_env_key
 
 
 def pick_chat_model(models: list[dict[str, Any]]) -> str:
@@ -208,7 +209,7 @@ def main() -> int:
         unload_models(server, loaded)
     # The hostname is only used in the default output file name.
     output = args.output or (
-        Path(__file__).resolve().parent / "results"
+        RESULTS_DIR
         / f"{host_name(args.hash_hostname, args.hostname).split('.')[0]}-llama-bench.jsonl"
     )
     try:

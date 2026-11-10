@@ -36,7 +36,7 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
     - On sm_86, prefill with head size 256 uses 64 query rows per block and a KV tile of 16 (upstream: 16 and 32,
       with a tuned variant only for Blackwell): 890 instead of 743 t/s for a 32k prompt, 582 instead of 395 t/s for
       96k (tested: block sizes 16-128, tiles 16-128, 4 or 8 warps).
-    - Checked with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py): the
+    - Checked with [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py): the
       long-context retrieval answers (88 questions at 17k and 61k tokens) are identical to the unpatched image.
       The greedy outputs diverge after 35 % of their length on average, as the floating-point sums are reordered;
       changing only the prefill chunk size of the unpatched image (2048 -> 1024) gives a similar divergence (49 %).

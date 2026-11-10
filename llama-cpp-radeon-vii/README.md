@@ -18,7 +18,7 @@ context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90
 The Gemma context is larger than the 77824 of [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070), so that the same agentic
 workloads can be split between the two. Qwen3.8-27B is a dense model, so it is 4 times slower than the
 mixture-of-experts Gemma; see [Qwen3.8-27B](#qwen38-27b-2026-10-09). This file has the benchmarks behind the
-settings. The tools are in [`../benchmark`](../benchmark); the commands are at the end.
+settings. The tools are in [`../agx_ai/benchmark`](../agx_ai/benchmark); the commands are at the end.
 
 ## Hardware
 
@@ -35,7 +35,7 @@ settings. The tools are in [`../benchmark`](../benchmark); the commands are at t
 ## Context size and ubatch size (2026-09-26)
 
 Radeon VII (16368 MiB, nothing else on it), `mixa3607/llama.cpp-gfx906:v0.3.0-rocm-7.14`,
-[`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (256 generated tokens, MTP on, 2 slots),
+[`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py) (256 generated tokens, MTP on, 2 slots),
 prompt = ctx-size - 1500 tokens, peak VRAM from `amd-smi`:
 
 | Setup | Generation | Prompt processing | 2 concurrent | Peak VRAM |
@@ -56,7 +56,7 @@ ctx 51200 was also stress-tested with 3 full-context prompts and 2 concurrent 24
 ## MTP draft length (2026-09-27)
 
 Six real chat prompts (code, explanations, translation, maths) twice each, with the preset's sampling and
-512 generated tokens (the `chat` test of `llama_cpp_bench_http.py`). The default generation test's repeated-paragraph
+512 generated tokens (the `chat` test of `bench_http.py`). The default generation test's repeated-paragraph
 prompt at temperature 0 overstates the draft acceptance. Image v0.3.0.
 
 | `spec-draft-n-max` | 1 | **2 (current)** | 3 | 4 |
@@ -86,7 +86,7 @@ by a question, 512 generated tokens (the `depth` test). Generation / prompt proc
 
 ## Image update to v0.5.0 (2026-09-27)
 
-Both images with the preset of that time (ctx 51200, ub 1024, no CPU offload), measured back to back with the same `llama_cpp_bench_http.py` run (commands
+Both images with the preset of that time (ctx 51200, ub 1024, no CPU offload), measured back to back with the same `bench_http.py` run (commands
 below). Generation in t/s, prompt processing in parentheses; draft acceptance is given for the chat test:
 
 | Test | `v0.3.0-rocm-7.14` | **`v0.5.0-rocm-7.14` (current)** |
@@ -112,7 +112,7 @@ but it uses ~70-90 MiB more VRAM, which leaves only 44 MiB free at the peak; if 
 `ctx-size = 77824` needs ~620 MiB more VRAM than 51200 (the KV cache grows by ~240 MiB per 10240 tokens) and does not
 load with the previous settings ("failed to create MTP context"). The variants below free memory by quantizing the KV
 cache (`cache-type-k`/`cache-type-v = q8_0`), by moving the experts of the first N layers to the CPU (`n-cpu-moe`), or
-with a smaller `ubatch-size` (smaller compute buffers). Each was loaded with `llama_cpp_test_server.sh`, stress-tested
+with a smaller `ubatch-size` (smaller compute buffers). Each was loaded with `llama_cpp/test_server.py`, stress-tested
 with one 76324-token prompt, and then measured with the `chat` and `depth` tests. Generation in t/s, prompt processing
 in parentheses; the first row is the previous configuration at ctx 51200:
 
@@ -155,7 +155,7 @@ tg128 at depth 16384, sampled from `/proc/stat`; 3 % with everything on the GPU)
 fastest one that runs entirely on the GPU at ctx 77824: a q8_0 V cache with ub 512 (see the table above). Mixed K/V
 types run on the GPU too (this build's `FA_QUANTS` lists only equal pairs, but the host CPU stays at ~3 %).
 
-Quality, with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py): each configuration on a
+Quality, with [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py): each configuration on a
 fresh test server at ctx 77824 (MTP on, as served), 176 greedy retrieval questions at 9k/33k/61k/76k tokens of
 context (32 single lookups and 12 two-step lookups each), compared with the f16 reference:
 
@@ -199,7 +199,7 @@ cache is clearly above it (2-3 times the KLD, 3 times the 99th percentile), whic
 a lossy cache; its retrieval accuracy is nevertheless unchanged. The effect of q8_0 on quality is therefore
 negligible here.
 
-`llama-perplexity`'s KL divergence ([`../benchmark/llama_cpp_kld.py`](../benchmark/llama_cpp_kld.py)) is not usable
+`llama-perplexity`'s KL divergence ([`../agx_ai/benchmark/llama_cpp/kld.py`](../agx_ai/benchmark/llama_cpp/kld.py)) is not usable
 for this model: on raw text (Python source, also wrapped in the chat template) its perplexity is ~290-370, and a
 different ubatch size or flash attention off changes 30 % of the top tokens (mean KLD 0.36), the same as a q8_0 cache.
 The same happens with the upstream Vulkan build, so it is the model, not the gfx906 build.
@@ -212,7 +212,7 @@ faster.
 
 ### With a busy CPU
 
-`llama_cpp_bench_http.py --tests chat depth --repeat 1 --depth 16000 60000` on a test server, once with an idle CPU
+`bench_http.py --tests chat depth --repeat 1 --depth 16000 60000` on a test server, once with an idle CPU
 and once while `stress-ng --cpu 64 --cpu-method matrixprod` keeps all 64 hardware threads busy (at normal priority,
 like a compile or test run of the agents' code). Generation in t/s, prompt processing in parentheses:
 
@@ -354,7 +354,7 @@ processing in parentheses:
 | **q8_0 (current)** | 34.6 | 29.5 | 28.2 (248) | 27.4 (239) | 24.6 (225) | 15673 MiB |
 | q4_0 | 31.3 | 30.1 | 28.9 (249) | 26.9 (238) | 25.3 (226) | 15157 MiB |
 
-Quality with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py), as for Gemma above:
+Quality with [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py), as for Gemma above:
 132 greedy retrieval questions at 9k/17k/29k tokens of context with the top-20 token probabilities, on test
 servers without MTP at ctx 30720 (the f16 reference does not fit at a longer one), compared with the f16 cache:
 
@@ -388,7 +388,7 @@ The cache is therefore q8_0: with it, the context can be ~47k tokens, compared w
 ### Vision encoder on the CPU (`no-mmproj-offload`)
 
 The vision encoder takes 1138 MiB on the GPU, i.e. ~26k tokens of context. On the CPU, an image takes a few seconds
-longer to process. The `image` test of [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py)
+longer to process. The `image` test of [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py)
 (a 1280x960 PNG, 1261 prompt tokens with the image, mean of 3):
 
 | Vision encoder | Prompt processing incl. the image | Whole request (32 generated tokens) |
@@ -455,26 +455,26 @@ takes at most 6 frames of a video; Qwen takes half the time per image (vLLM: 32 
 ```sh
 cd ../benchmark
 # Serving speed: generation, two full-context prompts (ctx-size - 1500), chat, depth
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 86564 --repeat 2 --depth 6400 16000 36500 70000 85000 --label "..."
 # The same for Qwen3.8 (preset-qwen3.8-27b.ini), with the image test
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth image --prompt-tokens 45604 --repeat 2 --depth 6400 16000 30000 43000 --label "..."
-# Output quality compared with a reference run (on a test server; see ../benchmark/README.md)
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --label "..." \
+# Output quality compared with a reference run (on a test server; see ../agx_ai/benchmark/README.md)
+uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --label "..." \
     --reference "Radeon VII ctx 77824 f16 KV, n-cpu-moe 1, ub 512 (reference)"
 # Raw model speed in the running container
-./llama_cpp_bench_container.py --container llama-cpp-radeon-vii --url http://localhost:9932 \
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --container llama-cpp-radeon-vii --url http://localhost:9932 \
     --env-file ../llama-cpp/llama-cpp.env --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384 -r 3
 # Raw model speed with another image or backend
-./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "..." -- -ngl 999 -ncmoe 1 -fa 1 -ub 512 -p 2048 -n 128 -d 0,16384
 # Serving speed with another image or a preset variant (stop the production container first)
 docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
 # (for a preset variant, edit a copy of the preset and pass it instead)
-./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
+uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
     ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --depth 6400 16000 36500 70000 --label "..."
 docker rm -f llama-test && docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start
 ```

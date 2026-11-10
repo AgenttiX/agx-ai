@@ -41,12 +41,21 @@ abbreviated as `agx` in the hostnames.
   If the computer is listed but the LLM model is not, then mention this to the user.
 
 ## Benchmarking
-- Use the scripts in `./benchmark/` for benchmarking.
-  You may update the scripts as needed, but keep them compatible with the other backends.
-- If you crate new testing scripts, store them in `./benchmark/`.
+- Use the modules in `./agx_ai/benchmark/` for benchmarking (see its `README.md`),
+  e.g. `uv run -m agx_ai.benchmark.bench_http`.
+  The results are stored in `./benchmark/results/`.
+  You may update the modules as needed, but keep them compatible with the other backends.
+- If you create new benchmark scripts, store them in `./agx_ai/benchmark/`:
+  in `llama_cpp/` if they work only with llama.cpp, in `vllm/` if they work only with vLLM,
+  and in `./agx_ai/benchmark/` itself if they work with both.
   However, if they are specific to a particular backend configuration, store them in its directory instead.
+- Keep the benchmark modules usable with only the Python standard library where possible,
+  so that they can be run on computers without uv.
+- Write unit tests for the code in `./agx_ai/` in `./tests/`, and keep them fast.
+  The tests that need an LLM backend use the local servers and are skipped if there are none.
 
 ## Commands
+- Run the unit tests: `uv run pytest`
 - Run all lints and type checks: `./lint.sh`
   - Run this after creating or modifying Python code.
   - This runs `ruff check`, `pyrefly check` and `pyrefly coverage check`.

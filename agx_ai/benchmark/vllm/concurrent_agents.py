@@ -1,15 +1,14 @@
-#!/usr/bin/env python3
 r"""Generation speed of several coding agents at once, each with its own long context already in the prefix cache.
 
 Each agent has a distinct code context of ``--depth`` tokens (real Python source, as in the depth test of
-``llama_cpp_bench_http.py``) and a question about it. The contexts are first sent one at a time with one generated
+``bench_http.py``) and a question about it. The contexts are first sent one at a time with one generated
 token, which puts them into the prefix cache, as for an agent's next turn. Then all agents ask at once, and the script
 reports the generation speed per agent, the generated tokens per second in total and each agent's time to the first
 token (long if its context had to be computed again). Only for vLLM (``cache_salt`` keeps the agents apart). Needs
 only the Python standard library.
 
 Example:
-    ./vllm_concurrent_agents.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
+    uv run -m agx_ai.benchmark.vllm.concurrent_agents --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env \\
         --depth 16000 --agents 1 2 4
 """
 
@@ -24,7 +23,7 @@ import threading
 import time
 from typing import Any
 
-from llama_cpp_bench_http import (
+from agx_ai.benchmark.bench_http import (
     DEPTH_QUESTIONS,
     VllmServer,
     build_code_context,

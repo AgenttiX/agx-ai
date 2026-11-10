@@ -63,7 +63,7 @@ Measured on 2026-09-25/26 (build b11176, tg = token generation, pp = prompt proc
 - A smaller `ubatch-size` costs little on Vulkan (E4B pp2048 with flash attention: 71 t/s with 128, 73 t/s with 512).
 
 ## llama-server over HTTP
-Measured with [benchmark/llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py)
+Measured with [agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/bench_http.py)
 (results in `benchmark/results/agx-l14-kubuntu.jsonl`).
 The CPU backend is as fast in the OpenVINO image as in the plain CPU image (`server`).
 

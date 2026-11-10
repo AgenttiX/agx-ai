@@ -20,26 +20,26 @@ loss of output quality. Every change is measured; nothing is set from assumption
 4. Record the hardware for the README (see AGENTS.md: OS, CPU, RAM type and frequency, GPU, architecture, VRAM,
    for laptops both GPUs, the dGPU power limit and PCIe width). Check the actual power limit
    (`nvidia-smi -q -d POWER`) and what else uses the GPU (desktop session, other servers).
-5. Read [`benchmark/README.md`](../../../benchmark/README.md) and remind the user to turn off the LiteLLM health check
+5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and remind the user to turn off the LiteLLM health check
    on the agx-ai server during the benchmarks.
 
 ## Work on test servers
 
 Stop the production container and start test servers with
-[`benchmark/llama_cpp_test_server.sh`](../../../benchmark/llama_cpp_test_server.sh) and a copy of the preset
+[`agx_ai/benchmark/llama_cpp/test_server.py`](../../../agx_ai/benchmark/llama_cpp/test_server.py) and a copy of the preset
 in the scratchpad (CUDA: `DOCKER_ARGS="--gpus all"`). Run commands that may take more than ~2 minutes in the
 background. Restart the production container at the end, and before that whenever the user needs the server.
 
 Measure:
-- **Serving speed:** `llama_cpp_bench_http.py --no-embedding --tests generation prompt chat depth image --repeat 2
+- **Serving speed:** `bench_http.py --no-embedding --tests generation prompt chat depth image --repeat 2
   --depth 6400 16000 36500 ... --prompt-tokens <ctx-size - 1500> --label "..."`. Judge generation by `chat` and
   `depth` (realistic content); the default `generation` test uses repeated text that overstates MTP. Add `edit` for
   coding use, `concurrency` for several slots, `--mixed` if an embedding model shares the server.
-- **Raw model speed** (quants, ubatch, KV types, builds, backends): `llama_cpp_bench_container.py` (`llama bench`
+- **Raw model speed** (quants, ubatch, KV types, builds, backends): `llama_cpp/bench_container.py` (`llama bench`
   with the same `-ngl -fa -ctk -ctv -sm -ts` flags as the preset; it has no speculative decoding).
 - **Memory:** the peak VRAM of llama-server during a prompt of `ctx-size - 1500` tokens (the benchmark records it
   with `nvidia-smi`/`amd-smi`; on Windows watch the dedicated and shared GPU memory counters).
-- **Quality:** `llama_cpp_quality_http.py --tests retrieval` with MTP off, an f16-KV reference run, and a noise-floor
+- **Quality:** `quality_http.py --tests retrieval` with MTP off, an f16-KV reference run, and a noise-floor
   run with a lossless change (another `ubatch-size`). A setting is acceptable if its KLD (mean, 99 %, first token)
   and changed top tokens are within the noise floor. Accuracy alone is too blunt.
 

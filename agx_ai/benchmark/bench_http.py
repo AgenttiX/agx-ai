@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Benchmark a running llama.cpp server (llama-server) over its HTTP API.
 
 Measures, for the serving configuration as it actually runs (router presets, slots, KV cache, speculative decoding):
@@ -17,22 +16,22 @@ prompt and generation timings, plus draft-token acceptance when speculative deco
 wall-clock, with token counts from ``/tokenize``. Nothing but the Python standard library is needed.
 
 Examples:
-    ./llama_cpp_bench_http.py --env-file ../llama-cpp/llama-cpp.env --label "Qwen3.8-27B ctx 65536"
-    ./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --model gemma --no-embedding
-    ./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
-    ./llama_cpp_bench_http.py --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts
+    uv run -m agx_ai.benchmark.bench_http --env-file llama-cpp/llama-cpp.env --label "Qwen3.8-27B ctx 65536"
+    uv run -m agx_ai.benchmark.bench_http --url http://agx-z2e:9932 --api-key ... --model gemma --no-embedding
+    uv run -m agx_ai.benchmark.bench_http --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
+    uv run -m agx_ai.benchmark.bench_http --tests chat depth --depth 6400 16000 36500  # long contexts
 
 vLLM servers are supported for the same tests, and OpenVINO Model Server (OVMS) for the embedding test.
-For the raw model speed independent of the server configuration, see ``llama_cpp_bench_container.py``.
+For the raw model speed independent of the server configuration, see ``llama_cpp/bench_container.py``.
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
 so that runs with different models, settings or hardware can be compared afterwards.
-The hostname comes from ``../hostname.py`` by default.
+The hostname comes from ``hostname.py`` by default.
 ``--hostname NAME`` (or the environment variable ``LLAMA_BENCH_HOSTNAME``) stores NAME instead of the hostname, and
 ``--hash-hostname`` replaces the hostname by its SHA-256 hash, in the result and the file name.
-If ``../hostname.py`` censors the hostname, one of these is required.
+If ``hostname.py`` censors the hostname, one of these is required.
 
-Note: LiteLLM on the personal agx-ai server (``../litellm/config.yaml``, ``health_check_interval: 60``) sends a health
+Note: LiteLLM on the personal agx-ai server (``litellm/config.yaml``, ``health_check_interval: 60``) sends a health
 check request to every model once a minute over the network, which adds noise to the measurements and reloads
 unloaded models. Turn it off there (``background_health_checks: false``) or stop that LiteLLM while benchmarking.
 """
@@ -63,9 +62,8 @@ import urllib.parse
 import urllib.request
 import zlib
 
-# hostname.py is in the repository root.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from hostname import repo_hostname
+from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.hostname import repo_hostname
 
 PARAGRAPH = (
     "A first-order phase transition in the early universe proceeds through the nucleation, expansion and collision "
@@ -960,7 +958,7 @@ def main() -> int:
             gpu_result["peak_llama_server_memory_mib"] = gpu.process_peak
         result["gpu"] = gpu_result
 
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{result['host'].split('.')[0]}.jsonl"
+    output = args.output or RESULTS_DIR / f"{result['host'].split('.')[0]}.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("a", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")

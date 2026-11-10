@@ -49,7 +49,7 @@ uv lock
 The OpenVINO version of the converter should match that of the OVMS image in [docker-compose.yml](docker-compose.yml).
 
 ## Performance
-Measured on 2026-10-14 with [../benchmark/llama_cpp_bench_http.py](../benchmark/llama_cpp_bench_http.py)
+Measured on 2026-10-14 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/bench_http.py)
 `--tests embedding` (results in `../benchmark/results/agx-l14-kubuntu.jsonl`), OVMS 2026.4.1:
 
 | Device, `--max_length` | 100-token texts | 500-token texts | Single text |

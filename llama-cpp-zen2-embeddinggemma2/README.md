@@ -47,7 +47,7 @@ docker compose up -d
 
 ## Performance
 
-Measured on 2026-10-30 with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py)
+Measured on 2026-10-30 with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py)
 `--tests embedding --embed-texts 64 --embed-tokens 500` (and 100), i.e. one request with 64 texts, with the LLM
 servers of the GPUs idle. The results of the production configuration are in
 `../benchmark/results/agx-z2e-kubuntu.jsonl` (labels starting with "zen2 llama.cpp"). The sweep used test servers
@@ -102,7 +102,7 @@ flash attention and pinning were measured above. In addition:
   instruction set extensions, so a native build was not tried.
 - `load-mode = mmap+mlock` (the catalog's choice for CPU-only models; `mlock = 1` is not a preset option in b12004):
   the 0.5 GiB of weights stay in RAM (`VmLck`), with no change in speed (2270 and 2370 t/s).
-- **Router pitfall:** `llama_cpp_bench_http.py --tests embedding` picked the first non-embedding model of the cache
+- **Router pitfall:** `bench_http.py --tests embedding` picked the first non-embedding model of the cache
   (Gemma 4 31B) as its "chat model" for the server properties and warmed it up, so the router loaded it on the CPU
   (10 GiB peak RSS) and then evicted it again for the embedding test. The script now uses the embedding model for
   the properties when only the embedding test runs, and the server no longer loads other models on request. The
@@ -122,7 +122,7 @@ docker run -d --name llama-test -p 9933:8080 -v /home/mika/.cache/huggingface/hu
     -hf ggml-org/embeddinggemma-2-GGUF:BF16 --offline --host 0.0.0.0 --port 8080 --embedding -a embeddinggemma-2 \
     -c 8192 -b 8192 -ub 8192 -t 32 -tb 32 -np 8 --cpu-range 0-31 --cpu-strict 1 --cpu-range-batch 0-31 --cpu-strict-batch 1
 cd ../benchmark
-./llama_cpp_bench_http.py --url http://localhost:9933 --tests embedding --embedding-model embeddinggemma-2 \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --tests embedding --embedding-model embeddinggemma-2 \
     --embed-texts 64 --embed-tokens 500 --label "..."
 docker rm -f llama-test
 # F16/F32 from the BF16 GGUF

@@ -20,7 +20,7 @@ loss of output quality. Every change is measured; nothing is set from assumption
    existing configuration (same GPU architecture, VRAM size or model) as a starting point.
 4. Record the hardware for the README (see AGENTS.md) and check what else uses the GPU (desktop session, other
    servers) and the actual power limit.
-5. Read [`benchmark/README.md`](../../../benchmark/README.md) and remind the user to turn off the LiteLLM health check
+5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and remind the user to turn off the LiteLLM health check
    on the agx-ai server during the benchmarks.
 6. Check whether llama.cpp is known to be better for this model and hardware (the catalog's "vLLM or llama.cpp?"
    section and [`llama-cpp/OPTIMIZATIONS.md`](../../../llama-cpp/OPTIMIZATIONS.md)), and say so before investing in
@@ -29,7 +29,7 @@ loss of output quality. Every change is measured; nothing is set from assumption
 ## Work on test servers
 
 Stop the production container and start test servers with
-[`benchmark/vllm_test_server.sh`](../../../benchmark/vllm_test_server.sh) and a copy of the YAML in the scratchpad
+[`agx_ai/benchmark/vllm/test_server.py`](../../../agx_ai/benchmark/vllm/test_server.py) and a copy of the YAML in the scratchpad
 (`GPUS`, `DOCKER_ARGS="-e ..."`, `CACHE_VOLUME=<production compile cache volume>` to avoid recompiling). Startup
 takes 1.5-7 min (longer the first time), so run it in the background. Restart the production container at the end,
 and before that whenever the user needs the server.
@@ -37,12 +37,12 @@ and before that whenever the user needs the server.
 Measure:
 - **Memory:** the startup log ("Available KV cache memory", "GPU KV cache size", "Maximum concurrency", graph
   capture memory) and the peak VRAM per process during a prompt of `max-model-len - 1500` tokens.
-- **Serving speed:** `llama_cpp_bench_http.py --no-embedding --tests generation prompt chat depth edit
+- **Serving speed:** `bench_http.py --no-embedding --tests generation prompt chat depth edit
   --depth 6400 32000 100000 --prompt-tokens <max-model-len - 1500> --server-config <yaml> --repeat 2 --label "..."`.
   Judge generation by `chat`, `depth` and `edit`; the default `generation` test overstates speculative decoding. Add
-  `concurrency` (and `vllm_concurrent_agents.py`) when `max-num-seqs` > 1, and `vllm_prefix_return.py` for CPU KV
+  `concurrency` (and `vllm/concurrent_agents.py`) when `max-num-seqs` > 1, and `vllm/prefix_return.py` for CPU KV
   offloading.
-- **Quality:** `llama_cpp_quality_http.py --tests retrieval --logprobs N` with speculative decoding off, a reference
+- **Quality:** `quality_http.py --tests retrieval --logprobs N` with speculative decoding off, a reference
   run, and a noise floor from a lossless change (e.g. `max-num-batched-tokens` 2048 -> 1024). A setting is acceptable
   if its KL divergence and changed top tokens are within the noise floor. Accuracy alone is too blunt.
 
@@ -79,7 +79,7 @@ candidates from the catalog, measure, and keep the winner.
    ~80-250 MiB on a dedicated GPU). A successful startup proves nothing; the first long request must succeed. If the
    context is still the limit, go back to steps 2-6.
 9. **Returning conversations.** `enable-prefix-caching: true`, and `kv-offloading-size` with
-   `kv-offloading-backend: native` if the RAM allows (measure with `vllm_prefix_return.py`; check the gotchas in the
+   `kv-offloading-backend: native` if the RAM allows (measure with `vllm/prefix_return.py`; check the gotchas in the
    catalog first).
 10. **Multiple GPUs or CPU offload** if needed: TP with the P2P workarounds, UVA offload of experts and embeddings,
     or the CPU-expert runtime; measure against llama.cpp on the same hardware.

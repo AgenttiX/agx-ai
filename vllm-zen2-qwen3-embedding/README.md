@@ -55,9 +55,9 @@ docker compose up -d
 
 ## Performance
 
-Measured on 2026-10-31 with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py)
+Measured on 2026-10-31 with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py)
 `--tests embedding --embed-texts 64 --embed-tokens 500` (and 100; 16 texts for the 4B model), two runs each, with
-[`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh) (`GPUS=none`) and the LLM servers of the GPUs
+[`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py) (`GPUS=none`) and the LLM servers of the GPUs
 idle. The results of the production configurations are in `../benchmark/results/agx-z2e-kubuntu.jsonl` (labels
 starting with "zen2 vLLM ... Qwen3-Embedding").
 
@@ -135,9 +135,9 @@ Not tried:
 ```sh
 docker compose down
 cd ../benchmark
-GPUS=none DOCKER_ARGS="-e VLLM_CPU_KVCACHE_SPACE=6" ./vllm_test_server.sh \
+GPUS=none DOCKER_ARGS="-e VLLM_CPU_KVCACHE_SPACE=6" uv run -m agx_ai.benchmark.vllm.test_server \
     vllm/vllm-openai-cpu:nightly-335dd77b09161c5d63139b4e7ae51bb9928305b1 /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --tests embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --tests embedding \
     --embed-texts 64 --embed-tokens 500 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test
 ```

@@ -35,8 +35,8 @@ no CPU kernels for them, so the GPU reads the selected experts from RAM over PCI
 `flash-next` service does the same as llama.cpp, but only for Qwen3.8-Flash-Next.
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 to 2026-10-14 and on
-2026-10-26 with the tools in [`../benchmark`](../benchmark/README.md), on test servers
-([`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh), port 9933) with the production containers
+2026-10-26 with the tools in [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md), on test servers
+([`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py), port 9933) with the production containers
 stopped. The results are in [`../benchmark/results/agx-ai.jsonl`](../benchmark/results/agx-ai.jsonl) (labels starting
 with "agx-ai vLLM" and "agx-ai flash-next runtime"). VRAM figures are those of the vLLM processes (`nvidia-smi --query-compute-apps`); the GPU has
 no display, and 7839 MiB of its 8192 MiB are usable.
@@ -265,7 +265,7 @@ The KV cache on the GPU is described in [Context size](#context-size); MTP does 
   The time is mostly the vision tower: ~3 ms per 16x16 patch with the 16 cores of the EPYC (agx-z2e: ~1.4 ms with 32
   cores). The prompt token counts are the same as on agx-z2e.
 - **Quality.** In the long-context retrieval test of
-  [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py) (44 questions in a 17360-token
+  [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py) (44 questions in a 17360-token
   context), the int8 checkpoint answered 38/44 (single lookups 32/32, two-step 6/12) and llama.cpp's IQ3_S 37/44
   (32/32, 5/12), so the round-to-nearest int8 layers do not cost measurable quality.
 
@@ -293,7 +293,7 @@ takes 15.9 instead of 14.6 ms per layer and chunk.
 **int4 lm_head** (0.6 -> 0.3 GiB, ~12k tokens of context with the FP8 cache), built with
 `quantize_flash_next_dense.py --lm-head-bits 4`.
 
-**Quality** in the retrieval test of [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py)
+**Quality** in the retrieval test of [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py)
 (44 questions in a 17360-token context, with the probabilities of the top 5 tokens at every answer position), compared
 with FP8 KV and an int8 lm_head:
 
@@ -518,21 +518,21 @@ groups of 32 and chunks of 2048 tokens; one run each, 2026-10-30/31):
 ```sh
 cd ../benchmark
 # Serving speed (the configuration of docker-compose.yml)
-./llama_cpp_bench_http.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 96000 --depth 6400 36500 --repeat 1 \
     --server-config ../vllm-rtx3070/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # A configuration variant on a test server (port 9933; stop the production container first)
 docker compose -f ../vllm-rtx3070/docker-compose.yml stop
 CACHE_VOLUME=vllm-rtx3070_vllm-cache DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-    -e TORCHINDUCTOR_COMPILE_THREADS=1 -e VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=128" ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml
-./llama_cpp_bench_http.py --url http://localhost:9933 --no-embedding --tests chat depth --repeat 1 --depth 6400 \
+    -e TORCHINDUCTOR_COMPILE_THREADS=1 -e VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=128" uv run -m agx_ai.benchmark.vllm.test_server ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --no-embedding --tests chat depth --repeat 1 --depth 6400 \
     --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-rtx3070/docker-compose.yml start
 # The flash-next service: a variant as a test server on port 9933 (e.g. with -e QWEN38_CPU_EXPERTS_STATS=64)
 docker compose -f ../vllm-rtx3070/docker-compose.yml stop flash-next
 docker compose -f ../vllm-rtx3070/docker-compose.yml run -d --name flash-next-test -p 9933:8000 \
     -e QWEN38_CPU_EXPERTS_STATS=64 flash-next
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth edit --depth 6400 55000 --repeat 1 --label "..."
 docker rm -f flash-next-test && docker compose -f ../vllm-rtx3070/docker-compose.yml start flash-next
 ```

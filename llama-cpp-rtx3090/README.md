@@ -27,8 +27,8 @@ The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4
 comment; see [Vision encoder on the CPU](#vision-encoder-on-the-cpu-no-mmproj-offload).
 
 The rest of this file has the measurements behind the settings. They were made with the tools in
-[`../benchmark`](../benchmark/README.md) on 2026-10-09 unless noted otherwise, with test servers from
-[`../benchmark/llama_cpp_test_server.sh`](../benchmark/llama_cpp_test_server.sh) and the production container stopped.
+[`../agx_ai/benchmark`](../agx_ai/benchmark/README.md) on 2026-10-09 unless noted otherwise, with test servers from
+[`../agx_ai/benchmark/llama_cpp/test_server.py`](../agx_ai/benchmark/llama_cpp/test_server.py) and the production container stopped.
 The results are in `../benchmark/results/agx-z2e-kubuntu*.jsonl` (labels starting with "z2e").
 VRAM figures are those of the llama-server process (`nvidia-smi --query-compute-apps`), i.e. without the desktop.
 
@@ -95,7 +95,7 @@ f16, q8_0 and q4_0.
 ### Speed
 
 Qwen3.8-27B at ctx 65536 (the largest context where f16 fits), ub 512, MTP, with
-`llama_cpp_bench_http.py --tests generation prompt chat depth`. Means of two runs; generation in t/s, prompt
+`bench_http.py --tests generation prompt chat depth`. Means of two runs; generation in t/s, prompt
 processing in parentheses:
 
 | KV cache | Chat | Depth 6.4k | Depth 16k | Depth 36.5k | Depth 60k | Prompt 60000 | VRAM |
@@ -111,7 +111,7 @@ measurement in its preset showed the same: tg128 at depth 16384 122 t/s with q8_
 
 ### Quality
 
-With [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py), the method of
+With [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py), the method of
 [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md#entirely-on-the-gpu-with-a-q8_0-v-cache-2026-09-28):
 greedy retrieval questions (single and two-step lookups of facts hidden in Python source) with the top-20 token
 probabilities of every answer token, on test servers without MTP (drafted tokens have no probabilities) and with the
@@ -210,7 +210,7 @@ The vision encoder takes 1138 MiB (Qwen) or ~1295 MiB (Gemma) of VRAM. On the CP
 | Gemma 4 31B Uncensored | 16384 | **38912** | +138 % |
 
 (Bold: the preset's choice.) The cost is the time to encode an image, measured with the `image` test of
-[`llama_cpp_bench_http.py`](../benchmark/README.md) (a 1280x960 PNG, mean of 2-3 requests):
+[`bench_http.py`](../agx_ai/benchmark/README.md) (a 1280x960 PNG, mean of 2-3 requests):
 
 | Model | Prompt tokens | Prompt processing incl. the image, encoder on the GPU | On the CPU |
 |---|---|---|---|
@@ -298,7 +298,7 @@ Results of the preset (`--tests generation prompt chat depth image --prompt-toke
 ## Results of the current presets
 
 Each preset as it is, on a test server, with
-`llama_cpp_bench_http.py --tests generation prompt chat depth image --repeat 2` (prompt = ctx-size - 1500 tokens).
+`bench_http.py --tests generation prompt chat depth image --repeat 2` (prompt = ctx-size - 1500 tokens).
 Generation in t/s, prompt processing in parentheses; "generation" is the raw-completion test with repeated text at
 temperature 0, which flatters MTP, "chat" the realistic one:
 
@@ -325,7 +325,7 @@ No errors other than the harmless prompt cache message above were logged.
 ## Earlier results (from the presets)
 
 These were in the preset files before 2026-10-09. RTX 3090 with the desktop session using ~1.2 GiB, build b10689,
-`benchmark/llama_cpp_bench_http.py` (256 generated tokens, MTP on); the peak VRAM includes the desktop.
+`agx_ai/benchmark/bench_http.py` (256 generated tokens, MTP on); the peak VRAM includes the desktop.
 
 ### Gemma 4 26B-A4B QAT (2026-09-26)
 
@@ -389,18 +389,18 @@ slower in prompt processing and 30 % slower in generation).
 cd ../benchmark
 # Stop the production server, then start a test server on port 9934 with a preset or a variant of it
 docker compose -f ../llama-cpp-rtx3090/docker-compose.yml stop
-NAME=llama-test-cuda DOCKER_ARGS="--gpus all" ./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:server-cuda13 \
+NAME=llama-test-cuda DOCKER_ARGS="--gpus all" uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/ggml-org/llama.cpp:server-cuda13 \
     ../llama-cpp-rtx3090/preset-qwen3.8-27b.ini ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env 9934
 # Serving speed with a full-context prompt, chat, depth and an image
-./llama_cpp_bench_http.py --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth image --prompt-tokens 100900 --repeat 2 --depth 6400 16000 36500 60000 100000 \
     --label "..."
-# Output quality of a KV cache type (on test servers without MTP, see ../benchmark/README.md)
-./llama_cpp_quality_http.py --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env \
+# Output quality of a KV cache type (on test servers without MTP, see ../agx_ai/benchmark/README.md)
+uv run -m agx_ai.benchmark.quality_http --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env \
     --tests retrieval --label "..." --reference "z2e Qwen3.8-27B quality f16 ub 512 (reference)"
 docker rm -f llama-test-cuda && docker compose -f ../llama-cpp-rtx3090/docker-compose.yml start
 # Raw model speed (llama bench) of a GGUF with the same build
-./llama_cpp_bench_container.py --image ghcr.io/ggml-org/llama.cpp:full-cuda13-b10689 --docker-arg=--gpus=all \
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --image ghcr.io/ggml-org/llama.cpp:full-cuda13-b10689 --docker-arg=--gpus=all \
     --model /root/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/.../Qwen3.8-27B-UD-Q4_K_M.gguf \
     --keep-loaded --label "..." -- -ngl 999 -fa 1 -ctk q8_0 -ctv q8_0 -ub 256,512,1024,2048 -p 2048 -n 0 -d 0,16384
 ```

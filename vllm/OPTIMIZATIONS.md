@@ -135,8 +135,8 @@ What has given the largest gains, roughly in order:
 
 - `enable-prefix-caching: true` everywhere. Hybrid (Gated DeltaNet) models checkpoint their states only at block
   boundaries (`mamba-cache-mode: align`; blocks of 784-3200 tokens), so part of a returning prompt is recomputed.
-- Test returns with [`../benchmark/vllm_prefix_return.py`](../benchmark/vllm_prefix_return.py) and concurrent agents
-  with [`../benchmark/vllm_concurrent_agents.py`](../benchmark/vllm_concurrent_agents.py).
+- Test returns with [`../agx_ai/benchmark/vllm/prefix_return.py`](../agx_ai/benchmark/vllm/prefix_return.py) and concurrent agents
+  with [`../agx_ai/benchmark/vllm/concurrent_agents.py`](../agx_ai/benchmark/vllm/concurrent_agents.py).
 
 ## CPU KV offloading
 
@@ -160,7 +160,7 @@ What has given the largest gains, roughly in order:
   chat 136 vs 83 t/s with MTP, code edits 290 vs 112 t/s, 80 t/s at 100k; PaperQA2 on the A4000 1.5x stock vLLM.
 - **N-gram drafting alone and MTP are bad for MoE models with experts on the CPU or behind PCIe:** verifying more
   tokens reads more experts (flash-next on the RTX 3070: edits 1.7x, everything else 2-4x slower).
-- Measure with the `chat`, `depth` and `edit` tests of `llama_cpp_bench_http.py`; the raw generation test with
+- Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with
   repeated text gives ~98 % acceptance.
 
 ## Tensor parallelism (2x RTX A4000)
@@ -210,7 +210,7 @@ What has given the largest gains, roughly in order:
   (rtx-a4000); on a dedicated machine the default `auto` (one thread per physical core) was 5-12 % faster than
   `nobind` with 32 threads (zen2-embeddinggemma2). Keep `torch.compile` (`enforce-eager` -25 %).
 - **Causal pooling models (Qwen3-Embedding) get the prefix cache by default:** repeated benchmark texts are then served
-  from it (4B: 175 -> 1030 t/s), so `llama_cpp_bench_http.py` sends a random `cache_salt` with vLLM embedding requests.
+  from it (4B: 175 -> 1030 t/s), so `bench_http.py` sends a random `cache_salt` with vLLM embedding requests.
   The cache costs nothing on the CPU. The KV cache (`VLLM_CPU_KVCACHE_SPACE`, FP32: 224 KiB per token for 0.6B,
   288 KiB for 4B) must hold `max-num-batched-tokens` (16384 was 6 % faster than 8192). Matryoshka:
   `hf-overrides: {"is_matryoshka": true}` (any `dimensions`).
@@ -256,13 +256,13 @@ What has given the largest gains, roughly in order:
 
 ## Methodology
 
-- Test servers: [`../benchmark/vllm_test_server.sh`](../benchmark/vllm_test_server.sh) `IMAGE CONFIG ENV [PORT] -- args`
+- Test servers: [`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py) `IMAGE CONFIG ENV [PORT] -- args`
   with the production container stopped (`GPUS`, `DOCKER_ARGS`, `CACHE_VOLUME` to reuse the compile caches); it
   prints the KV cache size, the maximum concurrency and the VRAM.
-- Speed: `llama_cpp_bench_http.py --tests generation prompt chat depth edit concurrency --server-config <yaml>`
+- Speed: `bench_http.py --tests generation prompt chat depth edit concurrency --server-config <yaml>`
   (vLLM is detected; timing from the stream, `cache_salt` against prefix-cache hits, draft acceptance from
   `/metrics`).
-- Quality: `llama_cpp_quality_http.py --tests retrieval --logprobs N --reference <label>` with speculative decoding
+- Quality: `quality_http.py --tests retrieval --logprobs N --reference <label>` with speculative decoding
   off, against a noise floor from a lossless change (e.g. `max-num-batched-tokens` 2048 -> 1024: KL 0.0020).
 - A single run varies ±5-10 % (chat ±10 %): repeat, and call smaller differences noise.
 - Comment every YAML key with the measured reason, record rejected variants and a "not tried" list, keep the summary

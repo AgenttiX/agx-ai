@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 r"""Measure how settings that should not change the output (KV cache quantization etc.) change it: KL divergence.
 
 Runs llama.cpp's ``llama-perplexity`` in a new container from ``--image``: first a base run that saves the full
@@ -22,12 +21,12 @@ The base logits take ``n_vocab * 2`` bytes per scored token (Gemma 4: 262144 tok
 The GPU memory must be free: stop the llama-server container first. Only the Python standard library is needed.
 
 Example (the Radeon VII, V cache q8_0 vs f16 with ub 256 as the noise floor):
-    docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
-    ./llama_cpp_kld.py --image mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14 \\
+    docker compose -f llama-cpp-radeon-vii/docker-compose.yml stop
+    uv run -m agx_ai.benchmark.llama_cpp.kld --image mixa3607/llama.cpp-gfx906:v0.5.0-rocm-7.14 \\
         --model /root/.cache/huggingface/hub/.../gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf \\
         --ctx 65536 --work-dir ~/.cache/llama-kld --label "Radeon VII" --base-args "-ngl 999 -fa on -ub 512" \\
         --variant "noise: ub 256=-ub 256" --variant "V q8_0=-ctv q8_0" --variant "K+V q8_0=-ctk q8_0 -ctv q8_0"
-    docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml start
+    docker compose -f llama-cpp-radeon-vii/docker-compose.yml start
 
 Results are printed as a Markdown table and appended to ``results/<hostname>-kld.jsonl``.
 """
@@ -47,7 +46,8 @@ import sys
 import sysconfig
 from typing import Any
 
-from llama_cpp_bench_http import host_name
+from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.benchmark.bench_http import host_name
 
 # Statistics printed by llama-perplexity --kl-divergence, "Name : value ± error" (the error is optional).
 STAT_RE: re.Pattern[str] = re.compile(
@@ -150,7 +150,7 @@ def main() -> int:
     base_file = args.work_dir / "base.kld"
 
     host = host_name(args.hash_hostname, args.hostname)
-    output_file = args.output or Path(__file__).resolve().parent / "results" / f"{host.split('.')[0]}-kld.jsonl"
+    output_file = args.output or RESULTS_DIR / f"{host.split('.')[0]}-kld.jsonl"
     common = {
         "date": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "host": host,

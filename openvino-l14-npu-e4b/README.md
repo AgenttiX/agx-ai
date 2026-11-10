@@ -46,12 +46,13 @@ uv lock
 - Tool calls and thinking are not supported by the server.
 
 ## Performance
-Measured on 2026-10-14 with [bench.py](bench.py) (default decoder, not `--fast`),
+Measured on 2026-10-14 with [`agx_ai/benchmark/chat_stream.py`](../agx_ai/benchmark/chat_stream.py)
+(then `bench.py` in this directory; default decoder, not `--fast`),
 OpenVINO 2026.4.1, transformers 5.19.0 and NPU driver 1.38.0:
 - Generation 8.2-8.6 t/s. Time to the first token 0.34 s for a 26-29-token prompt
   and 4.2-4.3 s for a 777-token prompt (~180 t/s), after which generation stays at 8.5 t/s.
 - A 290-token prompt with a 640x480 image took 3.5-3.8 s to the first token.
-- 8/8 correct answers to the short questions in `bench.py` (a different set from the one below).
+- 8/8 correct answers to the short questions in `chat_stream.py` (a different set from the one below).
 - The OpenVINO nightly 2026.5.0.dev20261013, which upstream recommends, gave the same speeds and the same answers,
   so the release from PyPI is used.
 - PyTorch is used only by the image processor of transformers for resizing the input image,

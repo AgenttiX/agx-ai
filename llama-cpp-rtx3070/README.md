@@ -130,8 +130,8 @@ instead of 7655 MiB). b11176 is still available locally as `ghcr.io/ggml-org/lla
 Measured on 2026-09-25 and 2026-09-26 with build b11176. tg = token generation, pp = prompt processing,
 acc = accepted MTP draft tokens. "Chat" is `/v1/chat/completions` with three natural 400-token answers
 (English explanation, Python code, Finnish history), as the repetitive text of
-[`llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) gives an unrealistically high MTP acceptance (~90 %).
-Other numbers are from `llama_cpp_bench_http.py` (results in `benchmark/results/agx-ai.jsonl`) or `llama bench`
+[`bench_http.py`](../agx_ai/benchmark/bench_http.py) gives an unrealistically high MTP acceptance (~90 %).
+Other numbers are from `bench_http.py` (results in `benchmark/results/agx-ai.jsonl`) or `llama bench`
 (without MTP). The helper scripts used for the tests are in `benchmark/scratch/` (gitignored).
 
 ### GPU model
@@ -249,7 +249,7 @@ the previously tested setting: 10 consecutive 75k-token prompts passed at pp 158
 
 **KV cache quantization and a larger context (2026-09-28).** With the 1600 MHz clock lock, the goal was to increase
 the context without a significant loss of quality or speed. The tests used the upstream `chat` and `depth` tests of
-[`llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (results in `benchmark/results/agx-ai.jsonl`).
+[`bench_http.py`](../agx_ai/benchmark/bench_http.py) (results in `benchmark/results/agx-ai.jsonl`).
 
 *Quality* was measured with `llama perplexity` on WikiText-2 (4 chunks of 32768 tokens, i.e. 65k scored tokens at
 long distances), as the KL divergence from the f16 KV cache and the share of tokens with the same top prediction.
@@ -316,7 +316,7 @@ and 20/24 at ~112k tokens, so the recall of the model itself decreases somewhat 
 just bundles Unsloth's drafter for the original model, so the same drafter from `unsloth/gemma-4-26B-A4B-it-qat-GGUF`
 (downloaded for the GPU model) is used. It works with this heretic model with about the same acceptance as with
 the original model: chat tg 23-24 t/s in English and code (acc 68-77 %) and 18 t/s in Finnish (acc 39 %),
-i.e. ~45 % faster in English and ~10 % in Finnish. `llama_cpp_bench_http.py`: tg 27.0 t/s (acc 82 %), pp 72 t/s,
+i.e. ~45 % faster in English and ~10 % in Finnish. `bench_http.py`: tg 27.0 t/s (acc 82 %), pp 72 t/s,
 two concurrent requests 10.6 t/s in total. The drafter path is pinned to a snapshot, as there is no `--hf-file`
 equivalent for the draft model, and `--hf-repo-draft` would pick the main model file.
 Update the path if the Unsloth repository is updated.
@@ -400,7 +400,7 @@ compute buffer). `ubatch-size = 1024` (1213 MiB) would leave room for ~130k toke
   With all three models loaded, the RAM would be nearly full (~50 GB pinned and 27.5 GB mapped for Qwen3.8-Flash-Next,
   ~12 GB for the experts of the Gemma GPU model, 15 GB for the CPU model, plus `cache-ram`).
 
-`llama_cpp_bench_http.py --tests generation prompt chat depth image --prompt-tokens 80000 --depth 6400 36500`:
+`bench_http.py --tests generation prompt chat depth image --prompt-tokens 80000 --depth 6400 36500`:
 
 | Test | Result |
 |---|---|

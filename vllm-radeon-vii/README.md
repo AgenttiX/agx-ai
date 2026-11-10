@@ -44,7 +44,7 @@ The reasons:
 Returning to a long conversation is faster with vLLM, as prefix cache blocks evicted from the GPU are kept in RAM
 (Gemma: 0.2 s instead of 27 s for a 15000-token prompt).
 
-The benchmark tools are in [`../benchmark`](../benchmark) (`llama_cpp_bench_http.py` supports vLLM); the commands
+The benchmark tools are in [`../agx_ai/benchmark`](../agx_ai/benchmark) (`bench_http.py` supports vLLM); the commands
 are at the end.
 
 ## Hardware
@@ -389,8 +389,8 @@ vs 111.5 t/s, the depth tests within 1 %). The offloading takes no GPU memory an
 
 ## Other findings
 
-- `llama_cpp_bench_http.py` and `llama_cpp_quality_http.py` now support vLLM, and `vllm_test_server.sh` starts test
-  servers (see [`../benchmark/README.md`](../benchmark/README.md)). vLLM's speeds are timed on the client from
+- `bench_http.py` and `quality_http.py` now support vLLM, and `vllm/test_server.py` starts test
+  servers (see [`../agx_ai/benchmark/README.md`](../agx_ai/benchmark/README.md)). vLLM's speeds are timed on the client from
   streamed responses.
 - The first start takes ~6 min, mostly compiling Triton kernels (210 s of "profiling/warmup") and `torch.compile`
   (90-110 s). With the caches in the `vllm-cache` volume, later starts take 1.5-3 min.
@@ -401,20 +401,20 @@ vs 111.5 t/s, the depth tests within 1 %). The offloading takes no GPU memory an
 ```sh
 cd ../benchmark
 # Serving speed: generation, a prompt of ctx-size - 1500 tokens, chat, depth
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 45600 --depth 6400 16000 32000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-gemma-4-26b-a4b-qat.yaml --label "..."
 # The same for Qwen (config-qwen3.8-27b.yaml)
-./llama_cpp_bench_http.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests generation prompt chat depth --prompt-tokens 32300 --depth 6400 16000 28000 --repeat 1 --chat-n-predict 256 \
     --server-config ../vllm-radeon-vii/config-qwen3.8-27b.yaml --label "..."
 # A configuration variant on a test server (stop the production container first)
 docker compose -f ../vllm-radeon-vii/docker-compose.yml stop
 GPUS=amd DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0 \
     -e VLLM_TRITON_ATTN_NUM_PAR_SOFTMAX_SEGMENTS=128" \
-    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
+    uv run -m agx_ai.benchmark.vllm.test_server ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
     ../llama-cpp/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 1 --depth 6400 16000 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-radeon-vii/docker-compose.yml start
 ```

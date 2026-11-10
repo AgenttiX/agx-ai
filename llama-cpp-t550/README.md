@@ -4,7 +4,7 @@ Configuration for the NVIDIA T550 Laptop GPU (4 GB, Turing TU117, 30 W) under Do
 The model and its settings are in [`preset.ini`](preset.ini), server-wide settings in [`../llama-cpp/config.ini`](../llama-cpp/config.ini)
 and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
 The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
-[`../benchmark`](../benchmark/README.md)).
+[`../agx_ai/benchmark`](../agx_ai/benchmark/README.md)).
 
 Two models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
 the loaded one):
@@ -36,7 +36,7 @@ native ones next to them) to use the preset with Docker.
 
 ## Gemma 4 E4B QAT: results
 
-Measured with [`benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) (results in
+Measured with [`agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/README.md) (results in
 `benchmark/results/t550.jsonl`), llama.cpp build b11151.
 tg = token generation, pp = prompt processing, acc = accepted MTP draft tokens.
 
@@ -148,7 +148,7 @@ saving, at any context size (at ctx 32768: 3229 MiB with K+V q8_0,
 3243 MiB with f16). A smaller `ubatch-size` hardly changes it (ub 128: 3735 MiB). Without MTP, only the model's
 buffer remains, and K+V q8_0 costs ~12 KiB per token instead of 16 KiB, which would allow a context of ~95k tokens.
 
-**Quality** with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py): 132 greedy
+**Quality** with [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py): 132 greedy
 retrieval questions (single and two-step lookups in Python source) at 9k, 31k and 61k tokens of context, MTP off
 (needed for the token probabilities), each compared with the f16 run. The noise floor is a setting that is lossless in
 principle (another `ubatch-size`). KLD is the KL divergence of the answer-token distributions from the reference.
@@ -163,7 +163,7 @@ principle (another `ubatch-size`). KLD is the KL divergence of the answer-token 
 All single lookups were right in every run (96/96); the differences are in the two-step lookups. K+V q8_0 is
 slightly above the noise floor (1.3 times the mean KLD) and far below q4_0, i.e. its effect on quality is negligible.
 
-**Speed** with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) at ctx 65536, GPU power limit 20 W
+**Speed** with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/README.md) at ctx 65536, GPU power limit 20 W
 (t/s; "chat" = 12 chat prompts of up to 512 tokens, "30k context" = questions about 30k tokens of code):
 
 | KV cache | MTP | Generation | Prompt, 4096 tokens | Chat | 30k context: prompt / generation | Peak VRAM |
@@ -180,7 +180,7 @@ at 30k tokens of context a third slower (12.4 vs 18.7 t/s).
 ## Gemma 4 26B-A4B QAT
 
 Measured on 2026-09-28 and -29 with the GPU power limit at 20 W, build b11151. "Chat" = the chat prompts of
-[`../benchmark/llama_cpp_bench_http.py`](../benchmark/README.md) with up to 512 generated tokens (the realistic
+[`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/README.md) with up to 512 generated tokens (the realistic
 generation speed), "generation" = its raw-completion test, which repeats one paragraph and is therefore much faster
 for a mixture-of-experts model (consecutive tokens use the same experts) and flatters MTP (88 % draft acceptance).
 
@@ -227,7 +227,7 @@ The repacked layout (`no-host`) would generate 16 % faster, but prompts are usua
 
 Unlike for the E4B, q8_0 K and V caches save VRAM here: at ctx 50176, 3323 MiB instead of 3801 MiB after loading
 (the KV cache shrinks from 1380 to 733 MiB, only the MTP drafter's compute buffer grows, by 165 MiB).
-Quality with [`../benchmark/llama_cpp_quality_http.py`](../benchmark/llama_cpp_quality_http.py), 88 greedy retrieval
+Quality with [`../agx_ai/benchmark/quality_http.py`](../agx_ai/benchmark/quality_http.py), 88 greedy retrieval
 questions at 9k and 41k tokens of context, MTP off, compared with f16 (see the E4B section for the method):
 
 | KV cache | Correct | Same answer as f16 | Mean KLD | 99 % KLD | Top token changed |

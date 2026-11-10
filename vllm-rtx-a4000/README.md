@@ -157,7 +157,7 @@ and Marlin padding (19.2 GB), too large here. EmbeddingGemma 2 is not supported 
   (profiling leaves only 0.16 GiB for Gemma), int8 per token and head, with Triton attention, smaller prefill chunks
   and fewer CUDA graphs. FlashAttention 2, vLLM's default on Ampere, supports no quantized KV cache.
 - Every configuration was stress-tested with a prompt of almost the full context and concurrent requests, while
-  embedding batches ran on the same GPUs (`llama_cpp_bench_http.py --mixed`), configurations 3 and 4 after starting
+  embedding batches ran on the same GPUs (`bench_http.py --mixed`), configurations 3 and 4 after starting
   both servers at the same time with `docker compose up -d`. The peaks were 15600-15960 MiB of the 16376 MiB
   (configuration 3: 15807 MiB, also with images and videos).
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is needed for the single-GPU Gemma to load at all: without it,
@@ -165,7 +165,7 @@ and Marlin padding (19.2 GB), too large here. EmbeddingGemma 2 is not supported 
 
 ## Speed
 
-Measured with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (the results are in
+Measured with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py) (the results are in
 [`../benchmark/results/big-machine.jsonl`](../benchmark/results/big-machine.jsonl)), with the previous llama.cpp
 production preset (build b11046, Qwen3.8-27B UD-Q4_K_M with MTP, tensor split, and Qwen3-Embedding-8B) for
 comparison; the current llama.cpp presets are compared in [Comparison with llama.cpp](#comparison-with-llama-cpp):
@@ -355,7 +355,7 @@ Other findings:
 
 ## Embedding models
 
-Which embedding model finds the right excerpts on the actual corpus? [`../benchmark/embedding_retrieval_eval.py`](../benchmark/embedding_retrieval_eval.py)
+Which embedding model finds the right excerpts on the actual corpus? [`../agx_ai/benchmark/embedding_retrieval_eval.py`](../agx_ai/benchmark/embedding_retrieval_eval.py)
 gave 300 random chunks of the PaperQA2 index (1668 chunks of 5000 characters, ~2M tokens, 71 papers) to Gemma 4,
 which wrote one specific question per chunk (269 questions; 31 chunks such as reference lists were skipped). Each
 embedding model then ranked all 1668 chunks for each question, without an instruction prefix, as PaperQA2 does.
@@ -503,12 +503,12 @@ at long contexts), or for switching between many models on one port.
 ```sh
 cd ../benchmark
 # Serving speed of the LLM, with the embedding server (--mixed: embedding batches during the concurrent requests)
-./llama_cpp_bench_http.py --url http://localhost:9932 --embedding-url http://localhost:9934 \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --embedding-url http://localhost:9934 \
     --env-file ../llama-cpp/llama-cpp.env --tests generation prompt concurrency embedding chat depth edit \
     --prompt-tokens 16000 --concurrency 1 4 8 --concurrent-prompt-tokens 8000 --depth 6400 32000 80000 --repeat 1 \
     --chat-n-predict 256 --mixed --server-config ../vllm-rtx-a4000/config-qwen3.8-27b-tp2.yaml --label "..."
 # Stress test of the memory: a prompt of almost the full context, then concurrent long prompts with embeddings
-./llama_cpp_bench_http.py --url http://localhost:9932 --embedding-url http://localhost:9934 \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9932 --embedding-url http://localhost:9934 \
     --env-file ../llama-cpp/llama-cpp.env --tests prompt concurrency --prompt-tokens 255000 \
     --concurrency 4 8 --concurrent-prompt-tokens 30000 --mixed --repeat 1 --timeout 3600 \
     --server-config ../vllm-rtx-a4000/docker-compose.yml --label "..."
@@ -516,11 +516,11 @@ cd ../benchmark
 PAPERQA_THINKING=low uv run python -m phd_code.tools.paperqa_ask ask "What sets the peak frequency of the sound-wave GW spectrum?"
 # A configuration variant on a test server (port 9933); stop the production containers first
 CACHE_VOLUME=vllm-rtx-a4000_vllm-cache GPUS=0,1 DOCKER_ARGS="--memory 40g -e NCCL_P2P_DISABLE=1 \
-    -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" ./vllm_test_server.sh \
+    -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" uv run -m agx_ai.benchmark.vllm.test_server \
     ghcr.io/agenttix/agx-ai/vllm:latest /tmp/config-variant.yaml ../llama-cpp/llama-cpp.env
 # The CPU image (no GPUs, see docker-compose.yml)
 GPUS=none NAME=vllm-cpu DOCKER_ARGS="--cpus 16 -e VLLM_CPU_OMP_THREADS_BIND=nobind -e OMP_NUM_THREADS=16" \
-    ./vllm_test_server.sh vllm/vllm-openai-cpu:v0.31.0 ../vllm-rtx-a4000/config-embedding-cpu.yaml \
+    uv run -m agx_ai.benchmark.vllm.test_server vllm/vllm-openai-cpu:v0.31.0 ../vllm-rtx-a4000/config-embedding-cpu.yaml \
     ../llama-cpp/llama-cpp.env 9935
 # Embedding retrieval test: export the chunks of a PaperQA2 index, write the questions once, then test each model
 cd ../../phd-research && .venv/bin/python -c 'import glob, json, pickle, zlib, pathlib
@@ -530,8 +530,8 @@ for f in sorted(glob.glob("literature/index/pqa_index_*/docs/*")):
     except zlib.error: pass
     for t in pickle.loads(d).texts: print(json.dumps({"name": t.name, "text": t.text}))' > /tmp/chunks.jsonl
 cd ../agx-ai/benchmark
-uv run ./embedding_retrieval_eval.py questions --chunks /tmp/chunks.jsonl --out /tmp/questions.jsonl --n 300 \
+uv run -m agx_ai.benchmark.embedding_retrieval_eval questions --chunks /tmp/chunks.jsonl --out /tmp/questions.jsonl --n 300 \
     --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env --concurrency 8
-uv run ./embedding_retrieval_eval.py eval --chunks /tmp/chunks.jsonl --questions /tmp/questions.jsonl \
+uv run -m agx_ai.benchmark.embedding_retrieval_eval eval --chunks /tmp/chunks.jsonl --questions /tmp/questions.jsonl \
     --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --label "..."
 ```

@@ -410,7 +410,7 @@ def build(specs: bool) -> str:
     vllm = "vllm.png"
     gemma_moe = "Gemma 4 26B A4B QAT"
     # Speeds of single requests with the current configurations, from the READMEs, presets and benchmark/results of
-    # the backends. Generation: the generation test of benchmark/llama_cpp_bench_http.py (256 tokens, short prompt)
+    # the backends. Generation: the generation test of agx_ai/benchmark/bench_http.py (256 tokens, short prompt)
     # where it is valid, otherwise chat. Prompt processing: a prompt of about 4k tokens where measured, otherwise the
     # nearest length that was measured (in the comments).
     machines = [

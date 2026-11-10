@@ -52,7 +52,7 @@ docker compose up -d
 
 ## Performance
 
-Measured on 2026-10-31 with [`../benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py)
+Measured on 2026-10-31 with [`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py)
 `--tests embedding --embed-texts 64 --embed-tokens 500` (and 100; 16 texts for the 4B model), i.e. one request with
 64 or 16 texts, two runs each, on test servers with the settings as command-line arguments (`--kv-unified`, like the
 router). The results of the production configurations are in `../benchmark/results/agx-z2e-kubuntu.jsonl` (labels
@@ -99,7 +99,7 @@ starting with "zen2 llama.cpp b12004 Qwen3-Embedding").
 ## Retrieval test
 
 As the PaperQA2 corpus is not on this computer,
-[`../benchmark/embedding_retrieval_eval.py`](../benchmark/embedding_retrieval_eval.py) was run on a corpus of this
+[`../agx_ai/benchmark/embedding_retrieval_eval.py`](../agx_ai/benchmark/embedding_retrieval_eval.py) was run on a corpus of this
 repository's Markdown files and ten packages of the Python 3.14 standard library (`asyncio`, `email`, `json`, `http`,
 `concurrent`, `logging`, `unittest`, `importlib`, `xml/etree`, `sqlite3`), in chunks of 2500 characters (1013 chunks,
 2.4M characters). Qwen3.8-27B ([`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen)) wrote one question for each of
@@ -163,12 +163,12 @@ docker run -d --name llama-test -p 9933:8080 -v /home/mika/.cache/huggingface/hu
     --kv-unified -a embed -c 8192 -b 2048 -ub 2048 -t 32 -np 4 \
     --cpu-range 0-31 --cpu-strict 1 --cpu-range-batch 0-31 --cpu-strict-batch 1
 cd ../benchmark
-./llama_cpp_bench_http.py --url http://localhost:9933 --tests embedding --embedding-model embed \
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --tests embedding --embedding-model embed \
     --embed-texts 64 --embed-tokens 500 --label "..."
 # The retrieval test (chunks.jsonl as above; the questions once, with the LLM on port 9931)
-uv run ./embedding_retrieval_eval.py questions --chunks chunks.jsonl --out questions.jsonl --n 300 \
+uv run -m agx_ai.benchmark.embedding_retrieval_eval questions --chunks chunks.jsonl --out questions.jsonl --n 300 \
     --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env --concurrency 8
-uv run ./embedding_retrieval_eval.py eval --chunks chunks.jsonl --questions questions.jsonl \
+uv run -m agx_ai.benchmark.embedding_retrieval_eval eval --chunks chunks.jsonl --questions questions.jsonl \
     --url http://localhost:9933 --model embed --label "..."
 docker rm -f llama-test
 ```

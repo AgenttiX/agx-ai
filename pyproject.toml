@@ -117,7 +117,6 @@ show_missing = true
 [tool.pyrefly]
 project-includes = [
     "agx_ai",
-    "benchmark",
     "hostname.py",
     "open-webui",
     "structure",
@@ -130,7 +129,6 @@ project-includes = [
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [
     ".",
-    "benchmark",
     "open-webui/export",
     "vllm"
 ]
@@ -238,7 +236,7 @@ force-sort-within-sections = true
 
 [tool.ruff.lint.per-file-ignores]
 # The benchmark functions are named "test_*" but are not pytest tests.
-"benchmark/**" = [
+"agx_ai/benchmark/**" = [
     "PT028"  # pytest-parameter-with-default-argument
 ]
 # Percent formatting is more readable than f-strings for LaTeX code with many braces.
@@ -246,6 +244,8 @@ force-sort-within-sections = true
     "UP031"  # printf-string-formatting
 ]
 "tests/**" = [
+    # The test functions are documented by their names.
+    "D103",    # undocumented-public-function
     "PLR2004"  # magic-value-comparison
 ]
 # The module docstring of a Sphinx-Gallery example has to start with an RST section title,

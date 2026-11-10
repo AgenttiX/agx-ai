@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 r"""Check whether a serving setting (e.g. KV cache quantization) degrades the output quality of a running llama-server.
 
 Two tests, both with greedy decoding (temperature 0) so that runs are repeatable:
@@ -11,7 +10,7 @@ Two tests, both with greedy decoding (temperature 0) so that runs are repeatable
   the answer is only the value. The haystack is the same for all questions of a depth and is reused from the
   server's prompt cache, so only the first question per depth pays for the long prompt.
 - Greedy agreement (``agreement``): the chat prompts and the long-context code questions of
-  ``llama_cpp_bench_http.py`` (thinking as the server's defaults), generated greedily. With ``--reference``, the
+  ``bench_http.py`` (thinking as the server's defaults), generated greedily. With ``--reference``, the
   outputs are compared with those of an earlier run: how many are identical and how long the common prefix is.
   Greedy outputs diverge after any change in the floating-point operations, so compare with a noise floor: a run
   with a setting that is lossless in principle, e.g. another ``ubatch-size``.
@@ -25,13 +24,13 @@ have no probabilities, so disable speculative decoding on the test server for th
 model's distributions); the coverage is reported.
 
 The needles and questions are generated from ``--seed``, so different runs with the same arguments are comparable.
-llama-perplexity's KL divergence (``llama_cpp_kld.py``) is the more precise method, but it is not usable for all
+llama-perplexity's KL divergence (``llama_cpp/kld.py``) is the more precise method, but it is not usable for all
 models: with Gemma 4 26B-A4B on raw text, even a different ubatch size flips ~30 % of the top tokens.
 
 Examples:
-    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
+    uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env \\
         --label "f16 KV (reference)"
-    ./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \\
+    uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env \\
         --label "V q8_0" --reference "f16 KV (reference)"
 
 Each run is appended to two files: ``results/full/<hostname>-quality.jsonl`` with everything, including the
@@ -55,7 +54,8 @@ import sysconfig
 import time
 from typing import Any
 
-from llama_cpp_bench_http import (
+from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.benchmark.bench_http import (
     CHAT_PROMPTS,
     DEPTH_QUESTIONS,
     Server,
@@ -349,7 +349,7 @@ def main() -> int:
         raise SystemExit("No chat model found; pass --model")
     props = server.props(model)
     host = host_name(args.hash_hostname, args.hostname)
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{host.split('.')[0]}-quality.jsonl"
+    output = args.output or RESULTS_DIR / f"{host.split('.')[0]}-quality.jsonl"
     full_output = output.parent / "full" / output.name
     ref = None
     if args.reference:

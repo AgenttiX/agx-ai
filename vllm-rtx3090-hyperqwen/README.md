@@ -62,7 +62,7 @@ compiles kernels for ~5 min; later starts take 2-6 min (the caches are in the `c
 of HyperQwen's commit `ce9615c` (2026-10-22), pinned by digest. The project was called `qwen38-27b-rtx3090` before;
 its last image under that name (`ghcr.io/syv-ai/qwen38-27b-rtx3090`) is from 2026-09-17.
 
-The measurements were made on 2026-10-26 with the tools in [`../benchmark`](../benchmark/README.md): `chat`, `depth`
+The measurements were made on 2026-10-26 with the tools in [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md): `chat`, `depth`
 (real Python code as the context and a question about it) and the new `edit` test (a 2.2k-token file output again with
 one identifier renamed, without thinking, as a coding agent's edit), all with the server's sampling settings
 (temperature 1.0, top-k 20, top-p 0.95). The results are in
@@ -135,7 +135,7 @@ draft acceptance change), the depth test at 32k by about as much.
 
 Each agent had its own 16k- or 32k-token code context already in the prefix cache (as for an agent's next turn), and
 all agents asked their question at the same time (512 tokens each, one run per point;
-[`../benchmark/vllm_concurrent_agents.py`](../benchmark/vllm_concurrent_agents.py)). DFlash2 ran with the CPU KV cache
+[`../agx_ai/benchmark/vllm/concurrent_agents.py`](../agx_ai/benchmark/vllm/concurrent_agents.py)). DFlash2 ran with the CPU KV cache
 (40 GiB at 16k, 32 GiB at 32k), MTP without it:
 
 | Agents x context | DFlash2 (current), per agent | in total | MTP (`SPEC=mtp CTX=long`), per agent | in total |
@@ -156,7 +156,7 @@ the CPU KV cache (9.3 s to the first token).
 vLLM's native CPU KV offloading (`KV_OFFLOAD_GB`, `--kv-offloading-size`) keeps the prefix cache blocks that are evicted
 from the GPU in pinned RAM. HyperQwen's launcher refuses it with `PTH_FA=1` as untested, so the entrypoint of
 [`docker-compose.yml`](docker-compose.yml) removes that refusal from the launcher before starting it. Tested with
-[`../benchmark/vllm_prefix_return.py`](../benchmark/vllm_prefix_return.py) (a 25030-token conversation, evicted from
+[`../agx_ai/benchmark/vllm/prefix_return.py`](../agx_ai/benchmark/vllm/prefix_return.py) (a 25030-token conversation, evicted from
 the GPU by other prompts, then asked again; greedy). Without a CPU KV cache (HyperQwen's default), an evicted
 conversation is computed again, as cold:
 

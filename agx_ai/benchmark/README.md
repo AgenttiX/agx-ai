@@ -1,25 +1,47 @@
-# llama.cpp benchmarks
+# Benchmarks
 
-Tools for measuring how a model, its settings or the hardware affect llama.cpp performance.
-Results accumulate in `results/<host>.jsonl` (one JSON line per run) so that configurations can be compared later.
-By default, the scripts get the hostname from `../hostname.py`.
+Tools for measuring how a model, its settings or the hardware affect the performance and output quality of
+llama.cpp and vLLM servers.
+
+| Module | Backends |
+|---|---|
+| [`bench_http`](bench_http.py) | llama.cpp, vLLM; OpenVINO Model Server for embeddings |
+| [`quality_http`](quality_http.py) | llama.cpp, vLLM |
+| [`embedding_retrieval_eval`](embedding_retrieval_eval.py) | llama.cpp, vLLM |
+| [`chat_stream`](chat_stream.py) | any OpenAI-compatible chat server, e.g. llama.cpp, vLLM and the OpenVINO NPU server of [`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b) |
+| [`llama_cpp.bench_container`](llama_cpp/bench_container.py), [`llama_cpp.kld`](llama_cpp/kld.py), [`llama_cpp.test_server`](llama_cpp/test_server.py) | llama.cpp |
+| [`vllm.test_server`](vllm/test_server.py), [`vllm.prefix_return`](vllm/prefix_return.py), [`vllm.concurrent_agents`](vllm/concurrent_agents.py) | vLLM |
+
+Run them as modules with `uv run -m agx_ai.benchmark.<module>`, which works in any directory of the repository,
+so that relative paths in the arguments are relative to the current directory. The commands below are run from the
+repository root. Except for `embedding_retrieval_eval` (NumPy), the modules need only the Python standard library
+(Python 3.11+), so on a computer without uv they can also be run with `python3 -m agx_ai.benchmark.<module>` from the
+repository root.
+
+Results accumulate in [`benchmark/results/<host>.jsonl`](../../benchmark/results) in the repository root (one JSON
+line per run) so that configurations can be compared later.
+By default, the scripts get the hostname from [`hostname.py`](../../hostname.py).
 On computers whose hostname should not be published (e.g. work computers), give the scripts another name with
 `--hostname NAME`, or set the environment variable `LLAMA_BENCH_HOSTNAME=NAME` once for all of them; the name is then
 used in the stored results and in the file names. `--hash-hostname` replaces the hostname by its SHA-256 hash instead,
 but a hash of a predictable name (e.g. one with a running number) can be found by trying the candidates.
-If `../hostname.py` prints "censored" (the hostname is gitignored in `results/`), one of these is required.
+If `hostname.py` prints "censored" (the hostname is gitignored in `benchmark/results/`), one of these is required.
 
-## `llama_cpp_bench_http.py`: the serving configuration over HTTP
+The unit tests are in [`../../tests`](../../tests) (`uv run pytest`). The tests that need a server use the
+llama.cpp and vLLM servers running on this computer (see [`../../tests/conftest.py`](../../tests/conftest.py)), and
+are skipped if there are none.
+
+## `bench_http.py`: the serving configuration over HTTP
 
 Benchmarks a *running* `llama-server` through its API, so the numbers reflect the real serving setup:
-router presets, slot count, KV cache, speculative decoding, tensor split. Needs only Python 3.11+.
+router presets, slot count, KV cache, speculative decoding, tensor split.
 
 ```sh
-./llama_cpp_bench_http.py --env-file ../llama-cpp/llama-cpp.env --label "what was changed"
-./llama_cpp_bench_http.py --url http://agx-z2e:9932 --api-key ... --no-embedding     # another server
-./llama_cpp_bench_http.py --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192  # heavier settings
-./llama_cpp_bench_http.py --mixed   # embedding batches concurrently with the concurrent requests (PaperQA2-like load)
-./llama_cpp_bench_http.py --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts
+uv run -m agx_ai.benchmark.bench_http --env-file llama-cpp/llama-cpp.env --label "what was changed"
+uv run -m agx_ai.benchmark.bench_http --url http://agx-z2e:9932 --api-key ... --no-embedding     # another server
+uv run -m agx_ai.benchmark.bench_http --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192  # heavier settings
+uv run -m agx_ai.benchmark.bench_http --mixed   # embedding batches concurrently with the concurrent requests (PaperQA2-like load)
+uv run -m agx_ai.benchmark.bench_http --tests chat depth --depth 6400 16000 36500   # speculative decoding, long contexts
 ```
 
 What it measures (LLM speeds come from the server's own `timings`, so they exclude network and client overhead):
@@ -56,52 +78,65 @@ the prompt length over the time to the first token, and generation the remaining
 to the last one. Each request gets its own `cache_salt` instead of `cache_prompt: false`, so that the prefix cache
 is not hit. The draft acceptance comes from the counters of `/metrics` before and after each request. vLLM does not
 report its arguments; `--server-config FILE` stores the YAML file given to `vllm serve --config` with the result.
-`llama_cpp_quality_http.py` works with vLLM in the same way.
+`quality_http.py` works with vLLM in the same way.
 
 ### OpenVINO Model Server
 
 The embedding test (`--tests embedding`) also works with OpenVINO Model Server (OVMS, detected from its `/v1/config`
-endpoint), e.g. [`../openvino-l14-npu-embeddinggemma2`](../openvino-l14-npu-embeddinggemma2).
+endpoint), e.g. [`../../openvino-l14-npu-embeddinggemma2`](../../openvino-l14-npu-embeddinggemma2).
 OVMS has no `/detokenize`, so the texts are cut to the token count at word boundaries with its `/v3/tokenize`.
 It does not report its version or arguments, so give them with `--label` or `--server-config`.
 
 ```sh
-./llama_cpp_bench_http.py --url http://localhost:9935 --tests embedding --embed-texts 16 --embed-tokens 500
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9935 --tests embedding --embed-texts 16 --embed-tokens 500
 ```
 
-## `vllm_test_server.sh`: a temporary vLLM server from another image or configuration
+## `chat_stream.py`: a quick check of any OpenAI-compatible chat server
 
-The vLLM counterpart of `llama_cpp_test_server.sh` below: starts a container named `vllm-test` on port 9933 with a
-YAML file for `vllm serve --config`, mounted like in [`../vllm-radeon-vii`](../vllm-radeon-vii), and waits until it
+Streamed chat requests timed on the client: the time to the first token and the generation speed for a short and a
+long prompt and a prompt with an image, and the answers to eight short questions with an unambiguous answer. It needs
+nothing from the server but `/v1/chat/completions`, so it also works with servers that have no tokenizer endpoints,
+such as the NPU server of [`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b), for which it was written. For
+thinking models, use `--no-thinking`, as the answers have only 32 tokens.
+
+```sh
+uv run -m agx_ai.benchmark.chat_stream --url http://localhost:9934 --json /tmp/results.json
+uv run -m agx_ai.benchmark.chat_stream --url http://localhost:9932 --env-file llama-cpp/llama-cpp.env --no-thinking
+```
+
+## `vllm/test_server.py`: a temporary vLLM server from another image or configuration
+
+The vLLM counterpart of `llama_cpp/test_server.py` below: starts a container named `vllm-test` on port 9933 with a
+YAML file for `vllm serve --config`, mounted like in [`../../vllm-radeon-vii`](../../vllm-radeon-vii), and waits until it
 answers. Extra `vllm serve` arguments go after `--`, extra docker arguments in `DOCKER_ARGS`. On NVIDIA, the GPUs are
 selected with `GPUS` (default all; `GPUS=none` for the CPU image), and the compile cache volume with `CACHE_VOLUME`
-(see [`../vllm-rtx-a4000/README.md`](../vllm-rtx-a4000/README.md#commands)).
+(see [`../../vllm-rtx-a4000/README.md`](../../vllm-rtx-a4000/README.md#commands)).
 
 ```sh
 DOCKER_ARGS="-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True -e VLLM_USE_V2_MODEL_RUNNER=0" \
-    ./vllm_test_server.sh ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
-    ../llama-cpp/llama-cpp.env -- --max-model-len 16384
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+    uv run -m agx_ai.benchmark.vllm.test_server ghcr.io/agenttix/agx-ai/vllm-gfx906:latest /tmp/config-variant.yaml \
+    llama-cpp/llama-cpp.env -- --max-model-len 16384
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --server-config /tmp/config-variant.yaml --label "..."
 docker rm -f vllm-test
 ```
 
-## `vllm_prefix_return.py` and `vllm_concurrent_agents.py`: several coding agents on one vLLM server
+## `vllm/prefix_return.py` and `vllm/concurrent_agents.py`: several coding agents on one vLLM server
 
 Two tests for vLLM servers of coding agents (they use `cache_salt`, so vLLM only), with the functions of
-`llama_cpp_bench_http.py`:
+`bench_http.py`:
 
-- `vllm_prefix_return.py`: the time to the first token of a conversation (`--tokens`) cold, again from the GPU's
+- `vllm/prefix_return.py`: the time to the first token of a conversation (`--tokens`) cold, again from the GPU's
   prefix cache, and after other prompts (`--evict` x `--evict-tokens`) have evicted it from the GPU, e.g. to check
   that the CPU KV offloading (`kv-offloading-size`) brings it back. The greedy answers are compared with the cold one.
-- `vllm_concurrent_agents.py`: `--agents` agents at once, each with its own code context of `--depth` tokens already
+- `vllm/concurrent_agents.py`: `--agents` agents at once, each with its own code context of `--depth` tokens already
   in the prefix cache (as for an agent's next turn): the generation speed per agent and in total, and each agent's
   time to the first token.
 
 ```sh
-./vllm_prefix_return.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.vllm.prefix_return --url http://localhost:9931 --env-file llama-cpp/llama-cpp.env \
     --tokens 25000 --evict 2 --evict-tokens 100000
-./vllm_concurrent_agents.py --url http://localhost:9931 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.vllm.concurrent_agents --url http://localhost:9931 --env-file llama-cpp/llama-cpp.env \
     --depth 32000 --agents 1 2 3
 ```
 
@@ -109,23 +144,23 @@ Two tests for vLLM servers of coding agents (they use `cache_salt`, so vLLM only
 
 Which embedding model finds the right excerpts for PaperQA2? An LLM writes one question per sampled chunk of the
 corpus (once), then each embedding model ranks all chunks for each question, and the script reports how often the
-source chunk is among the top 1, 5 and 10 (and the MRR). The results go to `results/<host>-embedding.jsonl`. Works with
+source chunk is among the top 1, 5 and 10 (and the MRR). The results go to `benchmark/results/<host>-embedding.jsonl`. Works with
 llama.cpp and vLLM servers; the commands, including exporting the chunks of a PaperQA2 index, are in
-[`../vllm-rtx-a4000/README.md`](../vllm-rtx-a4000/README.md#commands), and the results for the PaperQA2 corpus in
-[its embedding section](../vllm-rtx-a4000/README.md#embedding-models).
+[`../../vllm-rtx-a4000/README.md`](../../vllm-rtx-a4000/README.md#commands), and the results for the PaperQA2 corpus in
+[its embedding section](../../vllm-rtx-a4000/README.md#embedding-models).
 
-## `llama_cpp_bench_container.py`: llama.cpp's own `llama bench` in the running container
+## `llama_cpp/bench_container.py`: llama.cpp's own `llama bench` in the running container
 
 The server image ships `llama bench` (formerly `llama-bench`), which loads the model itself with the flags you give
 and reports prompt-processing and generation speeds independently of the server configuration. This is the tool
 for comparing quantisations, builds and hardware. The script unloads the server's models through the router API
 first (they reload on the next request), runs the benchmark with `docker exec`, prints the Markdown table and
-appends JSON lines to `results/<host>-llama-bench.jsonl`.
+appends JSON lines to `benchmark/results/<host>-llama-bench.jsonl`.
 
 ```sh
-./llama_cpp_bench_container.py --env-file ../llama-cpp/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
-./llama_cpp_bench_container.py --container llama-cpp-gpu --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
-./llama_cpp_bench_container.py --help   # all options
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --env-file llama-cpp/llama-cpp.env --label "UD-Q4_K_M" -- -sm tensor -ts 1/1 -fa on -p 4096 -n 256
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --container llama-cpp-gpu --model /root/.cache/huggingface/hub/.../model.gguf -- -p 2048
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --help   # all options
 ```
 
 With `--image`, the benchmark runs in a new container from that image (`docker run` with `/dev/dri`, `/dev/kfd` if it
@@ -133,13 +168,13 @@ exists and the Hugging Face cache) instead of in the running one. This compares 
 and Vulkan, on the same GGUF:
 
 ```sh
-./llama_cpp_bench_container.py --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --url http://localhost:9932 --env-file llama-cpp/llama-cpp.env \
     --image ghcr.io/ggml-org/llama.cpp:full-vulkan --label "Vulkan" -- -fa 1 -ub 1024 -p 2048 -n 128 -d 0,16384
 ```
 
 Without Docker (e.g. on SteamOS), the script uses Podman (`--engine podman`, or `LLAMA_BENCH_ENGINE=podman`), and
 `--exe PATH` runs a `llama` binary of a local build on the host instead of a container
-(see [../llama-cpp-frame](../llama-cpp-frame)).
+(see [`../../llama-cpp-frame`](../../llama-cpp-frame)).
 
 `--env NAME=VALUE` and `--docker-arg ARG` pass extra settings to that container (e.g. `--docker-arg=--gpus=all` for a
 CUDA image). The image needs `/app/llama` (the ggml-org `full-*` images and the gfx906 images have it; the `server-*`
@@ -149,24 +184,24 @@ Pass the same device flags as the server preset (`-sm`, `-ts`, `-fa`, `-ctk`/`-c
 comparable with the server; `llama bench` does not use speculative decoding, so its generation speed is the
 model's plain speed.
 
-## `llama_cpp_test_server.sh`: a temporary server from another image or preset
+## `llama_cpp/test_server.py`: a temporary server from another image or preset
 
 Starts a llama-server router named `llama-test` on port 9933 from any image with a given preset and `config.ini`,
 mounted like in the compose files, and waits until the model has loaded. It is for comparing the *serving*
-speed of images, backends or preset variants (e.g. `spec-draft-n-max`) with `llama_cpp_bench_http.py` without
+speed of images, backends or preset variants (e.g. `spec-draft-n-max`) with `bench_http.py` without
 editing the production files. Stop the production container first if the GPU memory is needed. For a CUDA image,
 pass `DOCKER_ARGS="--gpus all"`; to run test servers on two GPUs at the same time, give the second one another
 container name and port (`NAME=llama-test-cuda ... 9934`).
 
 ```sh
-./llama_cpp_test_server.sh ghcr.io/ggml-org/llama.cpp:full-vulkan ../llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
-    ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env
-./llama_cpp_bench_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/ggml-org/llama.cpp:full-vulkan llama-cpp-radeon-vii/preset-gemma-4-26b-a4b-qat.ini \
+    llama-cpp/config.ini llama-cpp/llama-cpp.env
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env --no-embedding \
     --tests chat depth --repeat 2 --label "Vulkan"
 docker rm -f llama-test
 ```
 
-## `llama_cpp_quality_http.py`: output quality of a serving setting
+## `quality_http.py`: output quality of a serving setting
 
 Checks whether a setting that saves memory or time, such as a quantized KV cache (`cache-type-k`/`cache-type-v`),
 degrades the output, by comparing a run with a reference run of the same server and model. Both tests use greedy
@@ -175,25 +210,25 @@ decoding (temperature 0), so runs are repeatable:
 | Test | Metric |
 |---|---|
 | Retrieval (`retrieval`): real Python source of `--depth` tokens with facts hidden as code comments, then questions about them: single lookups among many similarly named services, and two-step lookups (service -> database -> region) with the two facts far apart. Thinking off. | exact-match accuracy per context length |
-| Agreement (`agreement`): the chat prompts and long-context code questions of `llama_cpp_bench_http.py`, greedy | with `--reference`: identical outputs and the mean common prefix compared with the reference run |
+| Agreement (`agreement`): the chat prompts and long-context code questions of `bench_http.py`, greedy | with `--reference`: identical outputs and the mean common prefix compared with the reference run |
 
 ```sh
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env --label "f16 KV"
-./llama_cpp_quality_http.py --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
+uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env --label "f16 KV"
+uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env \
     --label "V q8_0" --reference "f16 KV"
 ```
 
-Each run goes to two files: `results/full/<hostname>-quality.jsonl` has everything, including the questions, the
+Each run goes to two files: `benchmark/results/full/<hostname>-quality.jsonl` has everything, including the questions, the
 generated outputs and the top token probabilities of every answer token (several MB per run). It is not in Git
 (`.gitignore`), and `--reference` reads the reference run from it, so comparisons need the full file of the same
-computer. `results/<hostname>-quality.jsonl` (in Git) has the same runs without the questions, outputs and token
+computer. `benchmark/results/<hostname>-quality.jsonl` (in Git) has the same runs without the questions, outputs and token
 probabilities: the answers, the scores and the comparison with the reference. Greedy outputs diverge after any
 change in the floating-point operations, so the agreement numbers only mean something next to a noise floor: a run
 with a setting that is lossless in principle (another `ubatch-size`, or `n-cpu-moe`). The agreement test does not use
 the prompt cache, as a cache hit changes the batching and thus the output; the same configuration then reproduces
 its outputs exactly. The retrieval test reuses the cached haystack for all questions of a context length.
 
-## `llama_cpp_kld.py`: KL divergence with llama-perplexity
+## `llama_cpp/kld.py`: KL divergence with llama-perplexity
 
 The standard llama.cpp method for the same question: `llama-perplexity` saves the full token distributions of a base
 run and reports the KL divergence, top-token agreement and perplexity ratio of each variant against them. It runs in a
@@ -203,16 +238,16 @@ on disk (`--work-dir`, not a RAM-backed /tmp).
 It does not work for Gemma 4 26B-A4B (tested with the gfx906 ROCm and upstream Vulkan builds, 2026-09-28): on raw
 text the model has a perplexity of ~300 and is chaotic, so that settings that are lossless in principle (another
 `ubatch-size`, flash attention off) already give a mean KLD of ~0.36 and change 30 % of the top tokens, the same as
-a q8_0 KV cache. Use `llama_cpp_quality_http.py` for such models; check the noise floor (e.g. `--variant "noise=-ub 256"`)
+a q8_0 KV cache. Use `quality_http.py` for such models; check the noise floor (e.g. `--variant "noise=-ub 256"`)
 before trusting KLD numbers for others.
 
 ## Before benchmarking: turn off the LiteLLM health check
 
 LiteLLM runs on Mika's personal agx-ai server, not on the machine being benchmarked, and routes to the llama.cpp
-servers over the network. Its background health check (`../litellm/config.yaml`, `background_health_checks: true`,
+servers over the network. Its background health check (`../../litellm/config.yaml`, `background_health_checks: true`,
 `health_check_interval: 60`) probes every model once a minute. On a llama-server router this reloads models that
 were just unloaded and adds requests to the slots, which shows up as unexpected reloads in
-`llama_cpp_bench_container.py` and as noise in `llama_cpp_bench_http.py`, even though nothing on the benchmarked machine
+`llama_cpp/bench_container.py` and as noise in `bench_http.py`, even though nothing on the benchmarked machine
 sends requests. Set `background_health_checks: false` on the agx-ai server (or stop its LiteLLM container) for the
 duration of the tests, and turn it back on afterwards. Claude Code: if models reload by themselves during a
 benchmark, remind Mika of this; `docker ps` on the benchmarked machine will not show LiteLLM.

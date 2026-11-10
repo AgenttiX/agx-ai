@@ -94,7 +94,7 @@ Thinking off. "Short" = 41-token question and a ~260-token answer,
 | **Attention on the MX150, rest in host buffer, ub 1024 (this configuration)** | 5.4 | 66.2 | 5.1 | 145 s | 1797 MiB (ctx 24576) |
 | Attention on the MX150, rest repacked (`no-host`), 8 threads | 7.6 | 18.0 | 6.6 | 367 s | 1549 MiB (ctx 32768) |
 
-[benchmark/llama_cpp_bench_http.py](../benchmark/README.md) with this configuration
+[agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/README.md) with this configuration
 (results in `benchmark/results/agx-t480-kubuntu.jsonl`): tg 6.7 t/s (256 tokens, short prompt),
 pp 79.8 t/s (4096 tokens), peak VRAM 1797 MiB.
 

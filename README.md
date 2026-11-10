@@ -21,7 +21,7 @@
 ## Backends
 These are the configurations that run the local LLMs.
 
-- [Benchmarks](benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
+- [Benchmarks](agx_ai/benchmark/README.md): measure the served configuration over HTTP, or run `llama bench` in the container
 - [llama.cpp](https://llama-cpp.com/)
   - [Shared server settings (config.ini)](llama-cpp/README.md)
   - [Optimizations tried in this repository](llama-cpp/OPTIMIZATIONS.md) (Claude Code skill: `/optimize-llama-cpp`)

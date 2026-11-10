@@ -70,7 +70,7 @@ so ubatch-size 4096 did not fit next to the LLM; 2048 does (an input longer than
 ## Context size of Qwen3.8-27B
 
 Probed on 2026-10-11 with b11541 and both models loaded, each with a cold start, a prompt of almost the full context
-and a mixed load (`benchmark/llama_cpp_bench_http.py --mixed`); 98304 also with an unload/reload cycle through the
+and a mixed load (`agx_ai/benchmark/bench_http.py --mixed`); 98304 also with an unload/reload cycle through the
 router API (`POST /models/unload`):
 
 | Context | Result |
@@ -114,7 +114,7 @@ the container used 12.4 GiB of RAM; 16 threads), the embedding model on GPU 0. V
 ## Speed
 
 tg = token generation, pp = prompt processing. Measured with
-[`benchmark/llama_cpp_bench_http.py`](../benchmark/llama_cpp_bench_http.py) (results in
+[`agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py) (results in
 [`benchmark/results/`](../benchmark/results/)) with b11541; generation in t/s, prompt processing in parentheses:
 
 | Test | Qwen3.8-27B ([`preset-qwen3.8-27b-2gpu.ini`](preset-qwen3.8-27b-2gpu.ini)) | Gemma, 2 GPUs | Gemma, 1 GPU + CPU |

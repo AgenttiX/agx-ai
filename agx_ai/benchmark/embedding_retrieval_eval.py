@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 r"""Compare the retrieval quality of embedding models on a document corpus, e.g. the chunks of a PaperQA2 index.
 
 PaperQA2 embeds the chunks of the papers and the question, and gives the ``evidence_k`` (default 10) chunks that are
@@ -14,13 +13,13 @@ This script measures how often that happens for a given embedding model, on the 
    as they are, without an instruction prefix, as PaperQA2 does.
 
 The input chunks are a JSON lines file with a ``text`` field per line. For a PaperQA2 index, they can be exported from
-the pickled documents in ``<index>/docs/`` (see ``../vllm-rtx-a4000/README.md``).
+the pickled documents in ``<index>/docs/`` (see ``vllm-rtx-a4000/README.md``).
 
 Examples:
-    ./embedding_retrieval_eval.py questions --chunks chunks.jsonl --out questions.jsonl --n 200 \
-        --url http://localhost:9932 --env-file ../llama-cpp/llama-cpp.env
-    ./embedding_retrieval_eval.py eval --chunks chunks.jsonl --questions questions.jsonl \
-        --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
+    uv run -m agx_ai.benchmark.embedding_retrieval_eval questions --chunks chunks.jsonl --out questions.jsonl --n 200 \
+        --url http://localhost:9932 --env-file llama-cpp/llama-cpp.env
+    uv run -m agx_ai.benchmark.embedding_retrieval_eval eval --chunks chunks.jsonl --questions questions.jsonl \
+        --url http://localhost:9934 --env-file llama-cpp/llama-cpp.env --label "Qwen3-Embedding-8B FP8"
 
 The results are appended to ``results/<hostname>-embedding.jsonl``.
 """
@@ -36,8 +35,10 @@ import time
 from typing import Any
 import urllib.request
 
-from llama_cpp_bench_http import host_name, read_env_key
 import numpy as np
+
+from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.benchmark.bench_http import host_name, read_env_key
 
 QUESTION_PROMPT = """Below is an excerpt of a document (e.g. a paper, documentation or source code). Write one \
 specific question that this excerpt answers, as someone would ask it when searching a library of such documents on the \
@@ -150,7 +151,7 @@ def evaluate(args: argparse.Namespace, api_key: str | None) -> None:
         "mrr": round(float((1 / (ranks + 1)).mean()), 3),
         "chunk_embedding_s": round(chunk_s, 1),
     }
-    output = args.output or Path(__file__).resolve().parent / "results" / f"{result['host']}-embedding.jsonl"
+    output = args.output or RESULTS_DIR / f"{result['host']}-embedding.jsonl"
     with output.open("a", encoding="utf-8") as f:
         f.write(json.dumps(result, ensure_ascii=False) + "\n")
     print(f"| {args.label or model} | {result['recall_at_1']} | {result['recall_at_5']} | {result['recall_at_10']} "
@@ -178,7 +179,7 @@ def main() -> None:
     e.add_argument("--batch", type=int, default=8, help="texts per embedding request (default %(default)s)")
     e.add_argument("--dims", type=int, help="truncate the embeddings to this dimension (Matryoshka models)")
     e.add_argument("--label", default="", help="free-text label stored with the result")
-    e.add_argument("--hostname", help="hostname for the results file (default from ../hostname.py)")
+    e.add_argument("--hostname", help="hostname for the results file (default from hostname.py)")
     e.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<host>-embedding.jsonl)")
     args = parser.parse_args()
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None)
