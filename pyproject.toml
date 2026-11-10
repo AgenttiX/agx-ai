@@ -2,9 +2,9 @@
 # Without a build-system table, uv would fall back to setuptools.
 # The upper bound follows the uv versioning policy, so that the package keeps building when new versions are released.
 # https://docs.astral.sh/uv/concepts/build-backend/
-# [build-system]
-# requires = ["uv_build >= 0.13.5, < 0.14"]
-# build-backend = "uv_build"
+ [build-system]
+ requires = ["uv_build >= 0.13.7, < 0.14"]
+ build-backend = "uv_build"
 
 [project]
 name = "agx-ai"
@@ -87,9 +87,9 @@ default-groups = ["dev"]
 
 # The package name "pttools-gw" differs from the module name, and the module is in the repository root
 # instead of the default "src" directory.
-# [tool.uv.build-backend]
-# module-name = "agx-ai"
-# module-root = ""
+ [tool.uv.build-backend]
+ module-name = "agx_ai"
+ module-root = ""
 
 [tool.coverage.run]
 branch = true
@@ -116,10 +116,12 @@ show_missing = true
 
 [tool.pyrefly]
 project-includes = [
+    "agx_ai",
     "benchmark",
     "hostname.py",
     "open-webui",
     "structure",
+    "tests",
     "vllm",
     "vllm-rtx3070",
     "vllm-radeon-vii",
