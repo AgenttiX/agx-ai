@@ -19,8 +19,8 @@ What has given the largest gains, roughly in order:
    `gpu-memory-utilization`, and free the VRAM that vLLM allocates by default for things the configuration does not
    need (CUDA graph sizes, RoPE caches for 262144 positions, the vision tower, BF16 embeddings, extra sequences).
 2. **An int8 KV cache with a fast attention kernel**: `kv-cache-dtype: int8_per_token_head` (2x the context of
-   BF16) with `attention-backend: CUSTOM` (pth-flash-attn, Ampere) or `TRITON_ATTN` with the split-KV fix of
-   `vllm.patch`. This made tg flat over the context instead of falling to a third at 100k tokens.
+   BF16) with `attention-backend: CUSTOM` (pth-flash-attn, Ampere) or `TRITON_ATTN` with split-KV decoding for
+   speculative decoding (upstream since vLLM v0.33.0; `vllm.patch` before). This made tg flat over the context instead of falling to a third at 100k tokens.
 3. **Speculative decoding**: MTP with 2 drafted tokens, or DFlash2 (hyperqwen) where available.
 4. **Full CUDA graphs for decoding** with only the capture sizes that are used.
 5. **CPU KV offloading** for conversations that return after other prompts (agents): TTFT from 25 s to 2 s.
@@ -74,7 +74,7 @@ What has given the largest gains, roughly in order:
   x86-64): int8 KV, causal head size 256 or sliding-window/non-causal 128 (Qwen3.5/3.8); other shapes are refused at
   startup. The MTP drafter also needs `"attention_backend": "CUSTOM"` in `speculative-config`. RTX 3090 Qwen3.8-27B:
   tg at 100k 41 -> 66-69 t/s, pp at 100k 544 -> ~800 t/s. Works with CPU KV offloading.
-- **Triton split-KV fix** (`vllm.patch`): the 3D split-KV kernel for speculative-decoding verification batches
+- **Triton split-KV fix** (`vllm.patch` until v0.31.0, upstream since v0.33.0): the 3D split-KV kernel for speculative-decoding verification batches
   (≤8 query tokens). Qwen MTP at 32k 23.7 -> 64 t/s; Gemma at 100k 16.7 -> 84 t/s; identical answers.
 - **Triton prefill tuning for sm_86** (head size 256): pp at 96k 395 -> 582 t/s. The same tuning on gfx906 was
   faster in a microbenchmark but slower in the server and lost a request: verify kernel wins in the server.
@@ -82,7 +82,8 @@ What has given the largest gains, roughly in order:
   Gemma at 32k 30.9 -> 45 t/s, short chats -4 %. The gfx906 CUSTOM flash attention (fp16 KV only) gave a third of the
   context and was rejected. `VLLM_USE_V2_MODEL_RUNNER=0` with CPU KV offloading (memory fault otherwise).
 - **FP8 KV:** FlashInfer FP8 allows only piecewise CUDA graphs with MTP (chat 51 vs 81 t/s), rejected. Triton FP8
-  needs sm_89+; `vllm.patch` reads e4m3 as uint8 for the Flash-Next QSA kernel on Ampere. For hybrid models FP8
+  needs sm_89+; the Flash-Next QSA kernel reads e4m3 as uint8 on Ampere (`vllm.patch` until v0.31.0, upstream since
+  v0.33.0). For hybrid models FP8
   halves the attention page, so it nearly halves the memory per token in all groups (1.1 GB: 42598 vs 24041 tokens)
   but doubles the prefix-cache granularity. Quality: KL 0.0056 vs a noise floor of 0.0020.
 - **`int4_per_token_head`** (Hadamard rotation): 3.4x the context of int8 for Gemma 4 31B on the RTX 3090 with

@@ -9,9 +9,8 @@
 # clients work with all of them.
 
 x-hyperqwen: &hyperqwen
-  # HyperQwen's image of its commit ce9615c (2026-10-22, vLLM 0.31.0; published as ghcr.io/syv-ai/qwen38-27b-rtx3090
-  # before the project was renamed) with the vision tower on the CPU: the image of this directory, built by
-  # ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml. See README.md.
+  # HyperQwen's image of its commit 6ab9bd0 (2026-11-03, vLLM 0.32.0) with the vision tower on the CPU: the image of
+  # this directory, built by ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml. See README.md.
   image: ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest
   volumes:
     - /home/mika/.cache/vllm-models/hyperqwen:/app/models

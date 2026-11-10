@@ -3,7 +3,8 @@
 The vLLM optimizations tried in this repository are collected in [`OPTIMIZATIONS.md`](OPTIMIZATIONS.md).
 
 `ghcr.io/agenttix/agx-ai/vllm`: the official vLLM image for NVIDIA GPUs with a few fixes, not specific to any
-machine, for x86-64 and ARM64 (the patch applies to both variants of the base image, checked on 2026-10-11). Built by [`../.github/workflows/deploy-docker-vllm.yml`](../.github/workflows/deploy-docker-vllm.yml);
+machine, for x86-64 and ARM64 (the patch applied to both variants of the v0.31.0 base image, checked on 2026-10-11; for v0.33.0, only x86-64
+was checked). Built by [`../.github/workflows/deploy-docker-vllm.yml`](../.github/workflows/deploy-docker-vllm.yml);
 locally:
 
 ```sh
@@ -14,8 +15,9 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
 [`../vllm-rtx3070`](../vllm-rtx3070). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
-- `vllm/vllm-openai:latest` is v0.31.0 with CUDA 13.0 and PyTorch 2.13 (the `-cu129` tags are the CUDA 12.9
-  builds). It is pinned as `v0.31.0` in the [`Dockerfile`](Dockerfile).
+- The base image is `vllm/vllm-openai:v0.33.0` (CUDA 13.0), pinned in the [`Dockerfile`](Dockerfile) (v0.31.0 until
+  2026-11-11; the `-cu129` tags are the CUDA 12.9 builds). For v0.33.0, `vllm.patch` was ported with a three-way merge
+  of each file; the parts that v0.33.0 does upstream were dropped (marked below).
 - [`vllm.patch`](vllm.patch), applied by the [`Dockerfile`](Dockerfile):
   - Qwen3.5/3.8 passes its quantization config to the token embedding (main model and MTP module), so that
     checkpoints with a quantized embedding load. Without it, e.g. JRamirez-UAB/Qwen3.8-27B-GPTQ-W4A16-embed-int4-24GB fails with
@@ -29,7 +31,8 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
   - Triton attention (`triton_unified_attention.py`), added on 2026-10-12 and measured on the RTX 3090 of
     [`../vllm-rtx3090`](../vllm-rtx3090) with Qwen3.8-27B, an int8 KV cache and MTP:
     - The split-KV ("3D") kernel is also used for the verification batches of speculative decoding (up to 8 query
-      tokens per sequence), not only for single-token decoding. Without it, MTP decoding ran one program per KV head
+      tokens per sequence), not only for single-token decoding. **Upstream since v0.33.0** (`MAX_3D_QUERY_LEN = 8`,
+      with the same check of the segment buffers), so the patch no longer has it. Without it, MTP decoding ran one program per KV head
       and sequence over the whole context and slowed down with it: 58.6 t/s at 6.4k and 23.7 t/s at 32k tokens of
       context, with it 83.5 and 64.0 t/s. The kernel and the reduction already handle several query tokens per
       sequence; the patch only checks that the segment buffers (one row per token) are large enough.
@@ -58,7 +61,8 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
       weights are now transposed and repacked one after the other, and the repack reads the offloaded weights
       directly.
     - The UVA lookup of the pinned n-gram table copies FP8 rows as `uint8`, as Triton has no FP8 e4m3 type before
-      sm_89 (`type fp8e4nv not supported in this architecture`).
+      sm_89 (`type fp8e4nv not supported in this architecture`). **Upstream since v0.33.0** (the lookup kernel copies
+      raw bytes), so the patch no longer has it.
   - Native CPU KV offloading with an EAGLE/MTP drafter whose layers share the full-attention KV cache group, added on
     2026-10-13 (`distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py`). With the default
     `prefix_cache_retention_interval` of 0, sliding-window groups store only the window ending at the prompt's replay
@@ -76,7 +80,11 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
     (`v1/worker/gpu/mm/encoder_runner.py`) leaves the pixel values of such a model on the CPU, so that they never take
     VRAM. The separate pixel budget for videos of `vllm-mm.patch` is not needed in vLLM 0.31, which takes
     per-modality processor settings (`mm-processor-kwargs: {"max_pixels": ..., "videos_kwargs": {"max_pixels": ...}}`).
-  - FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-rtx3070`](../vllm-rtx3070)
+    Since v0.33.0, the processor sends raw uint8 pixels and the vision tower normalizes them (`mm_device_do_normalize`,
+    on by default for Qwen3-VL-based models), so the model also builds the normalization (`build_mm_input_norm`) with
+    CPU buffers and the CPU tower applies it before transformers' model.
+  - **Upstream since v0.33.0, no longer in the patch** (`_maybe_dequant` in `qsa.py` decodes the e4m3 bytes):
+    FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-rtx3070`](../vllm-rtx3070)
     (`models/qwen4_exp/nvidia/ops/qsa.py`): the sparse attention kernel reads the e4m3 cache through Triton's FP8 type,
     which Triton does not support before sm_89 (`type fp8e4nv not supported in this architecture`). Below sm_89, the
     cache is now read as uint8 and converted to FP16 with bit operations: the sign, exponent and mantissa bits shifted
@@ -86,6 +94,11 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
     15.9 ms (BF16 cache: 14.6 ms). The cache is written by vLLM's CUDA `reshape_and_cache`, which supports FP8 on
     Ampere. As the hybrid model's attention pages are as large as its Gated DeltaNet state pages, the FP8 cache doubles
     the tokens per page, which roughly halves the memory per token of all cache groups.
+- v0.33.0 against v0.31.0, both images with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090)
+  measured back to back on 2026-11-11 with the GPU unlock (`--tests generation prompt chat depth --prompt-tokens 145000
+  --depth 6400 32000 100000`): the same speed within the noise (prompt processing 1063 vs 1061 t/s at 145k, 1715 vs
+  1701 t/s at 6.4k; generation 85.0 / 73.4 / 37.0 vs 83.8 / 69.4 / 39.8 t/s at 6.4k / 32k / 100k; chat 63.3 vs 64.6
+  t/s), 8/8 correct answers, and a KV cache of 169449 instead of 168848 tokens.
 - The [pth-flash-attn](https://github.com/noon-at-cgn/pth-flash-attn) kernel (v0.1.0, the commit that
   [HyperQwen](https://github.com/syv-ai/HyperQwen) vendors), added on 2026-10-26 on x86-64 only (built from its source
   by the [`Dockerfile`](Dockerfile) in ~1 min; under QEMU for ARM64 it would take long, and it has no kernels for the

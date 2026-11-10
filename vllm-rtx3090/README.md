@@ -4,7 +4,7 @@ vLLM on the RTX 3090 of agx-z2e, as an alternative to [`../llama-cpp-rtx3090`](.
 and port (9931). Only one of them fits on the GPU at a time. There are two Docker Compose configurations:
 
 - [`docker-compose.yml`](docker-compose.yml) (`docker compose up -d`): Qwen3.8-27B, Gemma 4 26B-A4B or Gemma 4 31B
-  entirely on the GPU, with the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.31.0`, CUDA 13.0, with the fixes
+  entirely on the GPU, with the image of [`../vllm`](../vllm) (`vllm/vllm-openai:v0.33.0`, CUDA 13.0, with the fixes
   of [`../vllm/vllm.patch`](../vllm/vllm.patch)). The model is selected by commenting the config volume lines in or
   out.
 - [`../vllm-rtx3090-flash-next/docker-compose.yml`](../vllm-rtx3090-flash-next/docker-compose.yml) (`docker compose

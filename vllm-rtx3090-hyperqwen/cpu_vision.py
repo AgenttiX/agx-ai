@@ -8,7 +8,8 @@ transformers' Qwen3-VL vision model (the same architecture and weight names; Qwe
 FP32 on the CPU, outside vLLM's memory accounting, CUDA graphs and torch.compile. The model sets
 mm_encoder_inputs_on_cpu, so that the encoder runner (hyperqwen-vision.patch) leaves the pixel values on the CPU, and
 only the embeddings (5120 values per token in BF16) are copied to the GPU. Zen 2 has no fast BF16, so FP32 is 3.5
-times as fast as BF16 there; the pixel values come from the processor in FP32 anyway. Selected with
+times as fast as BF16 there. With mm_device_do_normalize (the default since vLLM v0.32), the processor sends raw uint8
+pixels, and the model's input normalization (input_norm) is applied here on the CPU too. Selected with
 QWEN38_VISION_DEVICE=cpu, with QWEN38_VISION_THREADS threads (default: PyTorch's). The same module as in
 ../vllm-rtx3090-flash-next, plus tensor parallelism (../vllm-rtx-a4000): the ranks split the frames of the videos
 and the images between them and exchange the embeddings.
@@ -39,7 +40,7 @@ def cpu_vision_enabled() -> bool:
 class CpuVisionTower(nn.Module):
     """Drop-in replacement for vLLM's Qwen3_VisionTransformer that computes on the CPU."""
 
-    def __init__(self, vision_config: Any) -> None:  # a transformers config or a mapping
+    def __init__(self, vision_config: Any, input_norm: nn.Module | None = None) -> None:  # a config or a mapping
         super().__init__()
         cfg_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vision_config)
         cfg_dict.pop("model_type", None)
@@ -51,6 +52,9 @@ class CpuVisionTower(nn.Module):
             model = Qwen3VLVisionModel(cfg).to(dtype=torch.float32).eval()
         # Not a registered submodule: vLLM must neither see these parameters nor move them.
         object.__setattr__(self, "_hf", model)
+        # vLLM's pixel normalization with CPU buffers (build_mm_input_norm under torch.device("cpu")), or None. Not
+        # registered either, so that it stays on the CPU.
+        object.__setattr__(self, "input_norm", input_norm)
         self.spatial_merge_size: int = cfg.spatial_merge_size
         self.out_hidden_size: int = cfg.out_hidden_size
         self.threads: int | None = int(os.environ.get(THREADS_ENV, "0")) or None
@@ -129,7 +133,10 @@ class CpuVisionTower(nn.Module):
             torch.set_num_threads(threads)
         try:
             with torch.inference_mode():
-                out = self._hf(pixel_values.to("cpu", torch.float32), grid_thw=grid)
+                pixel_values = pixel_values.to("cpu")
+                if hasattr(self.input_norm, "forward_native"):
+                    pixel_values = self.input_norm.forward_native(pixel_values, torch.float32)
+                out = self._hf(pixel_values.to(torch.float32), grid_thw=grid)
         finally:
             torch.set_num_threads(previous)
         embeds = out.pooler_output if hasattr(out, "pooler_output") else out

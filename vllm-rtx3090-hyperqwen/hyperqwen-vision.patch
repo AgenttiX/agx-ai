@@ -1,7 +1,7 @@
 diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -135,6 +135,9 @@
+@@ -138,6 +138,9 @@
      torch.cuda.empty_cache()
  
  
@@ -11,7 +11,7 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
  class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
      def get_hf_config(self):
          return self.ctx.get_hf_config(Qwen3_5Config)
-@@ -548,12 +551,17 @@
+@@ -546,13 +549,21 @@
          self.multiscale_dim = self.visual_dim * self.deepstack_num_level
  
          with self._mark_tower_model(vllm_config, {"image", "video"}):
@@ -19,17 +19,22 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 -                config.vision_config,
 -                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
 -                quant_config=quant_config,
+-                input_norm=build_mm_input_norm(self.model_config),
 -                prefix=maybe_prefix(prefix, "visual"),
 -            )
 +            if cpu_vision_enabled():
-+                # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (encoder_runner.py).
-+                self.visual = CpuVisionTower(config.vision_config)
++                # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (encoder_runner.py), and so
++                # does the pixel normalization (mm_device_do_normalize).
++                with torch.device("cpu"):
++                    input_norm = build_mm_input_norm(self.model_config)
++                self.visual = CpuVisionTower(config.vision_config, input_norm)
 +                self.mm_encoder_inputs_on_cpu = True
 +            else:
 +                self.visual = Qwen3_VisionTransformer(
 +                    config.vision_config,
 +                    norm_eps=getattr(config, "rms_norm_eps", 1e-6),
 +                    quant_config=quant_config,
++                    input_norm=build_mm_input_norm(self.model_config),
 +                    prefix=maybe_prefix(prefix, "visual"),
 +                )
  
@@ -38,15 +43,15 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 diff -ruN a/v1/worker/gpu/mm/encoder_runner.py b/v1/worker/gpu/mm/encoder_runner.py
 --- a/v1/worker/gpu/mm/encoder_runner.py
 +++ b/v1/worker/gpu/mm/encoder_runner.py
-@@ -151,8 +151,12 @@
-         self, mm_kwargs: list[tuple[str, MultiModalKwargsItem]]
-     ) -> list[torch.Tensor]:
+@@ -154,8 +154,12 @@
+         # batches as possible. The returned outputs are restored to input order.
+         order = sorted(range(len(mm_kwargs)), key=lambda i: mm_kwargs[i][0])
          encoder_outputs: list[torch.Tensor] = []
 +        # agx-ai: a model whose encoder runs on the CPU gets its inputs there, so that they never take VRAM.
 +        on_cpu = getattr(self.model, "mm_encoder_inputs_on_cpu", False)
          for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
--            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
-+            mm_kwargs,
+-            [mm_kwargs[i] for i in order], device=self.device, pin_memory=PIN_MEMORY
++            [mm_kwargs[i] for i in order],
 +            device="cpu" if on_cpu else self.device,
 +            pin_memory=PIN_MEMORY and not on_cpu,
          ):

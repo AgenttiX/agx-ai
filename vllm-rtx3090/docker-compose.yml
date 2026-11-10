@@ -19,7 +19,7 @@ x-gpu: &gpu
 services:
   vllm:
     <<: *gpu
-    # vllm/vllm-openai:v0.31.0 (CUDA 13.0) with ../vllm/vllm.patch, see ../vllm/README.md.
+    # vllm/vllm-openai:v0.33.0 (CUDA 13.0) with ../vllm/vllm.patch, see ../vllm/README.md.
     # Built by ../.github/workflows/deploy-docker-vllm.yml. Locally: docker build -t <the image> ../vllm
     image: ghcr.io/agenttix/agx-ai/vllm:latest
     container_name: vllm-rtx3090

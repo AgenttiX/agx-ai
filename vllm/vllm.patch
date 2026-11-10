@@ -1,7 +1,7 @@
-diff -ru a/config/vllm.py b/config/vllm.py
---- a/config/vllm.py	2026-10-10 22:21:02.412256909 +0300
-+++ b/config/vllm.py	2026-10-10 22:21:02.437085630 +0300
-@@ -1245,6 +1245,10 @@
+diff -ruN a/config/vllm.py b/config/vllm.py
+--- a/config/vllm.py
++++ b/config/vllm.py
+@@ -1287,6 +1287,10 @@
              return
          if self.model_config is not None and (self.model_config.enable_cumem_allocator):
              return
@@ -12,94 +12,35 @@ diff -ru a/config/vllm.py b/config/vllm.py
  
          raise ValueError(
              f"KV connector {self.kv_transfer_config.kv_connector} is "
-diff -ru a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
---- a/model_executor/models/qwen3_5_mtp.py	2026-10-10 20:03:00.863537569 +0300
-+++ b/model_executor/models/qwen3_5_mtp.py	2026-10-10 20:03:00.887317950 +0300
-@@ -82,9 +82,12 @@
-         self.mtp_start_layer_idx = config.num_hidden_layers
-         self.num_mtp_layers = getattr(config, "mtp_num_hidden_layers", 1)
+diff -ruN a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+--- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
++++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
+@@ -1855,6 +1855,21 @@
+                 reachable_boundaries = (req.num_prompt_tokens - 1,)
+                 if req.shared_prefix_boundary:
+                     reachable_boundaries += (req.shared_prefix_boundary,)
++                # The lookup pops the volatile trailing chunk of EAGLE/MTP groups,
++                # so a hit ends one chunk before the boundary. When such a group is
++                # the full-attention group (e.g. Gemma 4 with MTP), the sliding
++                # window groups need their tail ending there too, otherwise no
++                # window is complete and nothing can be loaded.
++                alignment_tokens = self.config.alignment_tokens
++                if alignment_tokens and any(
++                    config.is_eagle_group
++                    for config in self.config.kv_group_configs
++                ):
++                    reachable_boundaries += tuple(
++                        boundary - alignment_tokens
++                        for boundary in reachable_boundaries
++                        if boundary >= alignment_tokens
++                    )
  
-+        # agx-ai patch: like Qwen3_5Model, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
-         self.embed_tokens = VocabParallelEmbedding(
-             self.vocab_size,
-             config.hidden_size,
-+            quant_config=vllm_config.quant_config,
-+            prefix=maybe_prefix(prefix, "embed_tokens"),
-         )
- 
-         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
-diff -ru a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
---- a/model_executor/models/qwen3_5.py	2026-10-10 20:03:00.863482024 +0300
-+++ b/model_executor/models/qwen3_5.py	2026-10-10 20:03:00.887169691 +0300
-@@ -244,9 +244,12 @@
- 
-         self.vocab_size = config.vocab_size
- 
-+        # agx-ai patch: pass the quantization config, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
-         self.embed_tokens = VocabParallelEmbedding(
-             self.vocab_size,
-             config.hidden_size,
-+            quant_config=self.quant_config,
-+            prefix=maybe_prefix(prefix, "embed_tokens"),
-         )
- 
-         def get_layer(prefix: str):
---- a/v1/attention/ops/triton_unified_attention.py	2026-10-03 11:06:30.000000000 +0300
-+++ b/v1/attention/ops/triton_unified_attention.py	2026-10-12 02:55:20.182596405 +0300
-@@ -958,6 +958,20 @@
-         BLOCK_Q = BLOCK_M // num_queries_per_kv
-         launch_num_warps = 8
-         launch_num_stages = 2
-+    # agx-ai patch: on sm_86 (RTX 3090, RTX A4000), prefill with head_size 256 is faster with more query rows per
-+    # block and a narrower KV tile: Qwen3.8-27B with an int8 KV cache processes a 32k prompt at 890 instead of
-+    # 743 tokens/s, and a 96k prompt at 582 instead of 395 tokens/s.
-+    ampere_large_head = (
-+        head_size == 256
-+        and max_seqlen_q > 8
-+        and num_queries_per_kv <= 16
-+        and current_platform.is_device_capability(86)
-+    )
-+    if ampere_large_head:
-+        BLOCK_M = 64
-+        BLOCK_Q = BLOCK_M // num_queries_per_kv
-+        launch_num_warps = 4
-+        launch_num_stages = 2
- 
-     # Ideally we would launch with kernel with:
-     # \sum_i[ceil(query_len[i] / BLOCK_Q)] blocks.
-@@ -991,6 +1005,8 @@
-     # path (used when max_seqlen_q > 1) reads TILE_SIZE_PREFILL.
-     if tuned_large_head:
-         TILE_SIZE_PREFILL = 128
-+    if ampere_large_head:
-+        TILE_SIZE_PREFILL = 16
- 
-     # USE_TD requires BLOCK_SIZE % TILE_SIZE == 0 (enforced by a
-     # ``tl.static_assert`` in the kernel).  The default prefill tile
-@@ -1043,14 +1059,18 @@
-     # 2. The batch includes at least one prefill request, or
-     # 3. The number of sequences exceeds the configured threshold, or
-     # 4. Batch invariance is enabled
-+    # agx-ai patch: also for the verification batches of speculative decoding (a few query tokens per sequence),
-+    # which otherwise get one program per KV head and sequence and slow down with the context length. The kernel
-+    # and reduce_segments handle several query tokens per sequence; the segment buffers have one row per token.
-     use_3d = not (
-         seq_threshold_3D is None
-         or num_par_softmax_segments is None
-         or softmax_segm_output is None
-         or softmax_segm_max is None
-         or softmax_segm_expsum is None
--        or max_seqlen_q > 1
-+        or max_seqlen_q > 8
-         or num_seqs > seq_threshold_3D
-+        or q.shape[0] > softmax_segm_output.shape[0]
-         or is_batch_invariant
-     )
- 
-diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/layers/fused_moe/oracle/int_wna16.py
+             for group_config, group_state in zip(
+                 self.config.kv_group_configs, req_status.group_states
+diff -ruN a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/layers/fused_moe/oracle/int_wna16.py
 --- a/model_executor/layers/fused_moe/oracle/int_wna16.py
 +++ b/model_executor/layers/fused_moe/oracle/int_wna16.py
-@@ -611,9 +611,9 @@
+@@ -613,9 +613,9 @@
      4. Permute scales (and optionally extract INT8 global scales).
      5. Permute bias tensors.
      """
@@ -112,7 +53,7 @@ diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/
      w13_scales = w13_scales.transpose(1, 2).contiguous()
      w2_scales = w2_scales.transpose(1, 2).contiguous()
      if w13_qzeros is not None:
-@@ -632,16 +632,12 @@
+@@ -634,16 +634,12 @@
      w13_bias_out: torch.Tensor | None = None
      w2_bias_out: torch.Tensor | None = None
  
@@ -130,7 +71,7 @@ diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/
          marlin_w13_scales = w13_scales
          marlin_w2_scales = w2_scales
  
-@@ -650,8 +646,6 @@
+@@ -652,8 +648,6 @@
      N = layer.intermediate_size_per_partition
      padded_N = marlin_moe_padded_intermediate(N, group_size)
      if padded_N != N:
@@ -139,7 +80,7 @@ diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/
          marlin_w13_scales = _pad_w13_shard_cols(marlin_w13_scales, N, padded_N)
          if group_size > 0:
              marlin_w2_scales = _pad_rows(marlin_w2_scales, padded_N // group_size)
-@@ -664,21 +658,26 @@
+@@ -666,21 +660,26 @@
          if w13_bias is not None:
              w13_bias = _pad_w13_bias(w13_bias, N, padded_N)
  
@@ -181,7 +122,7 @@ diff -ru a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/
  
      # --- Permute scales ---
      marlin_w13_scales = marlin_moe_permute_scales(
-diff -ru a/model_executor/layers/quantization/auto_gptq.py b/model_executor/layers/quantization/auto_gptq.py
+diff -ruN a/model_executor/layers/quantization/auto_gptq.py b/model_executor/layers/quantization/auto_gptq.py
 --- a/model_executor/layers/quantization/auto_gptq.py
 +++ b/model_executor/layers/quantization/auto_gptq.py
 @@ -626,17 +626,28 @@
@@ -220,7 +161,7 @@ diff -ru a/model_executor/layers/quantization/auto_gptq.py b/model_executor/laye
  
          converted = convert_to_wna16_moe_kernel_format(
              backend=self.wna16_moe_backend,
-diff -ru a/model_executor/model_loader/utils.py b/model_executor/model_loader/utils.py
+diff -ruN a/model_executor/model_loader/utils.py b/model_executor/model_loader/utils.py
 --- a/model_executor/model_loader/utils.py
 +++ b/model_executor/model_loader/utils.py
 @@ -38,7 +38,10 @@
@@ -235,7 +176,7 @@ diff -ru a/model_executor/model_loader/utils.py b/model_executor/model_loader/ut
  
  logger = init_logger(__name__)
  
-@@ -238,9 +241,11 @@
+@@ -254,9 +257,11 @@
              if name in uva_offloaded_parameters and not getattr(
                  p, "_vllm_is_uva_offloaded", False
              ):
@@ -250,7 +191,39 @@ diff -ru a/model_executor/model_loader/utils.py b/model_executor/model_loader/ut
                  p.data = get_accelerator_view_from_cpu_tensor(cpu_data)
                  p._vllm_is_uva_offloaded = True
  
-diff -ru a/model_executor/offloader/uva.py b/model_executor/offloader/uva.py
+diff -ruN a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+--- a/model_executor/models/qwen3_5_mtp.py
++++ b/model_executor/models/qwen3_5_mtp.py
+@@ -81,9 +81,12 @@
+         self.mtp_start_layer_idx = config.num_hidden_layers
+         self.num_mtp_layers = getattr(config, "mtp_num_hidden_layers", 1)
+ 
++        # agx-ai patch: like Qwen3_5Model, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=vllm_config.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
+diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+--- a/model_executor/models/qwen3_5.py
++++ b/model_executor/models/qwen3_5.py
+@@ -248,9 +248,12 @@
+ 
+         self.vocab_size = config.vocab_size
+ 
++        # agx-ai patch: pass the quantization config, so that a quantized embedding (e.g. int4 compressed-tensors) loads.
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=self.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         def get_layer(prefix: str):
+diff -ruN a/model_executor/offloader/uva.py b/model_executor/offloader/uva.py
 --- a/model_executor/offloader/uva.py
 +++ b/model_executor/offloader/uva.py
 @@ -15,7 +15,10 @@
@@ -298,10 +271,10 @@ diff -ru a/model_executor/offloader/uva.py b/model_executor/offloader/uva.py
  
              if not self.uva_offloading:
                  p.data = cpu_data
-diff -ru a/models/qwen4_exp/common/ngram_embedding.py b/models/qwen4_exp/common/ngram_embedding.py
+diff -ruN a/models/qwen4_exp/common/ngram_embedding.py b/models/qwen4_exp/common/ngram_embedding.py
 --- a/models/qwen4_exp/common/ngram_embedding.py
 +++ b/models/qwen4_exp/common/ngram_embedding.py
-@@ -40,7 +40,10 @@
+@@ -51,7 +51,10 @@
  from vllm.model_executor.utils import set_weight_attrs
  from vllm.triton_utils import tl, triton
  from vllm.utils.platform_utils import is_uva_available
@@ -313,7 +286,7 @@ diff -ru a/models/qwen4_exp/common/ngram_embedding.py b/models/qwen4_exp/common/
  
  from .ple import PLEVocabParallelEmbedding
  
-@@ -432,13 +435,7 @@
+@@ -671,13 +674,7 @@
          dtype: torch.dtype,
      ) -> torch.Tensor:
          """Allocate the complete PLE weight directly in pinned CPU memory."""
@@ -328,133 +301,10 @@ diff -ru a/models/qwen4_exp/common/ngram_embedding.py b/models/qwen4_exp/common/
  
      def _lookup(
          self,
-@@ -465,10 +462,15 @@
- 
-         flat_ids = input_ids.reshape(-1).long()
-         if flat_ids.numel():
-+            # The kernel only copies rows, so 1-byte types are copied as uint8:
-+            # Triton has no FP8 e4m3 type before sm_89.
-+            weight, out = self._uva_weight, output
-+            if weight.element_size() == 1:
-+                weight, out = weight.view(torch.uint8), output.view(torch.uint8)
-             _lookup_ple_embedding_from_pinned_kernel[(flat_ids.numel(),)](
--                self._uva_weight,
-+                weight,
-                 flat_ids,
--                output,
-+                out,
-                 self.embedding_dim,
-                 self.shard_indices.org_vocab_start_index,
-                 self.shard_indices.org_vocab_end_index,
-diff -ru a/models/qwen4_exp/nvidia/model.py b/models/qwen4_exp/nvidia/model.py
---- a/models/qwen4_exp/nvidia/model.py
-+++ b/models/qwen4_exp/nvidia/model.py
-@@ -403,6 +403,11 @@
-             )
-         )
-         self.embed_tokens = VocabParallelEmbedding(self.vocab_size, config.hidden_size)
-+        # make_layers() offloads only the decoder layers; the embedding is only
-+        # looked up, so it can be offloaded too (cpu_offload_params: embed_tokens).
-+        from vllm.model_executor.offloader import get_offloader
-+
-+        get_offloader().wrap_modules(iter([self.embed_tokens]), f"{prefix}.embed_tokens")
- 
-         def get_layer(prefix: str) -> Qwen4ExpDecoderLayer:
-             layer_idx = extract_layer_index(prefix)
-@@ -679,6 +684,7 @@
-         self.lm_head = ParallelLMHead(
-             config.vocab_size,
-             config.hidden_size,
-+            quant_config=vllm_config.quant_config,
-             prefix=maybe_prefix(prefix, "lm_head"),
-         )
-         self.logits_processor = LogitsProcessor(config.vocab_size)
-diff -ru a/utils/torch_utils.py b/utils/torch_utils.py
---- a/utils/torch_utils.py
-+++ b/utils/torch_utils.py
-@@ -2,11 +2,14 @@
- # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
- import contextlib
- import importlib.metadata
-+import math
-+import mmap
- import os
- import random
- import sys
- import threading
--from collections.abc import Callable, Collection
-+import weakref
-+from collections.abc import Callable, Collection, Sequence
- from typing import TYPE_CHECKING, Any, TypeVar
- 
- import numpy as np
-@@ -902,6 +905,37 @@
-     raise ValueError("Invalid type for tensors")
- 
- 
-+def empty_pinned(shape: Sequence[int], dtype: torch.dtype) -> torch.Tensor:
-+    """Allocate a pinned CPU tensor of exactly its size.
-+
-+    pin_memory=True uses PyTorch's caching host allocator, which rounds every
-+    block up to the next power of two, e.g. a 48 GiB table to 64 GiB of locked
-+    RAM. On CUDA, tensors of 1 MiB or more are instead backed by their own
-+    anonymous memory mapping, registered with cudaHostRegister and unregistered
-+    before the mapping is released with the tensor.
-+    """
-+    from vllm.platforms import current_platform
-+
-+    nbytes = math.prod(shape) * dtype.itemsize
-+    if not current_platform.is_cuda() or nbytes < 1 << 20:
-+        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
-+    buf = mmap.mmap(-1, nbytes)
-+    host = torch.frombuffer(buf, dtype=torch.uint8)
-+    cudart = torch.cuda.cudart()
-+    ptr = host.data_ptr()
-+    if cudart.cudaHostRegister(ptr, nbytes, 0) != cudart.cudaError.success:
-+        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
-+    weakref.finalize(buf, cudart.cudaHostUnregister, ptr)
-+    return host.view(dtype).view(tuple(shape))
-+
-+
-+def pin_memory_exact(tensor: torch.Tensor) -> torch.Tensor:
-+    """Copy a tensor to pinned CPU memory of exactly its size (see empty_pinned)."""
-+    out = empty_pinned(tensor.shape, tensor.dtype)
-+    out.copy_(tensor)
-+    return out
-+
-+
- def get_accelerator_view_from_cpu_tensor(cpu_tensor: torch.Tensor) -> torch.Tensor:
-     """Get an accelerator view of a CPU tensor via Unified Virtual Addressing."""
-     from vllm.platforms import current_platform
-diff -ru a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
---- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-+++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-@@ -1541,6 +1541,21 @@
-                 reachable_boundaries = (req.num_prompt_tokens - 1,)
-                 if req.shared_prefix_boundary:
-                     reachable_boundaries += (req.shared_prefix_boundary,)
-+                # The lookup pops the volatile trailing chunk of EAGLE/MTP groups,
-+                # so a hit ends one chunk before the boundary. When such a group is
-+                # the full-attention group (e.g. Gemma 4 with MTP), the sliding
-+                # window groups need their tail ending there too, otherwise no
-+                # window is complete and nothing can be loaded.
-+                alignment_tokens = self.config.alignment_tokens
-+                if alignment_tokens and any(
-+                    config.is_eagle_group
-+                    for config in self.config.kv_group_configs
-+                ):
-+                    reachable_boundaries += tuple(
-+                        boundary - alignment_tokens
-+                        for boundary in reachable_boundaries
-+                        if boundary >= alignment_tokens
-+                    )
- 
-             for group_config, group_state in zip(
-                 self.config.kv_group_configs, req_status.group_states
 diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_vision.py
 --- a/models/qwen4_exp/nvidia/cpu_vision.py
 +++ b/models/qwen4_exp/nvidia/cpu_vision.py
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,102 @@
 +# SPDX-License-Identifier: Apache-2.0
 +"""The vision tower of Qwen4Exp (Qwen3.8-Flash-Next) on the CPU (agx-ai, see ../vllm/README.md).
 +
@@ -464,7 +314,8 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 +and torch.compile. Selected with QWEN38_VISION_DEVICE=cpu, with QWEN38_VISION_THREADS threads (default: PyTorch's).
 +The model sets mm_encoder_inputs_on_cpu, so that the encoder runner leaves the pixel values on the CPU, and only the
 +embeddings (2560 values per token in BF16) are copied to the GPU. Zen 2 has no fast BF16, so FP32 is 3.5 times as fast
-+as BF16 there; the pixel values come from the processor in FP32 anyway. The same module is used by the
++as BF16 there. With mm_device_do_normalize (the default since vLLM v0.33), the processor sends raw uint8 pixels,
++and the model's input normalization (input_norm) is applied here on the CPU too. The same module is used by the
 +qwen38-flash-next-3090 runtime image of ../vllm-rtx3090-flash-next.
 +"""
 +
@@ -491,7 +342,7 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 +class CpuVisionTower(nn.Module):
 +    """Drop-in replacement for vLLM's Qwen3_VisionTransformer that computes on the CPU."""
 +
-+    def __init__(self, vision_config) -> None:
++    def __init__(self, vision_config, input_norm: nn.Module | None = None) -> None:
 +        super().__init__()
 +        cfg_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vision_config)
 +        cfg_dict.pop("model_type", None)
@@ -503,6 +354,9 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 +            model = Qwen3VLVisionModel(cfg).to(dtype=torch.float32).eval()
 +        # Not a registered submodule: vLLM must neither see these parameters nor move them.
 +        object.__setattr__(self, "_hf", model)
++        # vLLM's pixel normalization with CPU buffers (build_mm_input_norm under torch.device("cpu")), or None. Not
++        # registered either, so that it stays on the CPU.
++        object.__setattr__(self, "input_norm", input_norm)
 +        self.spatial_merge_size = cfg.spatial_merge_size
 +        self.out_hidden_size = cfg.out_hidden_size
 +        self.threads = int(os.environ.get(THREADS_ENV, "0")) or None
@@ -544,7 +398,10 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 +            torch.set_num_threads(self.threads)
 +        try:
 +            with torch.inference_mode():
-+                out = self._hf(pixel_values.to("cpu", torch.float32), grid_thw=grid)
++                pixel_values = pixel_values.to("cpu")
++                if hasattr(self.input_norm, "forward_native"):
++                    pixel_values = self.input_norm.forward_native(pixel_values, torch.float32)
++                out = self._hf(pixel_values.to(torch.float32), grid_thw=grid)
 +        finally:
 +            torch.set_num_threads(previous)
 +        embeds = out.pooler_output if hasattr(out, "pooler_output") else out
@@ -553,15 +410,35 @@ diff -ruN a/models/qwen4_exp/nvidia/cpu_vision.py b/models/qwen4_exp/nvidia/cpu_
 diff -ruN a/models/qwen4_exp/nvidia/model.py b/models/qwen4_exp/nvidia/model.py
 --- a/models/qwen4_exp/nvidia/model.py
 +++ b/models/qwen4_exp/nvidia/model.py
-@@ -81,6 +81,7 @@
+@@ -88,6 +88,7 @@
  from .ops.cute_dsl.hc_down_silu import request_hc_down_silu_warmup
  from .ple_layer import Qwen4ExpPLELayer
  from .qsa import Qwen4ExpQSAAttention
 +from .cpu_vision import CpuVisionTower, cpu_vision_enabled
  
+ # Transformers v5.18 renamed `qwen_sparse_attention` to `indexed_attention`
+ # TODO: Delete qwen_... once Transformers 5.18.0 is the minimum required version.
+@@ -427,6 +428,11 @@
+             and getattr(config, "indexer_n_heads", None) is not None
+         )
+         self.embed_tokens = VocabParallelEmbedding(self.vocab_size, config.hidden_size)
++        # make_layers() offloads only the decoder layers; the embedding is only
++        # looked up, so it can be offloaded too (cpu_offload_params: embed_tokens).
++        from vllm.model_executor.offloader import get_offloader
++
++        get_offloader().wrap_modules(iter([self.embed_tokens]), f"{prefix}.embed_tokens")
  
- def without_modelopt_fp4(
-@@ -935,12 +936,18 @@
+         def get_layer(prefix: str) -> Qwen4ExpDecoderLayer:
+             layer_idx = extract_layer_index(prefix)
+@@ -730,6 +736,7 @@
+         self.lm_head = ParallelLMHead(
+             config.vocab_size,
+             config.hidden_size,
++            quant_config=vllm_config.quant_config,
+             prefix=maybe_prefix(prefix, "lm_head"),
+         )
+         self.logits_processor = LogitsProcessor(config.vocab_size)
+@@ -994,13 +1001,22 @@
              self._tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
  
              with self._mark_tower_model(vllm_config, {"image", "video"}):
@@ -569,138 +446,133 @@ diff -ruN a/models/qwen4_exp/nvidia/model.py b/models/qwen4_exp/nvidia/model.py
 -                    config.vision_config,
 -                    norm_eps=config.text_config.rms_norm_eps,
 -                    quant_config=quant_config,
+-                    input_norm=build_mm_input_norm(self.model_config),
 -                    prefix=maybe_prefix(prefix, "visual"),
 -                )
 +                if cpu_vision_enabled():
 +                    # No VRAM for the vision tower, see cpu_vision.py. Its inputs
-+                    # stay on the CPU too (read by the encoder runner).
-+                    self.visual = CpuVisionTower(config.vision_config)
++                    # stay on the CPU too (read by the encoder runner), and so does
++                    # the pixel normalization (mm_device_do_normalize).
++                    with torch.device("cpu"):
++                        input_norm = build_mm_input_norm(self.model_config)
++                    self.visual = CpuVisionTower(config.vision_config, input_norm)
 +                    self.mm_encoder_inputs_on_cpu = True
 +                else:
 +                    self.visual = Qwen3_VisionTransformer(
 +                        config.vision_config,
 +                        norm_eps=config.text_config.rms_norm_eps,
 +                        quant_config=quant_config,
++                        input_norm=build_mm_input_norm(self.model_config),
 +                        prefix=maybe_prefix(prefix, "visual"),
 +                    )
  
          self.use_deepstack = (
              not self.language_model_only
+diff -ruN a/utils/torch_utils.py b/utils/torch_utils.py
+--- a/utils/torch_utils.py
++++ b/utils/torch_utils.py
+@@ -1,11 +1,14 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import contextlib
++import math
++import mmap
+ import os
+ import random
+ import sys
+ import threading
+-from collections.abc import Callable, Collection
++import weakref
++from collections.abc import Callable, Collection, Sequence
+ from typing import TYPE_CHECKING, Any, TypeVar
+ 
+ import numpy as np
+@@ -901,6 +904,37 @@
+     raise ValueError("Invalid type for tensors")
+ 
+ 
++def empty_pinned(shape: Sequence[int], dtype: torch.dtype) -> torch.Tensor:
++    """Allocate a pinned CPU tensor of exactly its size.
++
++    pin_memory=True uses PyTorch's caching host allocator, which rounds every
++    block up to the next power of two, e.g. a 48 GiB table to 64 GiB of locked
++    RAM. On CUDA, tensors of 1 MiB or more are instead backed by their own
++    anonymous memory mapping, registered with cudaHostRegister and unregistered
++    before the mapping is released with the tensor.
++    """
++    from vllm.platforms import current_platform
++
++    nbytes = math.prod(shape) * dtype.itemsize
++    if not current_platform.is_cuda() or nbytes < 1 << 20:
++        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
++    buf = mmap.mmap(-1, nbytes)
++    host = torch.frombuffer(buf, dtype=torch.uint8)
++    cudart = torch.cuda.cudart()
++    ptr = host.data_ptr()
++    if cudart.cudaHostRegister(ptr, nbytes, 0) != cudart.cudaError.success:
++        return torch.empty(tuple(shape), dtype=dtype, device="cpu", pin_memory=True)
++    weakref.finalize(buf, cudart.cudaHostUnregister, ptr)
++    return host.view(dtype).view(tuple(shape))
++
++
++def pin_memory_exact(tensor: torch.Tensor) -> torch.Tensor:
++    """Copy a tensor to pinned CPU memory of exactly its size (see empty_pinned)."""
++    out = empty_pinned(tensor.shape, tensor.dtype)
++    out.copy_(tensor)
++    return out
++
++
+ def get_accelerator_view_from_cpu_tensor(cpu_tensor: torch.Tensor) -> torch.Tensor:
+     """Get an accelerator view of a CPU tensor via Unified Virtual Addressing."""
+     from vllm.platforms import current_platform
+diff -ruN a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
+--- a/v1/attention/ops/triton_unified_attention.py
++++ b/v1/attention/ops/triton_unified_attention.py
+@@ -979,6 +979,20 @@
+         BLOCK_Q = BLOCK_M // num_queries_per_kv
+         launch_num_warps = 8
+         launch_num_stages = 2
++    # agx-ai patch: on sm_86 (RTX 3090, RTX A4000), prefill with head_size 256 is faster with more query rows per
++    # block and a narrower KV tile: Qwen3.8-27B with an int8 KV cache processes a 32k prompt at 890 instead of
++    # 743 tokens/s, and a 96k prompt at 582 instead of 395 tokens/s.
++    ampere_large_head = (
++        head_size == 256
++        and max_seqlen_q > 8
++        and num_queries_per_kv <= 16
++        and current_platform.is_device_capability(86)
++    )
++    if ampere_large_head:
++        BLOCK_M = 64
++        BLOCK_Q = BLOCK_M // num_queries_per_kv
++        launch_num_warps = 4
++        launch_num_stages = 2
+ 
+     # Ideally we would launch with kernel with:
+     # \sum_i[ceil(query_len[i] / BLOCK_Q)] blocks.
+@@ -1012,6 +1026,8 @@
+     # path (used when max_seqlen_q > 1) reads TILE_SIZE_PREFILL.
+     if tuned_large_head:
+         TILE_SIZE_PREFILL = 128
++    if ampere_large_head:
++        TILE_SIZE_PREFILL = 16
+ 
+     # USE_TD requires BLOCK_SIZE % TILE_SIZE == 0 (enforced by a
+     # ``tl.static_assert`` in the kernel).  The default prefill tile
 diff -ruN a/v1/worker/gpu/mm/encoder_runner.py b/v1/worker/gpu/mm/encoder_runner.py
 --- a/v1/worker/gpu/mm/encoder_runner.py
 +++ b/v1/worker/gpu/mm/encoder_runner.py
-@@ -151,8 +151,13 @@
-         self, mm_kwargs: list[tuple[str, MultiModalKwargsItem]]
-     ) -> list[torch.Tensor]:
+@@ -154,8 +154,13 @@
+         # batches as possible. The returned outputs are restored to input order.
+         order = sorted(range(len(mm_kwargs)), key=lambda i: mm_kwargs[i][0])
          encoder_outputs: list[torch.Tensor] = []
 +        # A model whose encoder runs on the CPU gets its inputs there, so that they
 +        # never take VRAM.
 +        on_cpu = getattr(self.model, "mm_encoder_inputs_on_cpu", False)
          for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(
--            mm_kwargs, device=self.device, pin_memory=PIN_MEMORY
-+            mm_kwargs,
+-            [mm_kwargs[i] for i in order], device=self.device, pin_memory=PIN_MEMORY
++            [mm_kwargs[i] for i in order],
 +            device="cpu" if on_cpu else self.device,
 +            pin_memory=PIN_MEMORY and not on_cpu,
          ):
              cg_manager = self.cudagraph_manager
              cudagraph_output = (
-diff -ruN a/models/qwen4_exp/nvidia/ops/qsa.py b/models/qwen4_exp/nvidia/ops/qsa.py
---- a/models/qwen4_exp/nvidia/ops/qsa.py
-+++ b/models/qwen4_exp/nvidia/ops/qsa.py
-@@ -23,6 +23,28 @@
- 
- 
- @lru_cache(maxsize=1)
-+def _fp8_as_bits() -> bool:
-+    """True below sm_89, where Triton has no FP8 e4m3 type: FP8 caches are then
-+    read as uint8 and converted with bit operations (_e4m3_bits_to_fp16)."""
-+    return not current_platform.has_device_capability(89)
-+
-+
-+@triton.jit
-+def _e4m3_bits_to_fp16(x):
-+    """Convert FP8 e4m3fn values, loaded as uint8, to FP16 (exact).
-+
-+    The sign, exponent and mantissa bits shifted into their FP16 positions give
-+    the value times 2**-8 (exponent bias 15 instead of 7), subnormals included,
-+    so a multiplication by 256 restores it. Cheap enough for the one-warp tiles
-+    of the prefill configuration (a version with int32 ops and selects was ~25
-+    times slower there).
-+    """
-+    x = x.to(tl.int16)
-+    bits = ((x & 0x80) << 8) | ((x & 0x7F) << 7)
-+    return bits.to(tl.float16, bitcast=True) * 256.0
-+
-+
-+@lru_cache(maxsize=1)
- def _is_sm90() -> bool:
-     """True on sm_90 (H100/H200/H20): selects the sm_90 tuning table."""
-     return current_platform.get_device_capability() == (9, 0)
-@@ -70,6 +92,7 @@
-     BLOCK_M: tl.constexpr,
-     BLOCK_N: tl.constexpr,
-     IS_FP8: tl.constexpr,
-+    FP8_AS_BITS: tl.constexpr,
- ) -> None:
-     row = tl.program_id(0)
-     kv_head = tl.program_id(1)
-@@ -153,6 +176,8 @@
-         if IS_FP8:
-             # e4m3 -> Q dtype is exact; keep the QK dot in Q's dtype (fp8 QK
-             # measured slower here and less accurate).
-+            if FP8_AS_BITS:
-+                keys = _e4m3_bits_to_fp16(keys)
-             keys = keys.to(query.dtype)
-         scores = tl.dot(query, keys)
-         # Scaling scores avoids re-quantizing a scaled query to BF16; for fp8
-@@ -169,7 +194,10 @@
-             # Dequant V to fp16 (not bf16) for the PV dot: P <= 1 (online
-             # softmax) so fp16 has the range, its wider mantissa is more
-             # accurate, and the fp8->fp16 upcast with an fp16 PV dot is faster.
--            values = values.to(tl.float16)
-+            if FP8_AS_BITS:
-+                values = _e4m3_bits_to_fp16(values)
-+            else:
-+                values = values.to(tl.float16)
-         accumulator = tl.dot(
-             probabilities.to(values.dtype),
-             values,
-@@ -643,6 +671,9 @@
-         # and pass V's dequant scale as the kernel's output scale.
-         softmax_scale = (head_dim**-0.5) * float(k_scale)
-         output_scale = float(v_scale)
-+        if _fp8_as_bits():
-+            k_cache = k_cache.view(torch.uint8)
-+            v_cache = v_cache.view(torch.uint8)
-     else:
-         assert k_cache.dtype == torch.bfloat16
-         softmax_scale = head_dim**-0.5
-@@ -732,6 +763,7 @@
-         BLOCK_M=block_m,
-         BLOCK_N=block_n,
-         IS_FP8=is_fp8,
-+        FP8_AS_BITS=is_fp8 and _fp8_as_bits(),
-         num_warps=partial_warps,
-         num_stages=2,
-     )
-@@ -770,7 +802,11 @@
-     key_cache, value_cache = kv_cache.transpose(1, 2).split(head_dim, dim=-1)
-     # An fp8 cache is allocated as uint8 and viewed as e4m3 at attention time.
-     is_fp8 = kv_cache.dtype == torch.uint8
--    cache_dtype = torch.float8_e4m3fn if is_fp8 else key_cache.dtype
-+    cache_dtype = (
-+        (torch.uint8 if _fp8_as_bits() else torch.float8_e4m3fn)
-+        if is_fp8
-+        else key_cache.dtype
-+    )
-     num_kv_heads = key_cache.shape[2]
-     group_size = num_query_heads // num_kv_heads
-     block_m = triton.next_power_of_2(group_size)
-@@ -875,6 +911,7 @@
-             BLOCK_M=block_m,
-             BLOCK_N=block_n,
-             IS_FP8=is_fp8,
-+            FP8_AS_BITS=is_fp8 and _fp8_as_bits(),
-             num_warps=warps,
-             num_stages=2,
-             grid=(num_rows, num_kv_heads, num_splits),

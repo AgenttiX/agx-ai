@@ -1,7 +1,7 @@
 # HyperQwen on the RTX 3090 of agx-z2e
 
 [HyperQwen](https://github.com/syv-ai/HyperQwen) for Qwen3.8-27B on the RTX 3090 of agx-z2e, tuned for agentic coding
-with one user and one or a few agents. HyperQwen is a patch series for vLLM 0.31.0, a re-quantized checkpoint and two
+with one user and one or a few agents. HyperQwen is a patch series for vLLM 0.32.0, a re-quantized checkpoint and two
 drafters (MTP and DFlash2). Its image is used with the settings in the `environment` of
 [`docker-compose.yml`](docker-compose.yml), the CPU KV offloading of this repository added, and image and video input
 with the vision tower on the CPU (see [Images and videos](#images-and-videos)). It replaces the
@@ -59,7 +59,8 @@ re-quantizes its BF16 lm_head and embedding (2.5 GB each) and its MTP module to 
 (the lm_head and the MTP module in int4 GPTQ, 1 GB, used by default) and the
 [DFlash2 drafter](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) re-quantized to W4A16 (1.2 GB). The first start
 compiles kernels for ~5 min; later starts take 2-6 min (the caches are in the `cache` volume). The base image is that
-of HyperQwen's commit `ce9615c` (2026-10-22), pinned by digest. The project was called `qwen38-27b-rtx3090` before;
+of HyperQwen's commit `6ab9bd0` (2026-11-03, vLLM 0.32.0), pinned by digest (`ce9615c` of 2026-10-22, vLLM 0.31.0,
+until 2026-11-11). The project was called `qwen38-27b-rtx3090` before;
 its last image under that name (`ghcr.io/syv-ai/qwen38-27b-rtx3090`) is from 2026-09-17.
 
 The measurements were made on 2026-10-26 with the tools in [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md): `chat`, `depth`
@@ -220,6 +221,9 @@ and [`../vllm`](../vllm/README.md), so the KV cache and the context stay the sam
   `vllm/model_executor/models/qwen3_vl_cpu_vision.py`, with `QWEN38_VISION_DEVICE=cpu` and 32 threads
   (`QWEN38_VISION_THREADS`). With tensor parallelism ([`../vllm-rtx-a4000`](../vllm-rtx-a4000/README.md)), the workers
   split the frames of the videos and the images between them and exchange the embeddings (bit-identical results).
+  Since vLLM 0.32 (HyperQwen's image of 2026-11-03), the processor sends raw uint8 pixels and the vision tower
+  normalizes them (`mm_device_do_normalize`, on by default), so `qwen3_5.py` builds that normalization with CPU
+  buffers and the CPU tower applies it before transformers' model. Without it, the tower would see unnormalized pixels.
 - [`hyperqwen-vision.patch`](hyperqwen-vision.patch): Qwen3.5/3.8 (`qwen3_5.py`) creates it instead of vLLM's vision
   transformer and sets `mm_encoder_inputs_on_cpu`, and the encoder runner of vLLM's V2 model runner (which DFlash2
   uses) leaves the pixel values of such a model on the CPU, so that only the embeddings are copied to the GPU. The same
@@ -283,6 +287,25 @@ image and settings, measured once with the same tests (`--tests chat depth edit 
   lower than now. The generation at 100k and 128k (+11-13 %) is higher than on either earlier day, probably because the attention over
   the long KV cache in DFlash2's 8-token verify batches is partly compute-bound.
 - The peak VRAM (21500 MiB) is the same as in the runs of 2026-10-28 (21478-21500 MiB).
+
+## Base image of 2026-11-03 (vLLM 0.32.0)
+
+On 2026-11-11, the base image was updated from HyperQwen's commit `ce9615c` (vLLM 0.31.0) to `6ab9bd0` (vLLM 0.32.0),
+and [`hyperqwen-vision.patch`](hyperqwen-vision.patch) and [`cpu_vision.py`](cpu_vision.py) were ported (see
+[Images and videos](#images-and-videos)). Both images measured back to back with the GPU unlock, the same settings and
+the same tests as above (`--tests chat depth edit --repeat 2 --depth 6400 32000 100000 128000 --edit-depth 0 32000`):
+
+| | Chat | Gen. 6.4k / 32k / 100k / 128k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 128k | Peak VRAM |
+|---|---|---|---|---|---|
+| `ce9615c` (vLLM 0.31.0) | 136.0 | 120.3 / 96.1 / 71.9 / 58.6 | 254.7 / 238.7 | 1852 / 1596 / 1220 / 1104 | 21500 MiB |
+| `6ab9bd0` (vLLM 0.32.0) | 121.3 | 118.6 / 103.7 / 85.7 / 65.6 | 259.2 / 231.8 | 1732 / 1538 / 1144 / 1025 | 21458 MiB |
+
+- Prompt processing is 4-7 % slower with the new base image, consistently at all depths.
+- Generation is within the run-to-run variation, which is large with DFlash2 (the draft acceptance differed by up to
+  5 percentage points between the runs): faster at 32k-128k tokens of context, slower in chat (median 114.5 vs 123.5
+  t/s), equal in edits.
+- The KV cache holds 143870 instead of 146461 tokens with the same `KV_MEM`, still enough for the 139264 tokens of
+  context. Text answers (8/8 in `chat_stream.py`) and image input with the vision tower on the CPU work.
 
 ## Other notes
 
