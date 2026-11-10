@@ -118,7 +118,6 @@ show_missing = true
 project-includes = [
     "agx_ai",
     "hostname.py",
-    "open-webui",
     "structure",
     "tests",
     "vllm",
@@ -129,7 +128,6 @@ project-includes = [
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [
     ".",
-    "open-webui/export",
     "vllm"
 ]
 project-excludes = [
@@ -240,7 +238,7 @@ force-sort-within-sections = true
     "PT028"  # pytest-parameter-with-default-argument
 ]
 # Percent formatting is more readable than f-strings for LaTeX code with many braces.
-"open-webui/export/**" = [
+"agx_ai/owui2pdf/**" = [
     "UP031"  # printf-string-formatting
 ]
 "tests/**" = [

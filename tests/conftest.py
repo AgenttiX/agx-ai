@@ -97,9 +97,15 @@ def backends() -> list[Backend]:
     return _backends
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add the option for the slow tests."""
+    parser.addoption("--run-slow", action="store_true", help="run also the slow tests (e.g. LaTeX builds)")
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register the markers."""
     config.addinivalue_line("markers", "backend: the test needs a running LLM server (skipped if there is none)")
+    config.addinivalue_line("markers", "slow: the test takes tens of seconds (run with --run-slow)")
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
@@ -114,11 +120,14 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
                     reason=f"no local {kind or 'LLM'} server with a loaded chat model"))])
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark the tests that use a backend."""
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Mark the tests that use a backend, and skip the slow tests unless --run-slow is given."""
+    skip_slow = pytest.mark.skip(reason="slow; run with --run-slow")
     for item in items:
         if {"backend", "llama_backend", "vllm_backend"} & set(getattr(item, "fixturenames", ())):
             item.add_marker(pytest.mark.backend)
+        if "slow" in item.keywords and not config.getoption("--run-slow"):
+            item.add_marker(skip_slow)
 
 
 @pytest.fixture

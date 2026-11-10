@@ -15,7 +15,7 @@ from .util import run
 EMOJI_FONT_NAMES = ["Noto Color Emoji", "Twemoji Mozilla", "Twemoji", "OpenMoji Color",
                     "Apple Color Emoji", "Segoe UI Emoji", "JoyPixels"]
 EMOJI_FONT_GLOBS = [
-    str(PACKAGE_DIR.parent / "fonts" / "*.ttf"),
+    str(PACKAGE_DIR / "fonts" / "*.ttf"),
     str(Path("~/.local/share/fonts/**/*.ttf").expanduser()),
     str(Path("~/.fonts/**/*.ttf").expanduser()),
     "/usr/share/fonts/**/*Emoji*.ttf",

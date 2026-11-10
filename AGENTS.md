@@ -55,7 +55,7 @@ abbreviated as `agx` in the hostnames.
   The tests that need an LLM backend use the local servers and are skipped if there are none.
 
 ## Commands
-- Run the unit tests: `uv run pytest`
+- Run the unit tests: `uv run pytest` (add `--run-slow` for the slow tests, such as LaTeX builds)
 - Run all lints and type checks: `./lint.sh`
   - Run this after creating or modifying Python code.
   - This runs `ruff check`, `pyrefly check` and `pyrefly coverage check`.

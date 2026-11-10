@@ -5,7 +5,12 @@ Modules:
   markdown  - normalising message content and assembling the Markdown document
   fonts     - font discovery and the LaTeX header
   build     - running pandoc and latexmk
+  sources   - referenced notes, files and web pages: citations and the bibliography
+  notes     - the full text of referenced notes from files or the Open WebUI API
+  util      - escaping, timestamps and subprocess helpers
   cli       - command line interface
+
+Run it with ``uv run -m agx_ai.owui2pdf`` (see README.md).
 """
 
 from pathlib import Path

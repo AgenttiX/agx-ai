@@ -1,4 +1,4 @@
-"""Allow ``python -m owui2pdf``."""
+"""Allow ``python -m agx_ai.owui2pdf``."""
 
 import sys
 

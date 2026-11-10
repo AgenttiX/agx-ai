@@ -1,19 +1,23 @@
 # Open WebUI chat export → PDF
 
-`owui2pdf.py` converts a chat exported from Open WebUI as JSON
+`agx_ai.owui2pdf` converts a chat exported from Open WebUI as JSON
 (*Chat menu → Download → Export chat (.json)*, or *Settings → Chats → Export all chats*)
 into a PDF. `example.json` is a sample export that exercises headings, emphasis,
 links, inline and display LaTeX, tables, highlighted code, nested lists, special
 characters, emoji, attachments/sources and long text.
 
+Run it with `uv run -m agx_ai.owui2pdf` in any directory of the repository, or with
+`python3 -m agx_ai.owui2pdf` from the repository root (only the standard library is needed):
+
 ```bash
-./owui2pdf.py example.json                 # writes example.pdf next to the input
-./owui2pdf.py example.json -o out.pdf
-./owui2pdf.py all-chats.json               # one PDF per chat: all-chats-001-<title>.pdf, ...
-./owui2pdf.py exports/                     # every *.json below exports/, PDF next to each JSON
-./owui2pdf.py exports/ --outdir pdfs       # same, mirroring the folder layout under pdfs/
-./owui2pdf.py exports/ --skip-existing     # only JSON files without an up-to-date PDF
-./owui2pdf.py --help
+cd agx_ai/owui2pdf
+uv run -m agx_ai.owui2pdf example.json                 # writes example.pdf next to the input
+uv run -m agx_ai.owui2pdf example.json -o out.pdf
+uv run -m agx_ai.owui2pdf all-chats.json               # one PDF per chat: all-chats-001-<title>.pdf, ...
+uv run -m agx_ai.owui2pdf exports/                     # every *.json below exports/, PDF next to each JSON
+uv run -m agx_ai.owui2pdf exports/ --outdir pdfs       # same, mirroring the folder layout under pdfs/
+uv run -m agx_ai.owui2pdf exports/ --skip-existing     # only JSON files without an up-to-date PDF
+uv run -m agx_ai.owui2pdf --help
 ```
 
 Inputs may be JSON files or directories, which are searched recursively for
@@ -48,9 +52,9 @@ JSON files that are not chat exports are reported and skipped.
 
    ```bash
    # from the server (API key: Settings → Account → API keys)
-   OWUI_API_KEY=sk-... ./owui2pdf.py chat.json --include-notes --notes-url https://ai.example.com
+   OWUI_API_KEY=sk-... uv run -m agx_ai.owui2pdf chat.json --include-notes --notes-url https://ai.example.com
    # or from files: GET /api/v1/notes/<id> saved as JSON, or <note id>.md files
-   ./owui2pdf.py chat.json --include-notes --notes notes/
+   uv run -m agx_ai.owui2pdf chat.json --include-notes --notes notes/
    ```
 
    `--notes-url` fetches every referenced note from `<url>/api/v1/notes/<id>`
@@ -67,17 +71,17 @@ JSON files that are not chat exports are reported and skipped.
 
 | Path | Contents |
 | --- | --- |
-| `owui2pdf.py` | Launcher script (`python -m owui2pdf` works too) |
-| `owui2pdf/cli.py` | Argument parsing, output file naming |
-| `owui2pdf/chat.py` | Reading the export, walking the conversation branch, attachments, sources, usage |
-| `owui2pdf/markdown.py` | Normalising message content and assembling the Markdown document |
-| `owui2pdf/sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
-| `owui2pdf/notes.py` | Loading full note texts from files or the Open WebUI API |
-| `owui2pdf/fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
-| `owui2pdf/build.py` | Running pandoc and latexmk |
-| `owui2pdf/util.py` | Escaping, timestamps, subprocess helpers |
-| `owui2pdf/resources/header.tex` | LaTeX preamble: fonts, code blocks, lists, headings, message headers |
-| `owui2pdf/resources/filter.lua` | pandoc Lua filter: code blocks, task lists, tables, images, long words, emoji |
+| `__main__.py` | Entry point of `python -m agx_ai.owui2pdf` |
+| `cli.py` | Argument parsing, output file naming |
+| `chat.py` | Reading the export, walking the conversation branch, attachments, sources, usage |
+| `markdown.py` | Normalising message content and assembling the Markdown document |
+| `sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
+| `notes.py` | Loading full note texts from files or the Open WebUI API |
+| `fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
+| `build.py` | Running pandoc and latexmk |
+| `util.py` | Escaping, timestamps, subprocess helpers |
+| `resources/header.tex` | LaTeX preamble: fonts, code blocks, lists, headings, message headers |
+| `resources/filter.lua` | pandoc Lua filter: code blocks, task lists, tables, images, long words, emoji |
 
 ## Requirements
 
@@ -88,8 +92,8 @@ JSON files that are not chat exports are reported and skipped.
   `needspace`, `mathtools`, `cancel`, `braket` and optionally `mhchem`
 * Fonts: Noto Serif / Noto Sans / Noto Sans Mono (falls back to TeX Gyre and
   Latin Modern) and a colour emoji font. The emoji font is located with
-  `fc-list`, in `~/.local/share/fonts`, in a `fonts/` directory next to the
-  script or inside Flatpak runtimes; pass `--emoji-font PATH` to override.
+  `fc-list`, in `~/.local/share/fonts`, in a `fonts/` directory in this
+  directory or inside Flatpak runtimes; pass `--emoji-font PATH` to override.
   Only CBDT (Noto Color Emoji), COLRv0 (Twemoji Mozilla) and sbix fonts work
   with LuaLaTeX; COLRv1 fonts are skipped.
 
@@ -137,3 +141,10 @@ side effects of the tools it calls are worth knowing:
 * TeX Live's upstream `biber` binary (not the Debian/Ubuntu package, which is
   a plain Perl script) unpacks itself into `$TMPDIR/par-<user>/` on first run.
   That directory contains biber's own code only.
+
+## Tests
+
+The unit tests are in [`../../tests/test_owui2pdf.py`](../../tests/test_owui2pdf.py) (`uv run pytest tests/test_owui2pdf.py`).
+They run pandoc but replace latexmk with a stub, as a LuaLaTeX build takes tens of seconds.
+The real PDF build of `example.json` (about 30 s) runs only with `uv run pytest --run-slow`,
+and is skipped if pandoc, latexmk, LuaLaTeX or biber is missing.

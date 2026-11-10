@@ -15,6 +15,7 @@
   - Docker container for LLM terminal access
 - [Open WebUI](https://openwebui.com/)
   - User interface for chats
+  - [owui2pdf](agx_ai/owui2pdf/README.md): convert chats exported as JSON to PDF
   - Android client: [Conduit](https://conduit.mobile/)
 
 
