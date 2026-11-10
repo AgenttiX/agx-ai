@@ -26,10 +26,10 @@ For the raw model speed independent of the server configuration, see ``llama_cpp
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
 so that runs with different models, settings or hardware can be compared afterwards.
-The hostname comes from ``hostname.py`` by default.
+The hostname comes from ``agx_ai.hostname`` by default.
 ``--hostname NAME`` (or the environment variable ``LLAMA_BENCH_HOSTNAME``) stores NAME instead of the hostname, and
 ``--hash-hostname`` replaces the hostname by its SHA-256 hash, in the result and the file name.
-If ``hostname.py`` censors the hostname, one of these is required.
+If ``agx_ai.hostname`` censors the hostname, one of these is required.
 
 Note: LiteLLM on the personal agx-ai server (``litellm/config.yaml``, ``health_check_interval: 60``) sends a health
 check request to every model once a minute over the network, which adds noise to the measurements and reloads
@@ -752,16 +752,16 @@ def read_env_key(path: Path, name: str = "LLAMA_API_KEY") -> str | None:
 
 
 def host_name(hashed: bool = False, name: str | None = None) -> str:
-    """The hostname (``name`` if given, e.g. from ``--hostname``, else from ``hostname.py``), or its SHA-256 hex digest.
+    """The hostname (``name`` if given, e.g. from ``--hostname``, else from ``agx_ai.hostname``), or its SHA-256 hash.
 
     Both keep the real name of e.g. a work computer out of a public repository.
-    If ``hostname.py`` censors the hostname, ``name`` or ``hashed`` is required.
+    If ``agx_ai.hostname`` censors the hostname, ``name`` or ``hashed`` is required.
     """
     if not name and not hashed:
         name = repo_hostname()
         if name is None:
             raise SystemExit(
-                "The hostname of this computer is censored by hostname.py. "
+                "The hostname of this computer is censored by agx_ai.hostname. "
                 "Give another name with --hostname NAME or LLAMA_BENCH_HOSTNAME=NAME, or use --hash-hostname."
             )
     name = name or socket.gethostname()

@@ -6,7 +6,7 @@ abbreviated as `agx` in the hostnames.
 
 ## General instructions
 - Before starting your work, run `git pull --rebase` to ensure you have the latest changes.
-- Use `./hostname.py` to get the hostname of this computer to be used in the repository.
+- Use `uv run -m agx_ai.hostname` to get the hostname of this computer to be used in the repository.
   If it returns "censored", don't write the hostname in this repository.
   Instead, use its hardware model in place of the hostname for e.g. the benchmark files.
 - Committing directly to main is OK in this project.
@@ -17,12 +17,12 @@ abbreviated as `agx` in the hostnames.
 - Use the directory naming convention of `BACKEND-ACCELERATOR`, e.g. `vllm-radeon-vii` by default.
   If the configuration is specific to a particular computer (e.g. multi-GPU),
   use the naming convention of `BACKEND-HOSTNAME`,
-  unless `./hostname.py` returns "censored".
+  unless `uv run -m agx_ai.hostname` returns "censored".
   (Many of the existing configurations intentionally deviate from these naming conventions.)
 - Create a `README.md` in the configuration directory.
 - Document at least the following: OS name and version, CPU model, RAM size, RAM type, RAM frequency, NPU model (if any), GPU model, GPU architecture, VRAM size, VRAM type.
   For laptops with a discrete GPU (dGPU), also document the following: specifications of both iGPU and dGPU, dGPU power limit, dGPU PCIe link width.
-  For computers for which `./hostname.py` does not return "censored", document also the computer/motherboard/laptop model.
+  For computers for which `uv run -m agx_ai.hostname` does not return "censored", document also the computer/motherboard/laptop model.
 - For setups that require a custom Docker container that is not already available in a container registry,
   create a workflow in `./.github/workflows/` for building the container.
 - For setups that modify the vLLM Docker image but don't use a different base image,

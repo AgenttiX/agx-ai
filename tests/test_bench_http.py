@@ -32,7 +32,7 @@ def test_host_name_censored(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bench_http, "repo_hostname", lambda: None)
     with pytest.raises(SystemExit, match="censored"):
         bench_http.host_name()
-    # Hashing does not need the name from hostname.py.
+    # Hashing does not need the name from agx_ai.hostname.
     assert len(bench_http.host_name(hashed=True)) == 64
 
 

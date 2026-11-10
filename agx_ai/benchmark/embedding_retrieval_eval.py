@@ -179,7 +179,7 @@ def main() -> None:
     e.add_argument("--batch", type=int, default=8, help="texts per embedding request (default %(default)s)")
     e.add_argument("--dims", type=int, help="truncate the embeddings to this dimension (Matryoshka models)")
     e.add_argument("--label", default="", help="free-text label stored with the result")
-    e.add_argument("--hostname", help="hostname for the results file (default from hostname.py)")
+    e.add_argument("--hostname", help="hostname for the results file (default from agx_ai.hostname)")
     e.add_argument("--output", type=Path, help="JSON lines file to append to (default results/<host>-embedding.jsonl)")
     args = parser.parse_args()
     api_key = args.api_key or (read_env_key(args.env_file) if args.env_file else None)

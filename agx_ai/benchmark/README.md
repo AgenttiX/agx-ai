@@ -20,12 +20,12 @@ repository root.
 
 Results accumulate in [`benchmark/results/<host>.jsonl`](../../benchmark/results) in the repository root (one JSON
 line per run) so that configurations can be compared later.
-By default, the scripts get the hostname from [`hostname.py`](../../hostname.py).
+By default, the scripts get the hostname from [`agx_ai.hostname`](../hostname.py).
 On computers whose hostname should not be published (e.g. work computers), give the scripts another name with
 `--hostname NAME`, or set the environment variable `LLAMA_BENCH_HOSTNAME=NAME` once for all of them; the name is then
 used in the stored results and in the file names. `--hash-hostname` replaces the hostname by its SHA-256 hash instead,
 but a hash of a predictable name (e.g. one with a running number) can be found by trying the candidates.
-If `hostname.py` prints "censored" (the hostname is gitignored in `benchmark/results/`), one of these is required.
+If `uv run -m agx_ai.hostname` prints "censored" (the hostname is gitignored in `benchmark/results/`), one of these is required.
 
 The unit tests are in [`../../tests`](../../tests) (`uv run pytest`). The tests that need a server use the
 llama.cpp and vLLM servers running on this computer (see [`../../tests/conftest.py`](../../tests/conftest.py)), and

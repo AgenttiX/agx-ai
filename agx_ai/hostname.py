@@ -1,5 +1,7 @@
 """The name of this computer that may be written in this repository.
 
+Run ``uv run -m agx_ai.hostname`` to print it.
+
 Gives "big-machine" for the big machine, "censored" if the hostname is gitignored in ``benchmark/results/``
 and must therefore not be written in this repository, and the hostname otherwise.
 """

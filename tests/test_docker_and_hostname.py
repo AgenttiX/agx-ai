@@ -53,7 +53,7 @@ def test_repo_hostname_without_git(monkeypatch: pytest.MonkeyPatch) -> None:
     assert hostname.repo_hostname() is None
 
 
-def test_hostname_script() -> None:
-    out = subprocess.run([sys.executable, str(hostname.REPO_DIR / "hostname.py")], capture_output=True, text=True,
-                         check=True).stdout.strip()
+def test_hostname_module() -> None:
+    out = subprocess.run([sys.executable, "-m", "agx_ai.hostname"], capture_output=True, text=True, check=True,
+                         cwd=hostname.REPO_DIR).stdout.strip()
     assert out == (hostname.repo_hostname() or "censored")

@@ -10,7 +10,7 @@ loss of output quality. Every change is measured; nothing is set from assumption
 
 ## Before starting
 
-1. Follow [`AGENTS.md`](../../../AGENTS.md): `git pull --rebase`, `./hostname.py` (if it prints "censored", use the
+1. Follow [`AGENTS.md`](../../../AGENTS.md): `git pull --rebase`, `uv run -m agx_ai.hostname` (if it prints "censored", use the
    hardware model instead of the hostname and pass `--hostname` or `LLAMA_BENCH_HOSTNAME` to the benchmarks).
 2. Read [`llama-cpp/OPTIMIZATIONS.md`](../../../llama-cpp/OPTIMIZATIONS.md), the catalog of everything already
    measured in this repository. Do not re-measure what it already settles for the same model, backend and build

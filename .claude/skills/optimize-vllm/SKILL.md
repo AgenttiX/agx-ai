@@ -10,7 +10,7 @@ loss of output quality. Every change is measured; nothing is set from assumption
 
 ## Before starting
 
-1. Follow [`AGENTS.md`](../../../AGENTS.md): `git pull --rebase`, `./hostname.py` (if it prints "censored", use the
+1. Follow [`AGENTS.md`](../../../AGENTS.md): `git pull --rebase`, `uv run -m agx_ai.hostname` (if it prints "censored", use the
    hardware model instead of the hostname and pass `--hostname` or `LLAMA_BENCH_HOSTNAME` to the benchmarks).
 2. Read [`vllm/OPTIMIZATIONS.md`](../../../vllm/OPTIMIZATIONS.md), the catalog of everything already measured in
    this repository, and [`vllm/README.md`](../../../vllm/README.md) for what the generic image and `vllm.patch`
