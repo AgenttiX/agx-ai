@@ -1,6 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
+    "additionalDirectories": [
+      "/tmp"
+    ],
     "allow": [
       "Bash(* --help *)",
       "Bash(* --version)",
@@ -25,16 +28,21 @@
       "Bash(conda list)",
       "Bash(convert *)",
       "Bash(curl *)",
-      "Bash(docker compose pull)",
+      "Bash(docker compose pull *)",
       "Bash(docker version *)",
       "Bash(docker pull *)",
       "Bash(dpkg -l *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git status *)",
       "Bash(lsb_release *)",
       "Bash(lspci *)",
       "Bash(montage *)",
       "Bash(mypy *)",
       "Bash(nvidia-smi *)",
       "Bash(pdfinfo *)",
+      "Bash(pdftoppm *)",
       "Bash(pip-check *)",
       "Bash(pip download *)",
       "Bash(pip freeze *)",
@@ -48,9 +56,9 @@
       "Bash(ruff *)",
       "Bash(uname *)",
       "Bash(vulkaninfo *)",
+      "Bash(whence *)",
       "Bash(where *)",
       "Bash(which *)",
-      "Edit(//tmp/**)",
       "PowerShell(* --help *)",
       "PowerShell(* --version)",
       "PowerShell(Get-Module *)",
