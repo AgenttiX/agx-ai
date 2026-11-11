@@ -87,9 +87,12 @@ default-groups = ["dev"]
 
 # The package name "pttools-gw" differs from the module name, and the module is in the repository root
 # instead of the default "src" directory.
- [tool.uv.build-backend]
- module-name = "agx_ai"
- module-root = ""
+[tool.uv.build-backend]
+module-name = "agx_ai"
+module-root = ""
+# PDFs (e.g. the outputs of agx_ai.owui2pdf) are not part of the package.
+source-exclude = ["*.pdf"]
+wheel-exclude = ["*.pdf"]
 
 [tool.coverage.run]
 branch = true
