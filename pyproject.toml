@@ -2,9 +2,9 @@
 # Without a build-system table, uv would fall back to setuptools.
 # The upper bound follows the uv versioning policy, so that the package keeps building when new versions are released.
 # https://docs.astral.sh/uv/concepts/build-backend/
- [build-system]
- requires = ["uv_build >= 0.13.7, < 0.14"]
- build-backend = "uv_build"
+[build-system]
+requires = ["uv_build >= 0.13.7, < 0.14"]
+build-backend = "uv_build"
 
 [project]
 name = "agx-ai"
@@ -57,6 +57,9 @@ dependencies = [
     "orjson >= 3.13.0",
     "pandas >= 3.1.0"
 ]
+
+[project.scripts]
+owui2pdf = "agx_ai.owui2pdf.cli:main"
 
 [project.urls]
 issues = "https://github.com/AgenttiX/agx-ai/issues"

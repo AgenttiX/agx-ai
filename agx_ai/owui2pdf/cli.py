@@ -17,7 +17,7 @@ from .util import slugify, which_or_die
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     p = argparse.ArgumentParser(
-        prog="python -m agx_ai.owui2pdf",
+        prog="owui2pdf",
         description="Convert Open WebUI JSON chat exports to PDF. INPUT may be a JSON file "
                     "(single chat or list of chats) or a directory, which is searched "
                     "recursively for *.json files; each PDF is written next to its JSON "

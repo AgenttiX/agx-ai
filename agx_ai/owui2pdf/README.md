@@ -6,18 +6,18 @@ into a PDF. `example.json` is a sample export that exercises headings, emphasis,
 links, inline and display LaTeX, tables, highlighted code, nested lists, special
 characters, emoji, attachments/sources and long text.
 
-Run it with `uv run -m agx_ai.owui2pdf` in any directory of the repository, or with
+Run it with `uv run owui2pdf` (or `uv run -m agx_ai.owui2pdf`) in any directory of the repository, or with
 `python3 -m agx_ai.owui2pdf` from the repository root (only the standard library is needed):
 
 ```bash
 cd agx_ai/owui2pdf
-uv run -m agx_ai.owui2pdf example.json                 # writes example.pdf next to the input
-uv run -m agx_ai.owui2pdf example.json -o out.pdf
-uv run -m agx_ai.owui2pdf all-chats.json               # one PDF per chat: all-chats-001-<title>.pdf, ...
-uv run -m agx_ai.owui2pdf exports/                     # every *.json below exports/, PDF next to each JSON
-uv run -m agx_ai.owui2pdf exports/ --outdir pdfs       # same, mirroring the folder layout under pdfs/
-uv run -m agx_ai.owui2pdf exports/ --skip-existing     # only JSON files without an up-to-date PDF
-uv run -m agx_ai.owui2pdf --help
+uv run owui2pdf example.json                 # writes example.pdf next to the input
+uv run owui2pdf example.json -o out.pdf
+uv run owui2pdf all-chats.json               # one PDF per chat: all-chats-001-<title>.pdf, ...
+uv run owui2pdf exports/                     # every *.json below exports/, PDF next to each JSON
+uv run owui2pdf exports/ --outdir pdfs       # same, mirroring the folder layout under pdfs/
+uv run owui2pdf exports/ --skip-existing     # only JSON files without an up-to-date PDF
+uv run owui2pdf --help
 ```
 
 Inputs may be JSON files or directories, which are searched recursively for
@@ -52,9 +52,9 @@ JSON files that are not chat exports are reported and skipped.
 
    ```bash
    # from the server (API key: Settings → Account → API keys)
-   OWUI_API_KEY=sk-... uv run -m agx_ai.owui2pdf chat.json --include-notes --notes-url https://ai.example.com
+   OWUI_API_KEY=sk-... uv run owui2pdf chat.json --include-notes --notes-url https://ai.example.com
    # or from files: GET /api/v1/notes/<id> saved as JSON, or <note id>.md files
-   uv run -m agx_ai.owui2pdf chat.json --include-notes --notes notes/
+   uv run owui2pdf chat.json --include-notes --notes notes/
    ```
 
    `--notes-url` fetches every referenced note from `<url>/api/v1/notes/<id>`
