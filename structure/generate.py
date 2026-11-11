@@ -432,13 +432,15 @@ def build(specs: bool) -> str:
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)")],
-                # RTX 3090: vllm-rtx3090-hyperqwen/README.md (Qwen3.8-27B), vllm-rtx3090/README.md (Qwen3.8-Flash-Next
+                # RTX 3090: vllm-rtx3090-hyperqwen/README.md (Qwen3.8-27B, Terminal-RSI-27B), vllm-rtx3090/README.md (Qwen3.8-Flash-Next
                 # with vllm-rtx3090-flash-next);
                 # Gemma 4 31B with llama-cpp-rtx3090/README.md, which is twice as fast as vLLM for it.
                 # Radeon VII: llama-cpp-radeon-vii/README.md (image v0.6.0), which is faster than vllm-radeon-vii.
                 # benchmark/results/agx-z2e-kubuntu.jsonl: 6.4k-token prompt (depth test); Qwen3.8-27B: prompt
-                # processing with the GPU unlock (2026-10-31), generation from 2026-10-26 (the unlock did not change it)
-                [(vllm, "Qwen3.8-27B", "128", "1713"), (vllm, "Qwen3.8-Flash-Next", "33", "1750"),
+                # processing with the GPU unlock (2026-10-31), generation from 2026-10-26 (the unlock did not change it);
+                # Terminal-RSI-27B: the final DFlash2 configuration of 2026-11-11
+                [(vllm, "Qwen3.8-27B", "128", "1713"), (vllm, "Terminal-RSI-27B", "133", "1830"),
+                 (vllm, "Qwen3.8-Flash-Next", "33", "1750"),
                  (llama, "Gemma 4 31B QAT", "77", "1060"), pub("Radeon VII (16 GB)"),
                  (llama, gemma_moe, "124", "1260")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),

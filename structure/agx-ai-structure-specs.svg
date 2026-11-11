@@ -22,14 +22,14 @@
 <symbol id="logo-ubuntu" viewBox="0 0 103.94 100"><image width="103.94" height="100" href="data:image/svg+xml;base64,PHN2ZyBpZD0iTGF5ZXJfMSIgZGF0YS1uYW1lPSJMYXllciAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA3NjcuNDA2NjggNzM4LjMxNDIxIj48ZGVmcz48c3R5bGU+LmNscy0xe2ZpbGw6I2U5NTAwZTt9PC9zdHlsZT48L2RlZnM+PGNpcmNsZSBjbGFzcz0iY2xzLTEiIGN4PSIxMDkuMDI2OTYiIGN5PSIzNDguMDk0MTIiIHI9IjEwOS4wMjY5NiIvPjxjaXJjbGUgY2xhc3M9ImNscy0xIiBjeD0iNTYzLjA4MzY5IiBjeT0iMTA5LjAyNjk4IiByPSIxMDkuMDI2OTgiLz48cGF0aCBjbGFzcz0iY2xzLTEiIGQ9Ik00OTIuNDgxOTQsMTMzNi42NjU3N2EyNjUuNTI1MDUsMjY1LjUyNTA1LDAsMCwxLTE4MS4wNzEyLTEzOC4wOTgxNCwxNTYuOTQ3ODQsMTU2Ljk0Nzg0LDAsMCwxLTkzLjIxOTExLDExLjQ1ODI1LDM1NC45MzUyNCwzNTQuOTM1MjQsMCwwLDAsMjU1LjUzNzIzLDIxNC4xNjQ1NSwzNTkuMjA3NzcsMzU5LjIwNzc3LDAsMCwwLDc3LjQxOTQ5LDcuOTY3LDE1Ni4wMDMxMywxNTYuMDAzMTMsMCwwLDEtMzEuOTIyMzYtOTEuMTU0NjZDNTEwLjI0NjIyLDEzNDAuMDA1MjUsNTAxLjI3NzM1LDEzMzguNTQ4LDQ5Mi40ODE5NCwxMzM2LjY2NTc3WiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLTEzNy41NjE1NSAtNzA3Ljk3OTk4KSIvPjxjaXJjbGUgY2xhc3M9ImNscy0xIiBjeD0iNTM4LjUyMDQ2IiBjeT0iNjI5LjI4NzIzIiByPSIxMDkuMDI2OTgiLz48cGF0aCBjbGFzcz0iY2xzLTEiIGQ9Ik04MjcuNzk4LDEyOTcuMjIwOTVBMzU2LjcwMDU2LDM1Ni43MDA1NiwwLDAsMCw4NDUuNjcyODMsODc4LjcwMmExNTcuMTQ0NDEsMTU3LjE0NDQxLDAsMCwxLTYxLjMwOTc1LDcxLjgwMzEsMjY3LjI5MywyNjcuMjkzLDAsMCwxLTguNzM2ODgsMjY1LjQ4ODRBMTU2LjM0Njc3LDE1Ni4zNDY3NywwLDAsMSw4MjcuNzk4LDEyOTcuMjIwOTVaIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMTM3LjU2MTU1IC03MDcuOTc5OTgpIi8+PHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMjM4LjE3NjQ0LDg5OS43MTkwNnE0LjE1MDUtLjIyNzc5LDguMzA1MzMtLjIyNTUzQTE1Ny4zNDYyNiwxNTcuMzQ2MjYsMCwwLDEsMzI5LjE2NDE2LDkyMy4wMzksMjY1LjkwNjUzLDI2NS45MDY1MywwLDAsMSw1NDMuMjcyMzgsODA4LjUyOTY2YTE1OC4wODc3LDE1OC4wODc3LDAsMCwxLDMzLjA3Ni04OC40MjAyMkM0MzkuMjQ1NDksNzA5LjI1MTc3LDMwNi4wMjQyMSw3ODAuMDAxLDIzOC4xNzY0NCw4OTkuNzE5MDZaIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMTM3LjU2MTU1IC03MDcuOTc5OTgpIi8+PC9zdmc+"/></symbol>
 </defs>
 <rect width="1600" height="900" fill="#ffffff"/>
-<rect x="196" y="12" width="904" height="391" rx="16" fill="#eef4fb" stroke="#7b9cc4" stroke-width="2"/>
+<rect x="196" y="12" width="904" height="373" rx="16" fill="#eef4fb" stroke="#7b9cc4" stroke-width="2"/>
 <use href="#logo-docker" x="214" y="24" width="117.793" height="28"/>
 <text x="343.793" y="46" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">docker-compose.yml on agx-ai</text>
-<rect x="1140" y="12" width="448" height="216.333" rx="16" fill="#fdf3ea" stroke="#e0a36f" stroke-width="2" stroke-dasharray="8 6"/>
+<rect x="1140" y="12" width="448" height="210.333" rx="16" fill="#fdf3ea" stroke="#e0a36f" stroke-width="2" stroke-dasharray="8 6"/>
 <text x="1158" y="46" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">Internet</text>
-<rect x="12" y="233" width="150" height="170" rx="16" fill="#fdf3ea" stroke="#e0a36f" stroke-width="2" stroke-dasharray="8 6"/>
-<text x="87" y="258" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="middle">Research</text>
-<rect x="12" y="415" width="1576" height="473" rx="16" fill="#f1f7ee" stroke="#8fb67f" stroke-width="2"/>
+<rect x="12" y="215" width="150" height="170" rx="16" fill="#fdf3ea" stroke="#e0a36f" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="87" y="240" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="middle">Research</text>
+<rect x="12" y="397" width="1576" height="491" rx="16" fill="#f1f7ee" stroke="#8fb67f" stroke-width="2"/>
 <circle cx="78" cy="71.68" r="11.2" fill="#52606d"/>
 <path d="M55.6,109.2 C55.6,86.8 100.4,86.8 100.4,109.2 Z" fill="#52606d"/>
 <text x="78" y="136" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Users</text>
@@ -42,132 +42,133 @@
 <path d="M252,103 L265.2,103" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
 <text x="286" y="92" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Open Terminal</text>
 <text x="286" y="111" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">shell for the LLMs</text>
-<rect x="222" y="150.333" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
-<use href="#logo-open-webui" x="234" y="161.333" width="40" height="40"/>
-<text x="286" y="178.333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Open WebUI</text>
-<text x="286" y="197.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">chat UI</text>
-<rect x="222" y="236.667" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
-<use href="#logo-gptr" x="234" y="247.667" width="40" height="40"/>
-<text x="286" y="264.667" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
-<text x="286" y="283.667" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">web UI</text>
-<rect x="222" y="323" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
-<use href="#logo-gptr" x="234" y="334" width="40" height="40"/>
-<text x="286" y="351" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
-<text x="286" y="370" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">research agent</text>
-<rect x="534" y="166.5" width="250" height="116" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="2.5"/>
-<use href="#logo-litellm-icon" x="548" y="190.5" width="68" height="68"/>
-<text x="628" y="217.5" font-size="24" font-weight="bold" fill="#1f2933" text-anchor="start">LiteLLM</text>
-<text x="628" y="239.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">LLM proxy and router</text>
-<text x="628" y="257.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">OpenAI API</text>
+<rect x="222" y="144.333" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
+<use href="#logo-open-webui" x="234" y="155.333" width="40" height="40"/>
+<text x="286" y="172.333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Open WebUI</text>
+<text x="286" y="191.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">chat UI</text>
+<rect x="222" y="224.667" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
+<use href="#logo-gptr" x="234" y="235.667" width="40" height="40"/>
+<text x="286" y="252.667" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
+<text x="286" y="271.667" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">web UI</text>
+<rect x="222" y="305" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
+<use href="#logo-gptr" x="234" y="316" width="40" height="40"/>
+<text x="286" y="333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">GPT Researcher</text>
+<text x="286" y="352" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">research agent</text>
+<rect x="534" y="157.5" width="250" height="116" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="2.5"/>
+<use href="#logo-litellm-icon" x="548" y="181.5" width="68" height="68"/>
+<text x="628" y="208.5" font-size="24" font-weight="bold" fill="#1f2933" text-anchor="start">LiteLLM</text>
+<text x="628" y="230.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">LLM proxy and router</text>
+<text x="628" y="248.5" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">OpenAI API</text>
 <rect x="850" y="64" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
 <use href="#logo-claude-symbol" x="862" y="77" width="36" height="36"/>
 <text x="910" y="92" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">LiteLLM Claude</text>
 <text x="910" y="111" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">subscription → API</text>
-<rect x="850" y="193.5" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
-<use href="#logo-postgresql" x="862" y="204.5" width="40" height="40"/>
-<text x="914" y="221.5" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">PostgreSQL</text>
-<text x="914" y="240.5" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">LiteLLM database</text>
-<rect x="850" y="323" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
-<circle cx="874" cy="354" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
-<path d="M882,354 L898.8,354 M894,354 L894,360.8 M889.2,354 L889.2,359.2" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
-<text x="914" y="351" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH tunnel</text>
-<text x="914" y="370" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">ssh-rtx-a4000</text>
+<rect x="850" y="184.5" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
+<use href="#logo-postgresql" x="862" y="195.5" width="40" height="40"/>
+<text x="914" y="212.5" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">PostgreSQL</text>
+<text x="914" y="231.5" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">LiteLLM database</text>
+<rect x="850" y="305" width="230" height="62" rx="10" fill="#ffffff" stroke="#7b9cc4" stroke-width="1.5"/>
+<circle cx="874" cy="336" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
+<path d="M882,336 L898.8,336 M894,336 L894,342.8 M889.2,336 L889.2,341.2" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
+<text x="914" y="333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH tunnel</text>
+<text x="914" y="352" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">ssh-rtx-a4000</text>
 <rect x="1160" y="64" width="410" height="62" rx="10" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
 <use href="#logo-claude-symbol" x="1172" y="77" width="36" height="36"/>
 <text x="1220" y="92" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">Claude</text>
 <text x="1220" y="111" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">Anthropic, Pro/Max subscription</text>
-<rect x="1160" y="150.333" width="410" height="62" rx="10" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
-<circle cx="1184" cy="181.333" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
-<path d="M1192,181.333 L1208.8,181.333 M1204,181.333 L1204,188.133 M1199.2,181.333 L1199.2,186.533" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
-<text x="1224" y="178.333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH jump host</text>
-<text x="1224" y="197.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">to the network of the RTX A4000 server</text>
-<rect x="24" y="269" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
-<use href="#logo-tavily" x="34" y="275" width="24" height="24"/>
-<text x="68" y="293" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Tavily</text>
-<rect x="24" y="311" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
-<use href="#logo-arxiv" x="38" y="317" width="98" height="24"/>
-<rect x="24" y="353" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
-<use href="#logo-gemini-icon" x="34" y="359" width="24" height="24"/>
-<text x="68" y="377" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Gemini</text>
-<path d="M106,90 L180,90 L180,181.333 L222,181.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M180,181.333 L180,267.667 L222,267.667" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M180,224.5 L534,224.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<text x="486" y="218.5" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">OpenCode</text>
-<path d="M337,150.333 L337,126" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<text x="345" y="143.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">tools</text>
-<path d="M337,298.667 L337,323" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M222,354 L162,354" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M452,181.333 L534,181.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M452,354 L494,354 L494,262.5 L534,262.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M724,166.5 L724,95 L850,95" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M784,224.5 L850,224.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M784,262.5 L820,262.5 L820,354 L850,354" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1160" y="144.333" width="410" height="62" rx="10" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
+<circle cx="1184" cy="175.333" r="8" fill="none" stroke="#1f2933" stroke-width="4"/>
+<path d="M1192,175.333 L1208.8,175.333 M1204,175.333 L1204,182.133 M1199.2,175.333 L1199.2,180.533" fill="none" stroke="#1f2933" stroke-width="4" stroke-linecap="round"/>
+<text x="1224" y="172.333" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="start">SSH jump host</text>
+<text x="1224" y="191.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start">to the network of the RTX A4000 server</text>
+<rect x="24" y="251" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
+<use href="#logo-tavily" x="34" y="257" width="24" height="24"/>
+<text x="68" y="275" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Tavily</text>
+<rect x="24" y="293" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
+<use href="#logo-arxiv" x="38" y="299" width="98" height="24"/>
+<rect x="24" y="335" width="126" height="36" rx="8" fill="#ffffff" stroke="#e0a36f" stroke-width="1.5"/>
+<use href="#logo-gemini-icon" x="34" y="341" width="24" height="24"/>
+<text x="68" y="359" font-size="17" font-weight="bold" fill="#1f2933" text-anchor="start">Gemini</text>
+<path d="M106,90 L180,90 L180,175.333 L222,175.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M180,175.333 L180,255.667 L222,255.667" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M180,215.5 L534,215.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="486" y="209.5" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">OpenCode</text>
+<path d="M337,144.333 L337,126" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="345" y="137.333" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">tools</text>
+<path d="M337,286.667 L337,305" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M222,336 L162,336" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M452,175.333 L534,175.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M452,336 L494,336 L494,253.5 L534,253.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M724,157.5 L724,95 L850,95" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M784,215.5 L850,215.5" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M784,253.5 L820,253.5 L820,336 L850,336" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
 <path d="M1080,95 L1160,95" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M1080,354 L1120,354 L1120,181.333 L1160,181.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<text x="34" y="445" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">LLM backends</text>
-<text x="240" y="445" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">OpenAI-compatible API in the LAN</text>
-<text x="610" y="445" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">t/s of a single request: (generation with a short prompt | prompt processing of a 0.7–37k-token prompt)</text>
-<rect x="26" y="471" width="752" height="405" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
-<text x="40" y="495" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Laptops</text>
-<rect x="790" y="471" width="270" height="405" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
-<text x="804" y="495" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Desktops</text>
-<rect x="1072" y="471" width="504" height="405" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
-<text x="1086" y="495" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Servers</text>
-<rect x="82" y="525" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
-<rect x="90" y="532" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
-<path d="M68,616 L232,616 L226,627 L74,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
-<rect x="134" y="616" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
-<use href="#logo-kubuntu" x="122" y="541" width="56" height="56"/>
-<text x="150" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad L14 Gen 5</text>
-<text x="150" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core Ultra 5 125U, 32 GB RAM</text>
-<text x="150" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
-<text x="150" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (7.8 | 155)</tspan></text>
-<text x="150" y="725" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
+<path d="M1080,336 L1120,336 L1120,175.333 L1160,175.333" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="34" y="427" font-size="20" font-weight="bold" fill="#1f2933" text-anchor="start">LLM backends</text>
+<text x="240" y="427" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">OpenAI-compatible API in the LAN</text>
+<text x="610" y="427" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">t/s of a single request: (generation with a short prompt | prompt processing of a 0.7–37k-token prompt)</text>
+<rect x="26" y="453" width="752" height="423" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
+<text x="40" y="477" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Laptops</text>
+<rect x="790" y="453" width="270" height="423" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
+<text x="804" y="477" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Desktops</text>
+<rect x="1072" y="453" width="504" height="423" rx="12" fill="#ffffff" stroke="#8fb67f" stroke-width="1.5" fill-opacity="0.6"/>
+<text x="1086" y="477" font-size="16" font-weight="bold" fill="#3d7a2c" text-anchor="start">Servers</text>
+<rect x="82" y="507" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
+<rect x="90" y="514" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
+<path d="M68,598 L232,598 L226,609 L74,609 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
+<rect x="134" y="598" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
+<use href="#logo-kubuntu" x="122" y="523" width="56" height="56"/>
+<text x="150" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad L14 Gen 5</text>
+<text x="150" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core Ultra 5 125U, 32 GB RAM</text>
+<text x="150" y="671" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
+<text x="150" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (7.8 | 155)</tspan></text>
+<text x="150" y="707" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (8.1–8.6 | 185)</tspan></text>
 <rect x="48.9903" y="799" width="202.019" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="54.9903" y="803" width="22" height="22"/>
 <text x="82.9903" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">Vulkan, iGPU</tspan></text>
 <rect x="76.0161" y="834" width="147.968" height="30" rx="15" fill="#ffffff" stroke="#6b4fbb" stroke-width="1.5"/>
 <use href="#logo-openvino" x="86.0161" y="840" width="90.4138" height="18"/>
 <text x="184.43" y="854" font-size="14" font-weight="normal" fill="#52606d" text-anchor="start">NPU</text>
-<rect x="334" y="525" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
-<rect x="342" y="532" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
-<path d="M320,616 L484,616 L478,627 L326,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
-<rect x="386" y="616" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
-<use href="#logo-kubuntu" x="374" y="541" width="56" height="56"/>
-<text x="402" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad T480</text>
-<text x="402" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-8550U, 32 GB RAM</text>
-<text x="402" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">GeForce MX150 (2 GB)</text>
-<text x="402" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (6.7 | 80)</tspan></text>
+<rect x="334" y="507" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
+<rect x="342" y="514" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
+<path d="M320,598 L484,598 L478,609 L326,609 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
+<rect x="386" y="598" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
+<use href="#logo-kubuntu" x="374" y="523" width="56" height="56"/>
+<text x="402" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad T480</text>
+<text x="402" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-8550U, 32 GB RAM</text>
+<text x="402" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">GeForce MX150 (2 GB)</text>
+<text x="402" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (6.7 | 80)</tspan></text>
 <rect x="300.416" y="799" width="203.167" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="306.416" y="803" width="22" height="22"/>
 <text x="334.416" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
-<rect x="586" y="525" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
-<rect x="594" y="532" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
-<path d="M572,616 L736,616 L730,627 L578,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
-<rect x="638" y="616" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
-<use href="#logo-windows" x="626" y="541" width="56" height="56"/>
-<text x="654" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Windows laptop</text>
-<text x="654" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-1260P, 32 GB RAM</text>
-<text x="654" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">T550 Laptop GPU (4 GB)</text>
-<text x="654" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 | 92)</tspan></text>
-<text x="654" y="725" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 | 144)</tspan></text>
+<rect x="586" y="507" width="136" height="88" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
+<rect x="594" y="514" width="120" height="74" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
+<path d="M572,598 L736,598 L730,609 L578,609 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
+<rect x="638" y="598" width="32" height="4" rx="2" fill="#7b8794" stroke="none" stroke-width="0"/>
+<use href="#logo-windows" x="626" y="523" width="56" height="56"/>
+<text x="654" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Windows laptop</text>
+<text x="654" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-1260P, 32 GB RAM</text>
+<text x="654" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">T550 Laptop GPU (4 GB)</text>
+<text x="654" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 | 92)</tspan></text>
+<text x="654" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 | 144)</tspan></text>
 <rect x="552.416" y="799" width="203.167" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="558.416" y="803" width="22" height="22"/>
 <text x="586.416" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
-<rect x="813" y="519" width="144" height="94" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
-<rect x="821" y="527" width="128" height="76" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
-<path d="M875,613 L895,613 L899,627 L871,627 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
-<rect x="849" y="625" width="72" height="5" rx="2" fill="#9aa5b1" stroke="#1f2933" stroke-width="2"/>
-<use href="#logo-kubuntu" x="856" y="536" width="58" height="58"/>
-<rect x="975" y="525" width="50" height="105" rx="5" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
-<rect x="983" y="535" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
-<rect x="983" y="545" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
-<rect x="983" y="555" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
-<circle cx="1000" cy="609" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
-<text x="925" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">agx-z2e</text>
-<text x="925" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper 3970X, 128 GB RAM</text>
-<text x="925" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
-<text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1713)</tspan></text>
+<rect x="813" y="501" width="144" height="94" rx="7" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
+<rect x="821" y="509" width="128" height="76" rx="2" fill="#dbe7f3" stroke="none" stroke-width="0"/>
+<path d="M875,595 L895,595 L899,609 L871,609 Z" fill="#9aa5b1" stroke="#1f2933" stroke-width="2" stroke-linejoin="round"/>
+<rect x="849" y="607" width="72" height="5" rx="2" fill="#9aa5b1" stroke="#1f2933" stroke-width="2"/>
+<use href="#logo-kubuntu" x="856" y="518" width="58" height="58"/>
+<rect x="975" y="507" width="50" height="105" rx="5" fill="#3e4c59" stroke="#1f2933" stroke-width="2"/>
+<rect x="983" y="517" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
+<rect x="983" y="527" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
+<rect x="983" y="537" width="34" height="5" rx="1.5" fill="#7b8794" stroke="none" stroke-width="0"/>
+<circle cx="1000" cy="591" r="5" fill="none" stroke="#9aa5b1" stroke-width="2"/>
+<text x="925" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">agx-z2e</text>
+<text x="925" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper 3970X, 128 GB RAM</text>
+<text x="925" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
+<text x="925" y="689" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1713)</tspan></text>
+<text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Terminal-RSI-27B<tspan font-weight="normal"> (133 | 1830)</tspan></text>
 <text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
@@ -178,87 +179,87 @@
 <rect x="805.706" y="834" width="238.587" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="811.706" y="838" width="22" height="22"/>
 <text x="839.706" y="854" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">ROCm, Radeon VII</tspan></text>
-<rect x="1130" y="519" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
-<rect x="1136" y="525" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1144" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1153" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1162" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1171" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1180" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1272" cy="535" r="3.2" fill="#3ebd93"/>
-<circle cx="1272" cy="546" r="3.2" fill="#ff8236"/>
-<rect x="1136" y="559" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1144" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1153" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1162" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1171" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1180" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1272" cy="569" r="3.2" fill="#3ebd93"/>
-<circle cx="1272" cy="580" r="3.2" fill="#ff8236"/>
-<rect x="1136" y="593" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1144" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1153" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1162" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1171" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1180" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1272" cy="603" r="3.2" fill="#3ebd93"/>
-<circle cx="1272" cy="614" r="3.2" fill="#ff8236"/>
-<rect x="1198" y="521" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
-<use href="#logo-proxmox" x="1207" y="530.5" width="40" height="40"/>
-<use href="#logo-ubuntu" x="1207" y="578.5" width="40" height="40"/>
-<text x="1210" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">agx-ai (agx-h12)</text>
-<text x="1210" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">EPYC 7302, 256 GB RAM</text>
-<text x="1210" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
-<text x="1210" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
-<text x="1210" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
+<rect x="1130" y="501" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
+<rect x="1136" y="507" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="517" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="528" r="3.2" fill="#ff8236"/>
+<rect x="1136" y="541" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="551" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="562" r="3.2" fill="#ff8236"/>
+<rect x="1136" y="575" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1144" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1153" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1162" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1171" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1180" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1272" cy="585" r="3.2" fill="#3ebd93"/>
+<circle cx="1272" cy="596" r="3.2" fill="#ff8236"/>
+<rect x="1198" y="503" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
+<use href="#logo-proxmox" x="1207" y="512.5" width="40" height="40"/>
+<use href="#logo-ubuntu" x="1207" y="560.5" width="40" height="40"/>
+<text x="1210" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">agx-ai (agx-h12)</text>
+<text x="1210" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">EPYC 7302, 256 GB RAM</text>
+<text x="1210" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3070 (8 GB)</text>
+<text x="1210" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (55 | 1547)</tspan></text>
+<text x="1210" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (24.5 | 353)</tspan></text>
 <rect x="1079.94" y="799" width="260.128" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1085.94" y="803" width="22" height="22"/>
 <text x="1113.94" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, experts on the CPU</tspan></text>
-<rect x="1372" y="519" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
-<rect x="1378" y="525" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1386" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1395" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1404" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1413" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1422" y="532" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1514" cy="535" r="3.2" fill="#3ebd93"/>
-<circle cx="1514" cy="546" r="3.2" fill="#ff8236"/>
-<rect x="1378" y="559" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1386" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1395" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1404" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1413" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1422" y="566" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1514" cy="569" r="3.2" fill="#3ebd93"/>
-<circle cx="1514" cy="580" r="3.2" fill="#ff8236"/>
-<rect x="1378" y="593" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
-<rect x="1386" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1395" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1404" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1413" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<rect x="1422" y="600" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
-<circle cx="1514" cy="603" r="3.2" fill="#3ebd93"/>
-<circle cx="1514" cy="614" r="3.2" fill="#ff8236"/>
-<rect x="1440" y="521" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
-<use href="#logo-ubuntu" x="1446" y="551.5" width="46" height="46"/>
-<text x="1452" y="653" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">RTX A4000 server</text>
-<text x="1452" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper PRO 3975WX</text>
-<text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">192 GB RAM</text>
-<text x="1452" y="707" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
-<text x="1452" y="725" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">PaperQA2 RAG</text>
-<text x="1452" y="743" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
-<text x="1452" y="761" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
-<text x="1452" y="779" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3-Embedding-4B</text>
+<rect x="1372" y="501" width="160" height="111" rx="5" fill="#1f2933" stroke="#1f2933" stroke-width="2"/>
+<rect x="1378" y="507" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1386" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1395" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1404" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1413" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1422" y="514" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1514" cy="517" r="3.2" fill="#3ebd93"/>
+<circle cx="1514" cy="528" r="3.2" fill="#ff8236"/>
+<rect x="1378" y="541" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1386" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1395" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1404" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1413" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1422" y="548" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1514" cy="551" r="3.2" fill="#3ebd93"/>
+<circle cx="1514" cy="562" r="3.2" fill="#ff8236"/>
+<rect x="1378" y="575" width="148" height="31" rx="3" fill="#3e4c59" stroke="#52606d" stroke-width="1"/>
+<rect x="1386" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1395" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1404" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1413" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<rect x="1422" y="582" width="4" height="17" rx="1" fill="#616e7c" stroke="none" stroke-width="0"/>
+<circle cx="1514" cy="585" r="3.2" fill="#3ebd93"/>
+<circle cx="1514" cy="596" r="3.2" fill="#ff8236"/>
+<rect x="1440" y="503" width="58" height="107" rx="4" fill="#dbe7f3" stroke="#9aa5b1" stroke-width="1.5"/>
+<use href="#logo-ubuntu" x="1446" y="533.5" width="46" height="46"/>
+<text x="1452" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">RTX A4000 server</text>
+<text x="1452" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Threadripper PRO 3975WX</text>
+<text x="1452" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">192 GB RAM</text>
+<text x="1452" y="689" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">2 × RTX A4000 (16 GB)</text>
+<text x="1452" y="707" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">PaperQA2 RAG</text>
+<text x="1452" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (102 | 1449)</tspan></text>
+<text x="1452" y="743" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (254 | 4760)</tspan></text>
+<text x="1452" y="761" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3-Embedding-4B</text>
 <rect x="1358.51" y="799" width="186.978" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="1364.51" y="803" width="22" height="22"/>
 <text x="1392.51" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, 2 GPUs</tspan></text>
-<path d="M594,282.5 L594,458.0 M150,458.0 L1210,458.0" stroke="#52606d" stroke-width="2" fill="none"/>
-<circle cx="594" cy="458.0" r="4" fill="#52606d"/>
-<path d="M150,458 L150,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M402,458 L402,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M654,458 L654,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M925,458 L925,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M1210,458 L1210,515" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
-<path d="M1452,212.333 L1452,515" fill="none" stroke="#52606d" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
-<text x="1462" y="318.667" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">SSH tunnel</text>
+<path d="M594,273.5 L594,440.0 M150,440.0 L1210,440.0" stroke="#52606d" stroke-width="2" fill="none"/>
+<circle cx="594" cy="440.0" r="4" fill="#52606d"/>
+<path d="M150,440 L150,497" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M402,440 L402,497" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M654,440 L654,497" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M925,440 L925,497" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1210,440 L1210,497" fill="none" stroke="#52606d" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M1452,206.333 L1452,497" fill="none" stroke="#52606d" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow)"/>
+<text x="1462" y="306.667" font-size="13" font-weight="normal" fill="#52606d" text-anchor="start" font-style="italic">SSH tunnel</text>
 </svg>
