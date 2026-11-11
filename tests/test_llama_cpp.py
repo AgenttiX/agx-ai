@@ -131,5 +131,6 @@ def test_test_server_docker_args(tmp_path: Path) -> None:
 
 def test_test_server_load_state() -> None:
     assert test_server.load_state("starting\nllama_server: model loaded\n") is True
+    assert test_server.load_state("[60861] 0.08.890.514 I srv  server_run_i: model loaded\n") is True
     assert test_server.load_state("run: instance name=x exited with status 1") is False
     assert test_server.load_state("loading...") is None

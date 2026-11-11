@@ -3,8 +3,9 @@
 llama-server on the RTX 3090 of agx-z2e, Mika's desktop computer. The Radeon VII in the same computer runs its own
 server, see [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii).
 
-[`docker-compose.yml`](docker-compose.yml) runs `ghcr.io/ggml-org/llama.cpp:server-cuda13` (build b10689) on port 9931
-as a router with one of the presets below, which is selected by commenting the volume lines in or out. It uses the
+[`docker-compose.yml`](docker-compose.yml) runs `ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242` (pinned; b10689
+until 2026-11-11, see [Build b12242](#build-b12242)) on port 9931 as a router with one of the presets below, which is
+selected by commenting the volume lines in or out. It uses the
 shared server-wide settings of [`../llama-cpp/config.ini`](../llama-cpp/config.ini) (one model loaded at a time) and
 the API key of `../llama-cpp/llama-cpp.env` (see [`../llama-cpp`](../llama-cpp/README.md)).
 
@@ -17,10 +18,11 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 |---|---|---|---|---|---|
 | [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) (default) | Qwen3.8-27B `UD-Q4_K_M` | q8_0 | 102400 | 49 t/s, 36 t/s at 60k, 26 t/s at 100k | 1140 t/s at 16k, 775 t/s at 100k |
 | [`preset-qwen3.8-27b-uncensored.ini`](preset-qwen3.8-27b-uncensored.ini) | Qwen3.8-27B Uncensored `IQ4_XS` | q8_0 | 118784 | 55 t/s, 38 t/s at 60k, 26 t/s at 116k | 1190 t/s at 16k, 750 t/s at 116k |
-| [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL`, 2 slots | f16 | 165888 | 216 t/s, 148 t/s at 70k, 104 t/s at 163k | 4450 t/s at 16k, 2000 t/s at 163k |
-| [`preset-gemma-4-31b-qat.ini`](preset-gemma-4-31b-qat.ini) | Gemma 4 31B QAT `UD-Q4_K_XL` | q8_0 | 61440 | 77 t/s, 48 t/s at 59k | 1020 t/s at 16k, 750 t/s at 59k |
-| [`preset-gemma-4-31b-qat-uncensored.ini`](preset-gemma-4-31b-qat-uncensored.ini) | Gemma 4 31B QAT Uncensored `Q4_K_M` | q8_0 | 38912 | 51 t/s, 40 t/s at 36k | 920 t/s at 16k, 790 t/s at 36k |
+| [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL`, 2 slots | f16 | 159744 | 216 t/s, 148 t/s at 70k, 104 t/s at 163k | 4450 t/s at 16k, 2000 t/s at 163k |
+| [`preset-gemma-4-31b-qat.ini`](preset-gemma-4-31b-qat.ini) | Gemma 4 31B QAT `UD-Q4_K_XL` | q8_0 | 60416 | 77 t/s, 48 t/s at 59k | 1020 t/s at 16k, 750 t/s at 59k |
+| [`preset-gemma-4-31b-qat-uncensored.ini`](preset-gemma-4-31b-qat-uncensored.ini) | Gemma 4 31B QAT Uncensored `Q4_K_M` | q8_0 | 37888 | 51 t/s, 40 t/s at 36k | 920 t/s at 16k, 790 t/s at 36k |
 | [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S`, experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 28 t/s, 25 t/s at 36k, 20 t/s at 100k | 690 t/s at 16-100k, 780 t/s at 260k |
+| [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
 
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
 (`no-mmproj-offload = 1`) for the Gemma 4 31B models. Each preset has the context size for the other choice as a
@@ -382,6 +384,64 @@ Measured with 2 slots (the preset has had 1 slot since 2026-09-27), ctx 50000, f
 ub 1024 gave +2.6 % prompt processing (within the noise) for +360 MiB, so it was not used. `llama bench`
 pp2048/tg128 at depth 16384: flash attention on 1031/36.8 t/s, auto 1003/33.6 t/s, off 827/25.7 t/s (off was 20 %
 slower in prompt processing and 30 % slower in generation).
+
+## Build b12242
+
+On 2026-11-11, the image was updated from build b10689 (the floating `server-cuda13` tag) to b12242 and pinned. Each
+existing preset was checked on a test server with a prompt of `ctx-size - 1500` tokens and the `chat` test
+(`bench_http.py --tests prompt chat --repeat 1`), with the GPU unlock (the table above was measured on b10689 without
+it):
+
+| Preset | Peak VRAM b10689 -> b12242 | Context | Full-context prompt | Chat |
+|---|---|---|---|---|
+| Qwen3.8-27B | 21556 -> 21554 MiB | 102400 | 773 -> 918 t/s | 49.2 -> 51.3 t/s |
+| Qwen3.8-27B Uncensored | 21542 -> 21544 MiB | 118784 | 749 -> 902 t/s | 54.8 -> 55.9 t/s |
+| Gemma 4 26B-A4B | 21532 -> 21656 MiB; **21488 MiB at 159744** | 165888 -> **159744** | 2027 -> 2583 t/s | 216 -> 240 t/s |
+| Gemma 4 31B | 21520 -> 21576 MiB; **21516 MiB at 60416** | 61440 -> **60416** | 758 -> 835 t/s | 76.9 -> 80.6 t/s |
+| Gemma 4 31B Uncensored | 21526 -> 21582 MiB; **21522 MiB at 37888** | 38912 -> **37888** | 836 -> 912 t/s | 51.2 -> 63.9 t/s |
+| Qwen3.8-Flash-Next | 19576 MiB | 262144 | 690 -> 941 t/s | 28 -> 30.9 t/s |
+
+The compute buffers of the Gemma models grew by 56-124 MiB, so their contexts were reduced by the measured cost per
+token to keep the peak at ~21.5 GiB. The faster prompt processing is partly the GPU unlock, which was not active for
+the earlier measurements. The contexts given in the presets for the other vision-encoder placement are from b10689.
+[`../agx_ai/benchmark/llama_cpp/test_server.py`](../agx_ai/benchmark/llama_cpp/test_server.py) now also recognizes the
+new "model loaded" log line of b12242.
+
+## Terminal-RSI-27B
+
+[Teriminal-RSI/Terminal-RSI-27B](https://huggingface.co/Teriminal-RSI/Terminal-RSI-27B) is a terminal-agent finetune
+of Qwen3.8-27B (the same architecture). Of its GGUFs (bartowski, mradermacher, SolsticeAI), bartowski's imatrix
+quants include the MTP layer and an mmproj. Measured on 2026-11-11 with build b12242
+(`server-cuda13-b12242`), the GPU unlock and test servers, with `bench_http.py --tests generation prompt chat depth
+edit image --repeat 2 --edit-depth 0 32000` and a prompt of `ctx-size - 1500` tokens; q8_0 K and V, ub 512 and flash
+attention as for Qwen3.8-27B. Generation in t/s:
+
+| Quant, vision encoder, drafts | Context | Chat | 6.4k / 16k / 36.5k / 60k / ~100k | Edit (short / after 32k) | Prompt 6.4k / full | Image | Peak VRAM |
+|---|---|---|---|---|---|---|---|
+| Q4_K_M, GPU, 2 | 81920 | 67.6 | 69.8 / 64.8 / 55.9 / 43.8 / - | 69.7 / 57.0 | 1311 / 1010 | 1.7 s | 21716 MiB (too much) |
+| IQ4_XS, GPU, 2 | 122880 | 70.6 | 76.0 / 72.5 / 59.3 / 49.6 / 43.6 | 80.8 / 65.3 | 1440 / 895 | 1.6 s | 21636 MiB |
+| Q4_K_M, CPU, 2 | 104448 | 60.8 | 67.7 / 61.3 / 52.4 / 45.2 / 36.4 | 67.3 / 58.2 | 1308 / 896 | 6.5 s | 21480 MiB |
+| Q4_K_M, CPU, 3 | 104448 | 60.9 | 71.2 / 67.4 / 58.3 / 47.5 / 45.7 | 80.5 / 68.0 | 1312 / 897 | 6.3 s | 21632 MiB (too much) |
+| Q4_K_M, CPU, 3 | 100352 | 60.9 | 71.2 / 67.6 / 58.8 / 48.3 / - | 77.6 / 67.4 | 1306 / 905 | - | 21456 MiB |
+| Q4_K_M, CPU, 4 | 96256 | 65.1 | 73.9 / 69.9 / 60.8 / 56.6 / - | 85.2 / 77.6 | 1305 / 928 | - | 21430 MiB |
+| **Q4_K_M, CPU, 4 (final)** | **98304** | 62.7 | 73.4 / 69.6 / 62.7 / 57.6 / 44.5 | 88.2 / 76.0 | 1312 / 918 | 6.4 s | 21518 MiB |
+
+- **Quant:** IQ4_XS is 4-12 % faster and fits ~40k more tokens, but with `quality_http.py --tests retrieval --logprobs
+  20` (176 questions at 10k-77k tokens, MTP off, ctx 81920) against Q4_K_M, its answer distributions differ by 14
+  times the noise floor (Q4_K_M with ub 256): mean KLD 0.0078 vs 0.00054, 99 % KLD 0.21 vs 0.007, first token 0.036
+  vs 0.0027, 8 vs 3 changed top tokens, 168 vs 173 same answers. The accuracy is the same (166, 167 and 166 of 176
+  for Q4_K_M, the noise run and IQ4_XS; the base Qwen3.8-27B `UD-Q4_K_M` got 166 too). Q4_K_M was kept as the more
+  precise quant, with the vision encoder on the CPU to win back context.
+- **MTP draft length:** this finetune accepts long drafts (98-99 % in the edits, 65-80 % otherwise), so 4 drafts are
+  the fastest, unlike 2 for the base Qwen3.8-27B (see [MTP draft length](#mtp-draft-length)): +8-27 % over 2 drafts at
+  depth and +31 % in edits, for ~150 MiB (6k tokens of context). Chat varies too much between runs (61-65 t/s) to
+  tell the draft lengths apart.
+- The bartowski Q4_K_M is 0.9 GiB larger than Unsloth's `UD-Q4_K_M` of the base model, which is why the context is
+  smaller than that of [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) despite the vision encoder on the CPU.
+- vLLM is much faster for this model on this GPU: HyperQwen in
+  [`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md#terminal-rsi-27b) gives chat 126 t/s, 130 t/s at
+  32k and 227-243 t/s in edits with 124928 tokens of context (a GPTQ W4A16 quantized from the BF16 checkpoint; 164/176
+  in the same retrieval test).
 
 ## Commands
 

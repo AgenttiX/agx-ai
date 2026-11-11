@@ -121,6 +121,9 @@ What has given the largest gains, roughly in order:
 - `spec-type = draft-mtp` with the model's MTP drafter. **`spec-draft-n-max = 2` is the usual optimum**
   (radeon-vii, rtx3090 Qwen and Gemma 26B-A4B); Gemma 4 31B accepts more and is fastest with 4 (3 for the
   uncensored one). Measure 1-4 (or 5) with the realistic `chat` and `depth` tests, two alternating runs each.
+- **Finetunes can accept longer drafts than their base model:** Terminal-RSI-27B (a Qwen3.8-27B terminal-agent
+  finetune, rtx3090) is fastest with 4 (+8-27 % at depth, +31 % in edits over 2), while the base model is fastest
+  with 2. Measure the draft length again for each finetune.
 - Gains on GPUs: +18-25 % (radeon-vii Qwen), Gemma 4 31B +40 % with 4. Costs VRAM: the drafter (500-900 MiB) and its
   own compute buffers.
 - **Not always worth it:** slower on the t480 CPU, on the l14 (dense models on the CPU, E4B, Vulkan 26B) and for
@@ -200,6 +203,9 @@ What has given the largest gains, roughly in order:
 
 - Prefer the largest quant that fits with a useful context; on gfx906 UD-IQ4_XS was even faster than the smaller
   UD-Q3_K_XL and UD-IQ3_S.
+- **Check the quant with KLD, not accuracy:** bartowski's imatrix IQ4_XS of Terminal-RSI-27B had the same retrieval
+  accuracy as its Q4_K_M (166/176) but a mean KLD of 0.0078 against it, 14 times the noise floor (ub 256: 0.00054),
+  and 4-12 % more speed (rtx3090). Q4_K_M was kept, with the vision encoder on the CPU for the context.
 - QAT models (Gemma 4) are worth it: E4B QAT was ~39 % faster, accepted more drafts (66 vs 52 %) and had 2.7x the
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is

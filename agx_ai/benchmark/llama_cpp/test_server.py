@@ -65,7 +65,8 @@ def docker_run_args(
 
 def load_state(log: str) -> bool | None:
     """True if the model has loaded, False if the router's model instance failed, None if still loading."""
-    if "llama_server: model loaded" in log:
+    # "llama_server: model loaded" in older builds (e.g. b10689), "srv  server_run_i: model loaded" in b12242.
+    if "llama_server: model loaded" in log or "server_run_i: model loaded" in log:
         return True
     if "exited with status" in log:
         return False

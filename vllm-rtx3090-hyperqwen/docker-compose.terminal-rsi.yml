@@ -1,0 +1,34 @@
+# Terminal-RSI-27B (Teriminal-RSI/Terminal-RSI-27B, a terminal-agent finetune of Qwen3.8-27B) instead of Qwen3.8-27B,
+# with the same HyperQwen settings as docker-compose.yml unless noted here. See README.md (Terminal-RSI-27B).
+#
+#   # once: quantize the BF16 checkpoint to W4A16 (GPTQ, ~40 min on the RTX 3090), then prepare it like the base model
+#   docker run --rm --gpus all --shm-size 16g -v ~/.cache/huggingface:/root/.cache/huggingface \
+#       -v ~/.cache/vllm-models:/models -v $PWD:/work:ro -w /work --entrypoint sh ghcr.io/agenttix/agx-ai/vllm:latest \
+#       -c "pip install -q llmcompressor==0.15.0 && python3 quantize_w4a16.py Teriminal-RSI/Terminal-RSI-27B \
+#           /models/hyperqwen/Terminal-RSI-27B-W4A16"
+#   docker compose run --rm -e BASE_MODEL_DIR=/app/models/Terminal-RSI-27B-W4A16 -e FAST_VARIANT=0 prepare
+#
+#   docker compose -f docker-compose.yml -f docker-compose.terminal-rsi.yml up -d
+
+services:
+  vllm:
+    environment:
+      MODEL: /app/models/Terminal-RSI-27B-W4A16
+      # The lm_head is int8 (prepare/quant_lm_head.py), not the GPTQ int4 of the base model's "fast" variant, which
+      # needs HyperQwen's drafter pipeline (~4 h of captured hidden states): +526 MiB at the peak. With the KV cache of
+      # docker-compose.yml, the peak was 21984 MiB (638 MiB free next to the desktop); this one (128755 tokens) peaks
+      # at 21448 MiB with a 123428-token prompt, like the base model's 21458-21500 MiB.
+      KV_MEM: "5430000000"
+      MAX_LEN: "124928"
+      # SPEC=dflash2 as in docker-compose.yml: the DFlash2 drafter of Qwen3.8-27B accepts the finetune's tokens even
+      # better than the base model's. The finetune's own MTP head (SPEC=mtp, 3 drafts, int8) was much slower: chat
+      # 93 vs 126 t/s, 108 vs 130 t/s at 32k tokens of context, 115 vs 227 t/s in edits after 32k.
+      # As in docker-compose.yml, with the model name of Terminal-RSI-27B and the sampling of its model card's
+      # evaluation (temperature 0.6, top-p 0.95; the checkpoint's generation_config.json has 1.0).
+      EXTRA_ARGS: >-
+        --served-model-name Teriminal-RSI/Terminal-RSI-27B
+        --override-generation-config {"temperature":0.6,"top_p":0.95,"top_k":20}
+        --limit-mm-per-prompt {"image":64,"video":1}
+        --mm-processor-kwargs {"max_pixels":1048576,"videos_kwargs":{"max_pixels":12582912}}
+        --media-io-kwargs {"video":{"max_frames":64}}
+        --skip-mm-profiling

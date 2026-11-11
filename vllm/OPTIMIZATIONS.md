@@ -112,6 +112,12 @@ What has given the largest gains, roughly in order:
   lm_head to int4 (KL 0.0042).
 - **Embedding models:** `quantization: fp8` (weight-only) halves Qwen3-Embedding-4B without a retrieval loss.
 - W4A8 (hyperqwen `INT8_ACT=int8`): pp +23-63 % but chat 136 -> 40 t/s with DFlash2; rejected for generation-bound use.
+- **No vLLM checkpoint of a finetune:** quantize the BF16 checkpoint with llm-compressor's GPTQ into the format of the
+  checkpoint the configuration expects (`../vllm-rtx3090-hyperqwen/quantize_w4a16.py`: compressed-tensors W4A16,
+  int4 symmetric group 128, static act order; Terminal-RSI-27B in 40 min on the RTX 3090 with the model in RAM,
+  164/176 retrieval answers vs 166 for the base model's quant). llm-compressor 0.15 keeps the MTP module (BF16).
+- An int8 lm_head (HyperQwen's `prepare`) costs 526 MiB at the peak more than the GPTQ int4 one of its "fast"
+  variant, which needs the drafter pipeline (captured hidden states) for each model.
 
 ## CUDA graphs and compilation
 
@@ -159,6 +165,9 @@ What has given the largest gains, roughly in order:
   VII: 9.2k).
 - **DFlash2** (hyperqwen `SPEC=dflash2`): a 7-token block drafter plus lookup drafting from the context. RTX 3090
   chat 136 vs 83 t/s with MTP, code edits 290 vs 112 t/s, 80 t/s at 100k; PaperQA2 on the A4000 1.5x stock vLLM.
+- **DFlash2 transfers to finetunes:** the drafter of Qwen3.8-27B accepted Terminal-RSI-27B's tokens better than the
+  base model's (35-45 % vs 26-33 %), and beat the finetune's own MTP head (int8, 3 drafts) by 36 % in chat and 2x in
+  edits (RTX 3090).
 - **N-gram drafting alone and MTP are bad for MoE models with experts on the CPU or behind PCIe:** verifying more
   tokens reads more experts (flash-next on the RTX 3070: edits 1.7x, everything else 2-4x slower).
 - Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with

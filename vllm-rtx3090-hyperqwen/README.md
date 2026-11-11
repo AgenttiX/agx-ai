@@ -13,6 +13,7 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
 | Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1710 t/s at 6.4k, 1250 t/s at 100k, 1140 t/s at 128k with the [GPU unlock](#gpu-unlock) (without: 1220 / 820 / 750 t/s) | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the vision tower on the CPU (1 megapixel: ~7 s; 30-s 1080p video: ~40 s), which adds ~150 MiB to the VRAM peak and no other VRAM |
+| [Terminal-RSI-27B](#terminal-rsi-27b) W4A16 (GPTQ by [`quantize_w4a16.py`](quantize_w4a16.py), int8 lm_head), same drafters and settings ([`docker-compose.terminal-rsi.yml`](docker-compose.terminal-rsi.yml)) | 124928 | 21448 MiB | as above | chat 126 t/s; 133 / 130 / 105 t/s at 6.4k / 32k / 100k; edits 243 / 227 t/s | 1830 t/s at 6.4k, 1216 t/s at 100k, 1176 t/s at 123k | the terminal-agent finetune of Qwen3.8-27B; 1.8x as fast as llama.cpp on the same GPU ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md)) |
 
 Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
 with [`../vllm/vllm.patch`](../vllm/vllm.patch), GPTQ int4, MTP 2, Triton attention), measured on the same day with the
@@ -306,6 +307,43 @@ the same tests as above (`--tests chat depth edit --repeat 2 --depth 6400 32000 
   t/s), equal in edits.
 - The KV cache holds 143870 instead of 146461 tokens with the same `KV_MEM`, still enough for the 139264 tokens of
   context. Text answers (8/8 in `chat_stream.py`) and image input with the vision tower on the CPU work.
+
+## Terminal-RSI-27B
+
+[Teriminal-RSI/Terminal-RSI-27B](https://huggingface.co/Teriminal-RSI/Terminal-RSI-27B) (the organization's name is
+spelled so) is a terminal-agent finetune of Qwen3.8-27B with the same architecture, including the vision tower and the
+MTP head. Its published quantizations (2026-11-11) are GGUFs (bartowski, mradermacher, SolsticeAI) and an MLX NVFP4 for
+Apple Silicon; there is no vLLM checkpoint, and HyperQwen's `prepare/` extends only a compressed-tensors W4A16 one.
+[`quantize_w4a16.py`](quantize_w4a16.py) therefore makes one from the BF16 checkpoint with llm-compressor's GPTQ, in the
+format of HyperQwen's base checkpoint: int4, symmetric, group size 128, static activation ordering, on every Linear
+layer of the language model except `in_proj_a`/`in_proj_b`, calibrated on 256 chat and code samples of 2048 tokens
+(UltraChat and Magicoder). It took 40 min on the RTX 3090 with the model in RAM (19 GB output, the vision tower, lm_head,
+embedding and MTP module in BF16). HyperQwen's `prepare` then quantized the lm_head, the embedding and the MTP module to
+int8 and built the 40k-row draft head; its "fast" variant (GPTQ int4 lm_head and MTP, calibrated on 300k captured
+hidden states of the base model) is specific to the base model and was not rebuilt. The commands are in
+[`docker-compose.terminal-rsi.yml`](docker-compose.terminal-rsi.yml).
+
+Measured on 2026-11-11 with the image of this directory (HyperQwen `6ab9bd0`, vLLM 0.32.0) and the GPU unlock, with
+`bench_http.py --tests generation prompt chat depth edit --repeat 2 --edit-depth 0 32000` and
+`quality_http.py --tests retrieval --depth 9000 33000 61000 76000`:
+
+| Variant | KV cache / context | Chat | Gen. 6.4k / 32k / 100k / 128k | Edit (short / after 32k) | Prompt 6.4k / 100k / full | Peak VRAM |
+|---|---|---|---|---|---|---|
+| DFlash2, `KV_MEM` 5.95 GB (as for the base model) | 143870 / 139264 | 123.1 | 144.8 / 121.6 / 87.9 / 72.2 | 239.9 / 221.1 | 1811 / 1222 / 1125 | **21984 MiB** (638 MiB free) |
+| `SPEC=mtp` (the finetune's MTP head, int8, 3 drafts), `KV_MEM` 5.43 GB | 135822 / 124928 | 92.8 | 118.1 / 107.6 / 65.1 / - | 131.3 / 115.4 | 1804 / 1182 / 1144 | 20646 MiB |
+| **DFlash2, `KV_MEM` 5.43 GB (chosen)** | 128755 / 124928 | **126.2** | **133.3 / 129.6 / 104.6** / - | **242.9 / 227.4** | 1831 / 1216 / 1176 | **21448 MiB** |
+
+- **DFlash2 works with the finetune.** Its drafter was trained on the base model, but accepts the finetune's tokens
+  even better (35-45 % instead of 26-33 % of the drafted tokens; the finetune often answers in a fixed JSON format).
+  The finetune's own MTP head is much slower: chat -26 %, edits -46 %.
+- **The int8 lm_head costs 526 MiB** at the peak compared with the base model's int4 one. With the base model's KV
+  cache, only 638 MiB of the GPU stayed free next to the desktop, so the KV cache is 0.52 GB smaller: 124928 instead
+  of 139264 tokens of context, with the same peak as the base model (21448 vs 21458-21500 MiB). A round-to-nearest
+  int4 lm_head would cost +1.5 % perplexity by HyperQwen's measurement; the calibrated one needs its drafter pipeline
+  (~4 h of captured hidden states).
+- **Quality:** 164/176 retrieval answers (all 128 single lookups, 36/48 two-step lookups), against 166/176 for the
+  base Qwen3.8-27B (llama.cpp `UD-Q4_K_M`) and 166/176 for this model's IQ4_XS GGUF in llama.cpp. Text answers (8/8)
+  and image input with the vision tower on the CPU work.
 
 ## Other notes
 

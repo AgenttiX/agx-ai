@@ -1,6 +1,7 @@
 services:
   llama-cpp:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    # Pinned; build b10689 (the floating server-cuda13 tag) until 2026-11-11. See README.md.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242
     container_name: llama-cpp
     env_file:
       - ../llama-cpp/llama-cpp.env
@@ -17,6 +18,7 @@ services:
       - ./preset-qwen3.8-27b.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-qwen3.8-27b-uncensored.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-qwen3.8-flash-next.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-terminal-rsi-27b.ini:/etc/llama.cpp/preset.ini:ro
     deploy:
       resources:
         reservations:
