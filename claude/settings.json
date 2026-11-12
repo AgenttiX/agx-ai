@@ -96,10 +96,17 @@
   "model": "opus[1m]",
   "enableWorkflows": true,
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": true,
-    "lot-map@lot-map": true
+    "lot-map@lot-map": true,
+    "desktop-statusline@centminmod": true,
+    "pyright-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
+    "centminmod": {
+      "source": {
+        "source": "github",
+        "repo": "centminmod/claude-plugins"
+      }
+    },
     "lot-map": {
       "source": {
         "source": "github",
