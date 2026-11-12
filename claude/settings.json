@@ -96,6 +96,10 @@
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true
   },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/statusline.py"
+  },
   "tui": "fullscreen",
   "theme": "dark",
   "remoteControlAtStartup": true,
