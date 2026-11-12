@@ -91,18 +91,39 @@
       "Read(~/Vaults/**)"
     ]
   },
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true,
   "model": "opus[1m]",
   "enableWorkflows": true,
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": true
+    "pyright-lsp@claude-plugins-official": true,
+    "lot-map@lot-map": true
   },
+  "extraKnownMarketplaces": {
+    "lot-map": {
+      "source": {
+        "source": "github",
+        "repo": "alexeyw/lot-map"
+      }
+    }
+  },
+  "pluginConfigs": {
+    "lot-map@lot-map": {
+      "options": {
+        "language": "en",
+        "hookRecords": false,
+        "hookReasons": false,
+        "theme": "auto",
+        "background": "solid",
+        "layout": "you-bottom"
+      }
+    }
+  },
+  "remoteControlAtStartup": true,
   "statusLine": {
     "type": "command",
     "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/statusline.py"
   },
-  "tui": "fullscreen",
   "theme": "dark",
-  "remoteControlAtStartup": true,
-  "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true
+  "tui": "fullscreen"
 }
