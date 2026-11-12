@@ -206,6 +206,9 @@ What has given the largest gains, roughly in order:
 - **Check the quant with KLD, not accuracy:** bartowski's imatrix IQ4_XS of Terminal-RSI-27B had the same retrieval
   accuracy as its Q4_K_M (166/176) but a mean KLD of 0.0078 against it, 14 times the noise floor (ub 256: 0.00054),
   and 4-12 % more speed (rtx3090). Q4_K_M was kept, with the vision encoder on the CPU for the context.
+- **Unsloth Dynamic 3.1** (2026-11): Qwen3.8-27B `UD-Q4_K_M` was as fast as Dynamic 3.0 with the same retrieval
+  accuracy (165 vs 166/176) for +96 MiB of VRAM, and was adopted (rtx3090). For Qwen3.8-Flash-Next, ISTA's GSQ-RCO
+  `IQ3_S` (83.6 GB) beat the larger `UD-Q3_K_XL` (89.5 GB) in speed (3-10 %) and retrieval (169 vs 162/176).
 - QAT models (Gemma 4) are worth it: E4B QAT was ~39 % faster, accepted more drafts (66 vs 52 %) and had 2.7x the
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is

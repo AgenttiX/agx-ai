@@ -11,17 +11,17 @@ the API key of `../llama-cpp/llama-cpp.env` (see [`../llama-cpp`](../llama-cpp/R
 
 All models except Qwen3.8-Flash-Next run entirely on the GPU with flash attention and MTP speculative decoding.
 Qwen3.8-Flash-Next has most of its experts in RAM (see [Qwen3.8-Flash-Next](#qwen38-flash-next)). The context of each
-one is as large as possible while llama-server stays at ~21 GiB of VRAM (peak 21520-21556 MiB in the benchmarks with
+one is as large as possible while llama-server stays at ~21 GiB of VRAM (peak 21520-21660 MiB in the benchmarks with
 full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the desktop session using ~1.9 GiB.
 
 | Preset | Model | KV cache | Context | Chat generation | Prompt processing |
 |---|---|---|---|---|---|
-| [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) (default) | Qwen3.8-27B `UD-Q4_K_M` | q8_0 | 102400 | 49 t/s, 36 t/s at 60k, 26 t/s at 100k | 1140 t/s at 16k, 775 t/s at 100k |
+| [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) (default) | Qwen3.8-27B `UD-Q4_K_M` ([Unsloth Dynamic 3.1](#unsloth-dynamic-31)) | q8_0 | 100352 | 50 t/s, 34 t/s at 60k, 28 t/s at 98k | 1190 t/s at 16k, 890 t/s at 99k |
 | [`preset-qwen3.8-27b-uncensored.ini`](preset-qwen3.8-27b-uncensored.ini) | Qwen3.8-27B Uncensored `IQ4_XS` | q8_0 | 118784 | 55 t/s, 38 t/s at 60k, 26 t/s at 116k | 1190 t/s at 16k, 750 t/s at 116k |
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL`, 2 slots | f16 | 159744 | 216 t/s, 148 t/s at 70k, 104 t/s at 163k | 4450 t/s at 16k, 2000 t/s at 163k |
 | [`preset-gemma-4-31b-qat.ini`](preset-gemma-4-31b-qat.ini) | Gemma 4 31B QAT `UD-Q4_K_XL` | q8_0 | 60416 | 77 t/s, 48 t/s at 59k | 1020 t/s at 16k, 750 t/s at 59k |
 | [`preset-gemma-4-31b-qat-uncensored.ini`](preset-gemma-4-31b-qat-uncensored.ini) | Gemma 4 31B QAT Uncensored `Q4_K_M` | q8_0 | 37888 | 51 t/s, 40 t/s at 36k | 920 t/s at 16k, 790 t/s at 36k |
-| [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S`, experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 28 t/s, 25 t/s at 36k, 20 t/s at 100k | 690 t/s at 16-100k, 780 t/s at 260k |
+| [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S` (better than [Unsloth Dynamic 3.1](#unsloth-dynamic-31) `UD-Q3_K_XL`), experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 31 t/s, 28 t/s at 36k, 23 t/s at 100k | 790 t/s at 16-100k, 940 t/s at 260k |
 | [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
 
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
@@ -54,7 +54,7 @@ ub 512 and MTP on, as a base and the cost of each setting:
 
 | | Qwen3.8-27B | Qwen3.8-27B Uncensored | Gemma 4 26B-A4B | Gemma 4 31B | Gemma 4 31B Uncensored |
 |---|---|---|---|---|---|
-| Weights (GGUF) | 15.3 GiB | 14.6 GiB | 13.3 GiB | 16.1 GiB | 17.4 GiB |
+| Weights (GGUF) | 15.4 GiB (Dynamic 3.1; 15.3 GiB before) | 14.6 GiB | 13.3 GiB | 16.1 GiB | 17.4 GiB |
 | Base: K+V q8_0, mmproj on the GPU | 18496 MiB at 32k | 17770 MiB at 32k | 17088 MiB at 64k | 20108 MiB at 16k | 21444 MiB at 16k |
 | Per 1024 tokens of context, K+V f16 | 69 MiB | 69 MiB | 22 MiB | ~120 MiB | ~120 MiB |
 | Per 1024 tokens of context, K+V q8_0 | 43 MiB | 43 MiB | 21 MiB | 61 MiB | 61 MiB |
@@ -268,7 +268,8 @@ runs with vLLM in [`../vllm-rtx3090`](../vllm-rtx3090/README.md#qwen38-flash-nex
 and the n-gram table in IQ4_NL (28.8 GB). Its model card reports the BF16 model's scores on AIME25, GPQA-Diamond and
 LiveCodeBench v6 (93.26 vs 93.12 on average), and it is the most downloaded GGUF of the model. Unsloth's `UD-Q4_K_XL`
 (111 GB) and `UD-IQ4_XS` (94 GB) would leave too little RAM for the desktop: the weights that are not on the GPU are
-in RAM (`load-mode = none`, ~66 GB).
+in RAM (`load-mode = none`, ~66 GB). Unsloth's Dynamic 3.1 `UD-Q3_K_XL` (89.5 GB) fits, but is slower and less
+accurate (see [Unsloth Dynamic 3.1](#unsloth-dynamic-31)).
 
 **Memory.** The KV cache takes ~29 KiB per token with q8_0 (1852 MiB per 65536 tokens), so the full trained context
 of 262144 tokens costs 7.2 GiB, about as much as 7 layers of experts (~1.05 GiB each). The vision encoder takes ~1 GiB.
@@ -443,13 +444,57 @@ attention as for Qwen3.8-27B. Generation in t/s:
   32k and 227-243 t/s in edits with 124928 tokens of context (a GPTQ W4A16 quantized from the BF16 checkpoint; 164/176
   in the same retrieval test).
 
+## Unsloth Dynamic 3.1
+
+Unsloth re-uploaded its GGUFs of Qwen3.8-Flash-Next (2026-11-04) and Qwen3.8-27B (2026-11-11) as "Dynamic 3.1". Measured
+on 2026-11-12 with build b12242, the GPU unlock and test servers, with `bench_http.py --tests generation prompt chat
+depth image --repeat 2` and a prompt of `ctx-size - 1500` tokens, and `quality_http.py --tests retrieval --logprobs
+20` (176 questions at 9k-76k tokens, greedy, MTP off). Generation in t/s, prompt processing in parentheses.
+
+**Qwen3.8-27B `UD-Q4_K_M`** (16.56 GB instead of 16.46 GB; q8_0 K and V, ub 512, MTP 2, vision encoder on the GPU):
+
+| File, context | Chat | Depth 6.4k | 16k | 36.5k | 60k | ~100k | Full prompt | Image | Peak VRAM |
+|---|---|---|---|---|---|---|---|---|---|
+| Dynamic 3.0, 102400 (before) | 50.9 | 57.8 (1235) | 47.0 (1227) | 41.4 (1092) | 35.1 (1055) | 28.8 (904) | 865 | 1.65 s | 21652 MiB |
+| Dynamic 3.1, 102400 | 51.6 | 54.8 (1344) | 49.3 (1330) | 41.5 (1190) | 33.6 (1050) | 28.7 (889) | 914 | 1.67 s | 21748 MiB |
+| **Dynamic 3.1, 100352 (preset)** | 50.4 | 52.8 (1284) | 47.4 (1192) | 41.6 (1053) | 34.4 (1012) | 28.4 (806) | 891 | 1.64 s | 21660 MiB |
+
+- The speeds are the same within the noise. The new file takes 96 MiB more VRAM, so the context was reduced by 2048
+  tokens to keep the peak where the old file had it today. (The old file peaked at 21652 MiB, 98 MiB above its
+  measurement on 2026-11-11, so the peaks vary by ~100 MiB between days; the desktop left 1.2 GiB of the 24 GiB
+  free.)
+- Quality (f16 KV, ctx 77824, vision encoder on the CPU): 165/176 for Dynamic 3.1, 166/176 for Dynamic 3.0 and 164/176
+  for Dynamic 3.0 with ub 256 (the noise floor). Against Dynamic 3.0, the answer distributions of Dynamic 3.1 differ
+  by a mean KLD of 0.0037 (99 %: 0.090, first token 0.016, 4 changed top tokens), 12 times the noise floor (0.00031;
+  99 %: 0.0055, 4 changed top tokens), as expected for different weights. Without a BF16 reference this does not
+  tell which file is closer to the original; the accuracy is the same.
+- Dynamic 3.1 was adopted, as Unsloth reports it to be more accurate in agentic benchmarks and it costs nothing
+  measurable here but 2k tokens of context.
+
+**Qwen3.8-Flash-Next `UD-Q3_K_XL`** vs ISTA's GSQ-RCO `IQ3_S` (the preset as it is: experts of 42 layers on the
+CPU, ctx 262144, q8_0 K and V, ub 2048, 24 threads):
+
+| Quant | Size | Chat | Depth 6.4k | 16k | 36.5k | 100k | Prompt 260k | Image | Peak VRAM | Retrieval |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **ISTA `IQ3_S` (preset)** | 83.6 GB | 31.3 | 30.8 (680) | 29.9 (787) | 27.6 (795) | 22.8 (807) | 942 | 2.9 s | 19678 MiB | 169/176 |
+| Unsloth `UD-Q3_K_XL` | 89.5 GB | 30.3 | 29.4 (622) | 28.7 (725) | 26.3 (732) | 21.6 (727) | 872 | 3.2 s | 19688 MiB | 162/176 |
+
+- `UD-Q3_K_XL` is 3-5 % slower in generation and 7-10 % slower in prompt processing, and it answered 7 fewer of the
+  retrieval questions (all in the two-step lookups, at every depth; mean KLD 0.014 and 9 changed top tokens against
+  `IQ3_S`). It used ~5 GB more RAM (52 GB still available with the desktop). The preset therefore keeps ISTA's
+  `IQ3_S`. The larger Dynamic 3.1 quants (`UD-IQ4_XS` 94 GB, `UD-Q4_K_XL` 111 GB) would not leave enough RAM.
+- With the build b12242 and the GPU unlock, the ISTA quant now generates 31 t/s in chat and 23 t/s at 100k (28 and
+  20 t/s on 2026-10-12). vLLM is still faster for this model on this GPU
+  ([`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next)): chat 32 t/s, 32 t/s at 100k, 2050 t/s of prompt
+  processing at 260k.
+
 ## Commands
 
 ```sh
 cd ../benchmark
 # Stop the production server, then start a test server on port 9934 with a preset or a variant of it
 docker compose -f ../llama-cpp-rtx3090/docker-compose.yml stop
-NAME=llama-test-cuda DOCKER_ARGS="--gpus all" uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/ggml-org/llama.cpp:server-cuda13 \
+NAME=llama-test-cuda DOCKER_ARGS="--gpus all" uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242 \
     ../llama-cpp-rtx3090/preset-qwen3.8-27b.ini ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env 9934
 # Serving speed with a full-context prompt, chat, depth and an image
 uv run -m agx_ai.benchmark.bench_http --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
