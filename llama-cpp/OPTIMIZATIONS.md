@@ -209,6 +209,9 @@ What has given the largest gains, roughly in order:
 - **Unsloth Dynamic 3.1** (2026-11): Qwen3.8-27B `UD-Q4_K_M` was as fast as Dynamic 3.0 with the same retrieval
   accuracy (165 vs 166/176) for +96 MiB of VRAM, and was adopted (rtx3090). For Qwen3.8-Flash-Next, ISTA's GSQ-RCO
   `IQ3_S` (83.6 GB) beat the larger `UD-Q3_K_XL` (89.5 GB) in speed (3-10 %) and retrieval (169 vs 162/176).
+  Qwen3.8-27B `UD-IQ4_XS` Dynamic 3.1 was also as fast, retrieval 124 vs 123/132, +95 MiB (~2k tokens of context on
+  radeon-vii). Both new files have a mean KLD 10-30x the noise floor against the old ones (0.0037 and 0.0048), i.e.
+  they are different weights, but without a BF16 reference it is unknown which is closer to the original model.
 - QAT models (Gemma 4) are worth it: E4B QAT was ~39 % faster, accepted more drafts (66 vs 52 %) and had 2.7x the
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is
@@ -242,6 +245,11 @@ What has given the largest gains, roughly in order:
   On radeon-vii, Vulkan (RADV) was ~10 % faster in short chats but slower beyond ~6k tokens and ~20 % slower in pp,
   so the gfx906 ROCm image ([`mixa3607/llama.cpp-gfx906`](https://github.com/mixa3607/ML-gfx906)) stays. On the
   l14, Vulkan beat SYCL for MoE models.
+- **gfx906 MoE prompt regression:** llama.cpp v0.8.0 and v0.9.0 processed prompts 40-45 % slower with Gemma 4
+  26B-A4B on the Radeon VII (`llama bench` pp2048 838 vs 1461 t/s; ROCm 7.14 vs 10.1 made no difference, nor did
+  `ROCBLAS_USE_HIPBLASLT` or disabling graphs), while the dense Qwen3.8-27B was unaffected. Fixed by b12230 (120 commits
+  after v0.9.0, probably #31679 on the MoE MMVQ batch limit), which also generates 4-9 % faster than v0.6.0 with MTP.
+  Check the release tags of `mixa3607/llama.cpp-gfx906` with a MoE model before updating (radeon-vii).
 - Pin build tags and measure updates A/B in alternating order: compute buffers change between builds (b11176 needed
   3.2 GiB vs 2.0 GiB for Flash-Next; b11552 peaked lower for Gemma), which can break a tight context.
 - CUDA images: `NVIDIA_DISABLE_REQUIRE=1` if the image needs a newer CUDA than the driver; the images set

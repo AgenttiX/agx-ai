@@ -1,16 +1,18 @@
 # llama.cpp on the Radeon VII
 
 llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e. The image is
-`mixa3607/llama.cpp-gfx906:v0.6.0-rocm-7.14` (see [`docker-compose.yml`](docker-compose.yml), where the model is
+`mixa3607/llama.cpp-gfx906:b12230-rocm-10.1` (see [`docker-compose.yml`](docker-compose.yml), where the model is
 selected). There are two presets, one model at a time, both entirely on the GPU with MTP speculative decoding and
 q8_0 K and V caches:
 
 | Preset | Model | Context | Chat generation | Prompt processing |
 |---|---|---|---|---|
-| [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 88064 | ~114 t/s, 54-78 t/s at 36-85k tokens of context | ~1180 t/s at 16k, ~740 t/s at 85k |
-| [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` | 47104 | ~30 t/s, ~24 t/s at 30-43k tokens of context | ~240 t/s at 16k, ~210 t/s at 45k |
+| [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 86016 | ~124 t/s, 61-80 t/s at 36-83k tokens of context | ~1190 t/s at 16k, ~740 t/s at 83k |
+| [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` (Unsloth Dynamic 3.1) | 43008 | ~31 t/s, 24-26 t/s at 30-40k tokens of context | ~250 t/s at 16k, ~220 t/s at 41k |
 
-Both presets take images and videos, with the vision encoder (mmproj) on the CPU, so that it needs no VRAM and no
+Both use the whole 16 GB (peak ~16290 MiB of 16368 in the benchmarks). See
+[the update to b12230 and Dynamic 3.1](#image-update-to-b12230-and-qwen38-27b-dynamic-31-2026-11-12) for the
+latest measurements. Both presets take images and videos, with the vision encoder (mmproj) on the CPU, so that it needs no VRAM and no
 context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90 s; see
 [images and videos](#images-and-videos-2026-10-29). They are faster and fit more context than with
 [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#images-and-videos-2026-10-29).
@@ -24,7 +26,7 @@ settings. The tools are in [`../agx_ai/benchmark`](../agx_ai/benchmark); the com
 
 | | |
 |---|---|
-| OS | Ubuntu 26.04.1 LTS (kernel 7.0.0-38-generic) |
+| OS | Ubuntu 26.04.1 LTS (kernel 7.0.0-43-generic) |
 | CPU | AMD Ryzen Threadripper 3970X (32 cores, 64 threads) |
 | RAM | 128 GB DDR4-2666 (8 x 16 GB Kingston 9965745-002.A00G unbuffered DIMMs, ECC), 125.6 GiB visible to the OS |
 | NPU | none |
@@ -236,7 +238,7 @@ memory allows. Stress test: load, then one prompt of ctx-size - 1500 tokens (MTP
 |---|---|---|---|
 | 77824 | 15907 MiB | 805 t/s | 16053 MiB |
 | 86016 | 16073 MiB | 765 t/s | 16222 MiB |
-| **88064 (current)** | 16113 MiB | 756 t/s | 16262 MiB |
+| **88064** (until 2026-11-12) | 16113 MiB | 756 t/s | 16262 MiB |
 | 90112 | 16155 MiB | 747 t/s | 16301 MiB |
 | 94208 | 16237 MiB | 730 t/s | 16331 MiB |
 | 98304 / 102400 | 16319 / 16323 MiB | crashes | - |
@@ -262,7 +264,7 @@ Both images with [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.i
 on a test server, measured twice each in alternating order (v0.5.0, v0.6.0, v0.5.0, v0.6.0) with the full command
 below. Means of the two runs; generation in t/s, prompt processing in parentheses:
 
-| Test | `v0.5.0-rocm-7.14` | **`v0.6.0-rocm-7.14` (current)** | Change |
+| Test | `v0.5.0-rocm-7.14` | **`v0.6.0-rocm-7.14`** (until 2026-11-12) | Change |
 |---|---|---|---|
 | Generation, 256 tokens (repeated text, temperature 0) | 119.0 | 124.2 | +4 % |
 | Prompt processing, 86564 tokens (full context) | (759) | (761) | 0 % |
@@ -405,7 +407,7 @@ Stress test: load, then one prompt of ctx-size - 1500 tokens (MTP on, as served)
 | ctx-size | VRAM after loading | Prompt processing | Peak VRAM |
 |---|---|---|---|
 | 45056 | 15915 MiB | 213 t/s | 16095 MiB |
-| **47104 (current)** | 16003 MiB | 211 t/s | 16183 MiB |
+| **47104** (until 2026-11-12) | 16003 MiB | 211 t/s | 16183 MiB |
 | 49152 | 16091 MiB | 209 t/s | 16272 MiB |
 
 In the full benchmark (below), ctx 49152 peaked at 16346 MiB, only 22 MiB below the total, so the context is
@@ -449,6 +451,98 @@ The peaks are below those of the text-only stress tests (16262 and 16298 MiB), s
 Videos are sent as `video_url` parts like with vLLM. Compared with vLLM on the same GPU, whose vision towers also run
 on the CPU: Gemma takes about as long per image (vLLM: 8 s for 297 tokens) and 7 times as long for the video, but vLLM
 takes at most 6 frames of a video; Qwen takes half the time per image (vLLM: 32 s) and fits 1.4 times the context.
+
+## Image update to b12230 and Qwen3.8-27B Dynamic 3.1 (2026-11-12)
+
+### Image
+
+The presets of that time (Gemma ctx 88064, Qwen ctx 47104 with the Dynamic 3.0 file), on test servers with the full
+benchmark commands below. Generation in t/s, prompt processing in parentheses:
+
+| Test (Gemma 4 26B-A4B) | `v0.6.0-rocm-7.14` | `v0.9.0-rocm-10.1` | **`b12230-rocm-10.1` (current)** |
+|---|---|---|---|
+| Generation, 256 tokens (repeated text) | 126.1 | 137.3 | 142.3 |
+| Prompt processing, 86564 tokens | (758) | (595) | (748) |
+| Chat, 12 requests | 115.0, acceptance 68 % | 123.6, acceptance 71 % | 124.7, acceptance 71 % |
+| Code context of 6.4k tokens | 101.1 (1261) | 105.1 (758) | 106.5 (1281) |
+| Code context of 16k tokens | 91.0 (1178) | 93.9 (709) | 95.0 (1190) |
+| Code context of 36.5k tokens | 77.8 (1006) | 80.0 (639) | 79.5 (1008) |
+| Code context of 70k tokens | 66.6 (803) | 65.5 (550) | 65.5 (801) |
+| Code context of 85k tokens | 54.6 (736) | 57.1 (516) | 57.6 (733) |
+| Image, 1280x960 | 6.8 s | 6.9 s | 6.8 s |
+| Peak VRAM | 16305 MiB | 16330 MiB | 16331 MiB |
+
+| Test (Qwen3.8-27B, Dynamic 3.0) | `v0.6.0-rocm-7.14` | `v0.9.0-rocm-10.1` |
+|---|---|---|
+| Chat, 12 requests | 29.9 | 30.6 |
+| Code context of 6.4k / 16k / 30k / 43k tokens | 28.7 / 27.3 / 24.7 / 24.5 (248 / 241 / 226 / 213) | 29.5 / 27.7 / 25.5 / 24.5 (257 / 249 / 233 / 219) |
+| Peak VRAM | 16297 MiB | 16314 MiB |
+
+v0.9.0 generates 2-7 % faster but processes Gemma's prompts 25-40 % slower. `llama bench` (K+V q8_0, ub 512, t/s)
+places the regression in llama.cpp, not ROCm:
+
+| Image | llama.cpp | pp2048 | tg128 |
+|---|---|---|---|
+| `v0.6.0-rocm-7.14` | v0.6.0 | 1461 | 89.7 |
+| `v0.7.0-rocm-7.14` | v0.7.0 | 1461 | 87.8 |
+| `v0.7.0-rocm-10.1` | v0.7.0 | 1440 | 85.4 |
+| `v0.8.0-rocm-10.1` | v0.8.0 | 838 | 90.4 |
+| `v0.9.0-rocm-10.1` | v0.9.0 | 840 | 91.5 |
+| **`b12230-rocm-10.1` (current)** | 120 commits after v0.9.0 | **1445** | **92.9** |
+
+`ROCBLAS_USE_HIPBLASLT=0/1` and `GGML_CUDA_DISABLE_GRAPHS=1` did not help v0.9.0 (837-838 t/s); ub 1024 reached 1219 t/s
+but does not fit the context. The dense Qwen3.8-27B is not affected (+3 % in pp on v0.9.0). The fix is probably
+llama.cpp #31679 ("use highest compiled arch in get_mmvq_mmid_max_batch"), which is in b12230 but not in v0.9.0.
+
+b12230 has v0.6.0's prompt speed and 4-9 % faster generation with MTP (chat +8 %), but needs ~25 MiB more VRAM. With
+~21 MiB per 1024 tokens, the Gemma context is now 86016 (2048 less).
+
+### Qwen3.8-27B Dynamic 3.1
+
+Unsloth re-uploaded `UD-IQ4_XS` as Dynamic 3.1 on 2026-11-11 (14352911264 bytes, +95 MiB). Same speed as the Dynamic 3.0
+file (b12230, ctx 44032: chat 30.6 t/s, prompt 220-259 t/s). Quality as in [KV cache type](#kv-cache-type): retrieval
+at 9k/17k/29k tokens, ctx 30720, no MTP, b12230, compared with the Dynamic 3.0 file:
+
+| Configuration | Correct | Same answer | Mean KLD | 99 % KLD | First token KLD | Top token changed | Mean \|Δ log p\| |
+|---|---|---|---|---|---|---|---|
+| Dynamic 3.0, ub 512 (reference) | 123/132 | - | - | - | - | - | - |
+| Noise: Dynamic 3.0, ub 256 | 124/132 | 130/132 | 0.00015 | 0.0033 | 0.0008 | 2/735 | 0.0014 |
+| **Dynamic 3.1 (current)** | 124/132 | 131/132 | 0.0048 | 0.130 | 0.0233 | 1/738 | 0.0069 |
+
+The retrieval accuracy is the same. The KLD is 30 times the noise floor, i.e. the weights differ (as with `UD-Q4_K_M` on
+the RTX 3090), but this cannot tell which file is closer to the original BF16 model. The new file was adopted, like on
+the RTX 3090.
+
+### Context size
+
+Peak VRAM with prompts of ctx-size - 1500 tokens (b12230; probe = load and one such prompt, full = the full benchmark):
+
+| Preset | ctx-size | Peak, probe | Peak, full benchmark |
+|---|---|---|---|
+| Gemma | 83968 | 16213 MiB | - |
+| Gemma | **86016 (current)** | 16255 MiB | **16291 MiB** |
+| Gemma | 88064 | - | 16331 MiB |
+| Qwen Dynamic 3.1 | 41984 | 16117 MiB | - |
+| Qwen Dynamic 3.1 | **43008 (current)** | 16163 MiB | **16284 MiB** |
+| Qwen Dynamic 3.1 | 44032 | - | 16325 MiB |
+
+The production presets on test servers, with the full commands below (prompts and the last depth adjusted to the
+contexts):
+
+| Test | Gemma, ctx 86016 | Qwen3.8-27B Dynamic 3.1, ctx 43008 |
+|---|---|---|
+| Generation, 256 tokens (repeated text) | 141.8 t/s, acceptance 87 % | 35.3 t/s, acceptance 71 % |
+| Prompt processing (ctx - 1500 tokens) | 756 t/s | 221 t/s |
+| Chat, 12 requests | 123.7 t/s, acceptance 71 % | 30.6 t/s, acceptance 55 % |
+| Code context of 6.4k tokens | 106.3 (1280) | 29.1 (259) |
+| Code context of 16k tokens | 93.8 (1189) | 27.3 (250) |
+| Code context of 30k / 36.5k tokens | 79.6 (1008) at 36.5k | 26.0 (233) at 30k |
+| Code context of 70k tokens | 65.8 (801) | - |
+| Code context of 83k / 39.5k tokens | 61.1 (742) at 83k | 24.0 (222) at 39.5k |
+| Image, 1280x960 | 7.0 s | 10.6 s |
+| Peak VRAM | 16291 MiB | 16284 MiB |
+
+No errors in the logs.
 
 ## Commands
 

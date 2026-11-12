@@ -166,7 +166,7 @@
 <text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (33 | 1750)</tspan></text>
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
-<text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (124 | 1260)</tspan></text>
+<text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (142 | 1280)</tspan></text>
 <rect x="824.504" y="799" width="200.992" height="30" rx="15" fill="#ffffff" stroke="#30a2ff" stroke-width="1.5"/>
 <use href="#logo-vllm" x="830.504" y="803" width="22" height="22"/>
 <text x="858.504" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">vLLM</tspan> <tspan fill="#52606d">CUDA, RTX 3090</tspan></text>
