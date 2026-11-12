@@ -51,6 +51,7 @@ requires-python = ">= 3.14"
 # dynamic = ["version"]
 
 dependencies = [
+    "huggingface-hub >= 2.4.0",
     "matplotlib >= 3.11.2",
     "numpy >= 2.5.4",
     # As of 2026-05, Orjson does not yet support free-threading.
