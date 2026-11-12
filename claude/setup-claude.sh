@@ -23,4 +23,10 @@ fi
 # https://dash.plotly.com/mcp
 # claude mcp add plotly-dash-documentation --transport http --scope user https://dash.plotly.com/_mcp
 
+echo "Installing language servers (LSP)"
+uv tool install --upgrade pyright
+if command -v npm &>/dev/null; then
+  npm install -g typescript-language-server typescript
+fi
+
 echo "Claude configured."
