@@ -13,7 +13,7 @@ dependencies = [
     "openvino==2026.4.1",
     "openvino-tokenizers==2026.4.1.0",
     "torch==2.15.0",
-    "transformers==5.22.1",
+    "transformers==5.22.2",
 ]
 
 # Only torch comes from the PyTorch CPU index, and everything else from PyPI.
