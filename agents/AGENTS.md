@@ -1,0 +1,1 @@
+@~/.claude/AGENTS.local.md
