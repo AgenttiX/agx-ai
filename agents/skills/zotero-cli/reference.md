@@ -1,0 +1,415 @@
+# zotero-cli command reference
+
+Generated from the CLI's own argument parser by
+`scripts/gen_skill_reference.py` -- do not edit by hand.
+
+Every command also accepts `--json` (machine-readable envelope on stdout) and
+`-v` (diagnostics on stderr). Both are defined on the top-level parser and on
+each first-level command, so they may precede the command name or follow it,
+but not follow a sub-command: `get --json metadata KEY` parses and
+`get metadata --json KEY` does not. Run
+`zotero-cli --json-schema` for the output contract.
+
+
+## `config`
+
+ - `--show-secrets` -- Show full API keys
+
+## `search (alias: s)`
+
+ - `<query>` -- Search query
+ - `--mode` -- one of `items`, `tag`, `citekey`, `advanced`, `semantic`, `notes` -- default `items` -- Search mode (default: items)
+ - `--qmode` -- one of `titleCreatorYear`, `everything` -- default `titleCreatorYear`
+ - `--collection` -- Scope to a collection key
+ - `--limit` -- default `10`
+ - `--conditions` -- JSON conditions for advanced mode
+ - `--join-mode` -- one of `all`, `any` -- default `all`
+ - `--sort-by`
+ - `--sort-direction` -- one of `asc`, `desc` -- default `asc`
+ - `--filters` -- JSON filters for semantic mode
+ - `--all-libraries` -- Search every accessible library at once instead of the active one, labelling each result with its library (items, advanced and semantic modes). Requires the SQLite backend (the default in local mode).
+ - `--detail` -- one of `keys_only`, `summary`, `full` -- default `summary` -- How much of each item --json returns (no effect on markdown output)
+
+## `get (alias: g)`
+
+### `get metadata`
+
+ - `<item_key>`
+ - `--no-abstract`
+ - `--output-format` -- one of `markdown`, `bibtex` -- default `markdown`
+
+### `get fulltext`
+
+ - `<item_key>`
+
+### `get bibtex`
+
+ - `<item_key>`
+
+### `get collections`
+
+ - `--limit` -- default `500`
+
+### `get collection-items`
+
+ - `<collection_key>`
+ - `--detail` -- one of `keys_only`, `summary`, `full` -- default `summary`
+ - `--limit` -- default `50`
+ - `--offset` -- Index of the first item to return, for paging a collection larger than --limit
+
+### `get children`
+
+ - `<item_key>`
+ - `--item-keys` -- Comma-separated keys for batch mode
+
+### `get tags`
+
+ - `--limit` -- default `500`
+
+### `get recent`
+
+ - `--limit` -- default `10`
+ - `--collection`
+
+### `get libraries`
+
+### `get feeds`
+
+### `get feed-items`
+
+ - `<library_id>`
+ - `--limit` -- default `20`
+
+## `annotations (alias: ann)`
+
+### `annotations list`
+
+ - `--item-key`
+ - `--pdf-extraction`
+ - `--limit` -- default `100`
+ - `--format` -- one of `markdown`, `json` -- default `markdown`
+
+### `annotations update`
+
+ - `<annotation_key>`
+ - `--text`
+ - `--comment`
+ - `--color`
+ - `--add-tags` -- Tags to add (comma-separated, or a JSON array if a name has a comma)
+ - `--remove-tags` -- Tags to remove (comma-separated, or a JSON array if a name has a comma)
+
+### `annotations delete`
+
+ - `<annotation_key>`
+
+### `annotations create`
+
+ - `--attachment-key` -- **required**
+ - `--page` -- **required**
+ - `--text` -- Exact text to highlight
+ - `--rect` -- Area box x,y,width,height, normalized 0-1; `zotero-cli layout` prints boxes for figures and tables
+ - `--note` -- Sticky note centered at x,y, normalized 0-1; its text is --comment
+ - `--comment`
+ - `--color` -- default `#ffd400` -- Hex, or a Zotero color name: yellow, red, green, blue, purple, magenta, orange, gray
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--open` -- Then show the new annotation in the Zotero reader
+
+### `annotations batch`
+
+ - `--attachment-key` -- **required** -- Attachment for lines that do not name their own
+ - `--file` -- default `-` -- JSON Lines (or a JSON array) of {page, text|rect|note, comment, color, tags}; - reads stdin
+ - `--dry-run` -- Locate every highlight and report what it would cover, without writing
+
+## `layout`
+
+ - `<attachment_key>`
+ - `--pages` -- default `all` -- Pages to scan: all (default), 3, 3-6, or 1,4,6-9
+
+## `notes (alias: n)`
+
+### `notes list`
+
+ - `--item-key`
+ - `--limit` -- default `20`
+ - `--full`
+ - `--raw-html`
+
+### `notes create`
+
+ - `--item-key` -- **required**
+ - `--title`
+ - `--text` -- Markdown ($math$, tables, zotero:// links, plus <u> <s> <sub> <sup> <mark> <span style="color:red">) or note HTML; - reads stdin
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+
+### `notes update`
+
+ - `--item-key` -- **required**
+ - `--text` -- Markdown ($math$, tables, zotero:// links, plus <u> <s> <sub> <sup> <mark> <span style="color:red">) or note HTML; - reads stdin
+ - `--append` -- Add the text at the end instead of replacing the note
+
+### `notes delete`
+
+ - `--item-key` -- **required**
+
+## `add`
+
+### `add doi`
+
+ - `<doi>`
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+ - `--attach-mode` -- one of `auto`, `linked_url`, `import_file`, `none`, `required` -- default `auto`
+
+### `add url`
+
+ - `<url>`
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+ - `--attach-mode` -- one of `auto`, `linked_url`, `import_file`, `none`, `required` -- default `auto`
+
+### `add file`
+
+ - `--filepath` -- **required**
+ - `--title` -- Override title if metadata extraction misses
+ - `--item-type` -- default `document` -- Zotero item type for the new item (default: document)
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+
+### `add isbn`
+
+ - `<isbn>`
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+
+### `add pmid`
+
+ - `<pmid>` -- One PMID, or several comma-separated
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+ - `--attach-mode` -- one of `auto`, `linked_url`, `import_file`, `none`, `required` -- default `auto`
+
+### `add bibtex`
+
+ - `--bibtex` -- Inline BibTeX (use - to read from stdin)
+ - `--file` -- Path to a .bib/.bibtex file
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+ - `--attach-mode` -- one of `auto`, `linked_url`, `import_file`, `none`, `required` -- default `auto`
+
+### `add csl-json`
+
+ - `--json` -- Inline CSL JSON (use - to read from stdin)
+ - `--file` -- Path to a .json/.csljson file
+ - `--collections` -- Comma-separated collection keys, names, or paths
+ - `-c, --collection` -- Collection key, name, or parent/child path (repeatable; not comma-split, so names with commas work)
+ - `--tags` -- Tags (comma-separated, or a JSON array if a name has a comma)
+ - `--if-exists` -- one of `file`, `skip`, `duplicate` -- default `file` -- When the item already exists: 'file' (default) reuses it and adds missing collections/tags; 'skip' leaves it untouched; 'duplicate' creates a new item anyway
+ - `--create-collections` -- Create collections that don't exist yet (including parent/child paths)
+ - `--attach-mode` -- one of `auto`, `linked_url`, `import_file`, `none`, `required` -- default `auto`
+
+## `collections (alias: coll)`
+
+### `collections create`
+
+ - `<name>`
+ - `--parent`
+
+### `collections update`
+
+ - `<collection_key>`
+ - `--name` -- New name
+ - `--parent` -- Key or name of the new parent collection
+ - `--top-level` -- Move out of any parent collection
+
+### `collections search`
+
+ - `<query>`
+
+### `collections manage`
+
+ - `--item-keys` -- **required**
+ - `--add-to`
+ - `--remove-from`
+
+## `edit`
+
+ - `<item_key>`
+ - `--title`
+ - `--creators` -- JSON array of creators
+ - `--date`
+ - `--publication-title`
+ - `--abstract`
+ - `--tags` -- Replace all tags (comma-separated, or a JSON array if a name has a comma)
+ - `--add-tags` -- Tags to add (comma-separated, or a JSON array if a name has a comma)
+ - `--remove-tags` -- Tags to remove (comma-separated, or a JSON array if a name has a comma)
+ - `--collections` -- Replace the item's collections (comma-separated keys); use `collections manage --add-to` to add without removing
+ - `--collection-names` -- Replace the item's collections (comma-separated names)
+ - `--doi`
+ - `--url`
+ - `--extra`
+ - `--volume`
+ - `--issue`
+ - `--pages`
+ - `--publisher`
+ - `--issn`
+ - `--language`
+ - `--short-title`
+ - `--edition`
+ - `--isbn`
+ - `--book-title`
+ - `--field` -- Set a Zotero metadata field (repeatable; overrides named flags; NAME= clears a field)
+
+## `duplicates`
+
+### `duplicates find`
+
+ - `--method` -- one of `title`, `doi`, `both` -- default `both`
+ - `--collection`
+ - `--limit` -- default `50`
+
+### `duplicates merge`
+
+ - `--keeper-key` -- **required**
+ - `--duplicate-keys` -- **required**
+ - `--dry-run`
+
+## `db`
+
+### `db update`
+
+ - `--force-rebuild`
+ - `--limit`
+ - `--fulltext`
+ - `--allow-mass-deletion`
+ - `--config-path`
+ - `--db-path`
+ - `--openai-batch` / `--no-openai-batch` -- mutually exclusive
+
+### `db batch-status`
+
+ - `--batch-id`
+ - `--config-path`
+
+### `db batch-import`
+
+ - `--batch-id`
+ - `--config-path`
+
+### `db status`
+
+ - `--config-path`
+
+### `db inspect`
+
+ - `--limit` -- default `20`
+ - `--filter-text`
+ - `--show-documents`
+ - `--stats`
+ - `--config-path`
+
+## `library`
+
+ - `<action>` -- one of `switch`, `list`, `reset`
+ - `--library-id`
+ - `--library-type` -- one of `user`, `group` -- default `group`
+
+## `outline`
+
+ - `<item_key>`
+
+## `read`
+
+ - `<item_key>`
+ - `--start-page` -- First page (required unless --find is given)
+ - `--end-page` -- Defaults to --start-page (a single page); with --find, the last page
+ - `--find` -- Locate TEXT instead of reading: ranked pages with short snippets (ignores case, punctuation and hyphenation); --start-page/--end-page narrow the search
+ - `--context` -- default `12` -- With --find: words of context on each side of a match (1-60, default 12)
+ - `--format` -- one of `text`, `image` -- default `text` -- image writes PNG page images (up to 10 pages) for math, figures and tables
+ - `--rect` -- With --format image: crop the start page to x,y,width,height (normalized 0-1), e.g. from `zotero-cli layout`
+ - `--out` -- With --format image: directory for the PNG files (default: a new temporary directory)
+
+## `attach`
+
+ - `<item_key>`
+ - `--file` -- Path to a local file to upload
+ - `--url` -- URL to attach as a link
+ - `--filename` -- Override the stored filename
+
+## `delete`
+
+### `delete item`
+
+ - `<item_key>`
+ - `--allow-note` -- Permit deleting a note (refused otherwise, since a note is usually deleted by mistake)
+
+### `delete collection`
+
+ - `<collection_key>`
+
+### `delete annotation`
+
+ - `<annotation_key>`
+
+## `export`
+
+ - `--item-keys` -- Comma-separated item keys
+ - `--collection` -- Export a whole collection instead
+ - `--style` -- default `apa` -- CSL style (default: apa)
+ - `--format` -- one of `bib`, `citation`, `bibtex` -- default `bib`
+
+## `related`
+
+ - `<identifier>` -- DOI, arXiv ID, or Zotero item key
+ - `--direction` -- one of `references`, `citations`, `both` -- default `both`
+ - `--limit` -- default `20`
+
+## `coverage`
+
+ - `--collection` -- Scope to one collection
+ - `--limit` -- default `200`
+
+## `synthesize`
+
+ - `--collection`
+ - `--tag` -- Tags to scope by (comma-separated, or a JSON array if a name has a comma)
+ - `--limit` -- default `200`
+ - `--format` -- one of `markdown`, `json` -- default `markdown`
+
+## `path`
+
+ - `<item_key>`
+
+## `open`
+
+ - `<item_key>` -- Item or attachment key (not needed with --annotation)
+ - `--page` -- 1-based page position, as `read` counts pages
+ - `--annotation` -- Annotation key to jump to and select
+
+## `batch`
+
+ - `--item-keys` -- Comma-separated item keys
+ - `--query` -- Select items by search query instead
+ - `--tag` -- Tags to select by (comma-separated, or a JSON array if a name has a comma)
+ - `--add-tags` -- Tags to add (comma-separated, or a JSON array if a name has a comma)
+ - `--remove-tags` -- Tags to remove (comma-separated, or a JSON array if a name has a comma)
+ - `--set` -- JSON object of Extra keys to set
+ - `--remove-keys` -- Comma-separated Extra keys to remove
+ - `--limit` -- default `50` -- Most items to select by --query/--tag (at most 1000)

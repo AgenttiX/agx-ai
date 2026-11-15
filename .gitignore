@@ -6,6 +6,8 @@
 *.rmp
 !structure/logos/*.png
 __pycache__/
+# Skills synced from claude.ai
+agents/skills/synced/
 .idea/
 dev/
 dist/

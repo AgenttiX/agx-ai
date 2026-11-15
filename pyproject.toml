@@ -123,6 +123,7 @@ show_missing = true
 
 [tool.pyrefly]
 project-includes = [
+    "agents",
     "agx_ai",
     "structure",
     "tests",
