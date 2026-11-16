@@ -20,10 +20,11 @@ import html
 from pathlib import Path
 import re
 
+from agx_ai.convert.util import fmt_timestamp, tex_escape
+
 from .chat import attachments_markdown, chat_body, chat_title, error_text, message_text, ordered_messages, usage_text
 from .notes import resolve_notes
 from .sources import SourceRegistry, cite_inline, convert_citation_marks
-from .util import fmt_timestamp, tex_escape
 
 FENCE_RE: re.Pattern[str] = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
 DETAILS_RE: re.Pattern[str] = re.compile(r"<details\b([^>]*)>((?:(?!<details\b).)*?)</details>", re.S | re.I)

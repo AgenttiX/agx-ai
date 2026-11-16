@@ -77,11 +77,14 @@ JSON files that are not chat exports are reported and skipped.
 | `markdown.py` | Normalising message content and assembling the Markdown document |
 | `sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
 | `notes.py` | Loading full note texts from files or the Open WebUI API |
-| `fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
-| `build.py` | Running pandoc and latexmk |
-| `util.py` | Escaping, timestamps, subprocess helpers |
-| `resources/header.tex` | LaTeX preamble: fonts, code blocks, lists, headings, message headers |
-| `resources/filter.lua` | pandoc Lua filter: code blocks, task lists, tables, images, long words, emoji |
+| `build.py` | Turning one chat into a PDF |
+| `../convert/fonts.py` | Font discovery (incl. the emoji font) and filling in the LaTeX header |
+| `../convert/build.py` | Running pandoc and latexmk |
+| `../convert/util.py` | Escaping, timestamps, subprocess helpers |
+| `../convert/resources/header.tex` | LaTeX preamble: fonts, code blocks, lists, headings, message headers |
+| `../convert/resources/filter.lua` | pandoc Lua filter: code blocks, task lists, tables, images, long words, emoji |
+
+The modules in [`../convert/`](../convert/) are shared with [`claude2pdf`](../claude2pdf/README.md).
 
 ## Requirements
 
@@ -92,8 +95,8 @@ JSON files that are not chat exports are reported and skipped.
   `needspace`, `mathtools`, `cancel`, `braket` and optionally `mhchem`
 * Fonts: Noto Serif / Noto Sans / Noto Sans Mono (falls back to TeX Gyre and
   Latin Modern) and a colour emoji font. The emoji font is located with
-  `fc-list`, in `~/.local/share/fonts`, in a `fonts/` directory in this
-  directory or inside Flatpak runtimes; pass `--emoji-font PATH` to override.
+  `fc-list`, in `~/.local/share/fonts`, in `agx_ai/convert/fonts/`
+  or inside Flatpak runtimes; pass `--emoji-font PATH` to override.
   Only CBDT (Noto Color Emoji), COLRv0 (Twemoji Mozilla) and sbix fonts work
   with LuaLaTeX; COLRv1 fonts are skipped.
 

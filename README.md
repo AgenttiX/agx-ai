@@ -3,6 +3,8 @@
 [Structure of the setup](structure/README.md) as an SVG figure
 
 ## Server software stack
+- [Claude Code](https://code.claude.com/)
+  - [claude2pdf](agx_ai/claude2pdf/README.md): convert sessions to PDF
 - [GPT Researcher](https://docs.gptr.dev/)
 - [LiteLLM](https://www.litellm.ai/)
   - Routes requests to multiple backends, including both cloud services and local models on multiple devices.

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
-from .util import fmt_timestamp, tex_escape
+from agx_ai.convert.util import fmt_timestamp, tex_escape
 
 # Open WebUI's notes list API (used by the note picker) truncates the note
 # Markdown to this many characters; the chat export then carries only that.

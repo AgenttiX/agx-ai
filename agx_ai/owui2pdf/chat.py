@@ -6,7 +6,7 @@ import contextlib
 import json
 from pathlib import Path
 
-from .util import md_escape_inline
+from agx_ai.convert.util import md_escape_inline
 
 
 def load_chats(path: Path) -> list[dict]:

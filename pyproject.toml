@@ -60,6 +60,7 @@ dependencies = [
 ]
 
 [project.scripts]
+claude2pdf = "agx_ai.claude2pdf.cli:main"
 owui2pdf = "agx_ai.owui2pdf.cli:main"
 
 [project.urls]
@@ -249,6 +250,12 @@ force-sort-within-sections = true
     "N999"  # invalid-module-name
 ]
 # Percent formatting is more readable than f-strings for LaTeX code with many braces.
+"agx_ai/claude2pdf/**" = [
+    "UP031"  # printf-string-formatting
+]
+"agx_ai/convert/**" = [
+    "UP031"  # printf-string-formatting
+]
 "agx_ai/owui2pdf/**" = [
     "UP031"  # printf-string-formatting
 ]

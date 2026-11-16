@@ -23,9 +23,10 @@ from typing import Any
 import pytest
 
 from agx_ai import owui2pdf
-from agx_ai.owui2pdf import build, chat, cli, fonts, markdown, notes, sources, util
+from agx_ai.convert import build, fonts, util
+from agx_ai.owui2pdf import chat, cli, markdown, notes, sources
 
-EXAMPLE = owui2pdf.PACKAGE_DIR / "example.json"
+EXAMPLE = Path(owui2pdf.__file__).resolve().parent / "example.json"
 TOOLS = ("pandoc", "latexmk", "lualatex", "biber")
 
 

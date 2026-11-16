@@ -1,124 +1,22 @@
-"""Running pandoc and latexmk to turn one chat into a PDF."""
+"""Turning one chat into a PDF."""
 
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
-import re
-import shutil
-import sys
-import tempfile
 
-from . import RESOURCE_DIR
-from .fonts import build_header
+from agx_ai.convert.build import build_pdf
+
 from .markdown import build_markdown
-from .util import run, which_or_die
-
-# pandoc's commonmark_x is close to the GFM dialect Open WebUI (marked) uses.
-# Extensions that marked does not have are switched off for fidelity.
-PANDOC_FORMAT = ("commonmark_x-smart-subscript-superscript-attributes-bracketed_spans"
-                 "-definition_lists-implicit_header_references-yaml_metadata_block-emoji"
-                 "+raw_attribute+autolink_bare_uris")
-
-
-def pandoc_langs() -> list[str]:
-    """List the syntax highlighting languages supported by pandoc."""
-    out = run(["pandoc", "--list-highlight-languages"]).stdout
-    return [line.strip() for line in out.splitlines() if line.strip()]
-
-
-def latex_errors(log: Path) -> list[str]:
-    """Extract the error lines from a LaTeX log."""
-    errors = [
-        line for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.startswith("!") or re.match(r"^\./doc\.tex:\d+: ", line)
-    ]
-    return list(dict.fromkeys(errors))
 
 
 def convert_chat(chat_item: dict, out_pdf: Path, opts: argparse.Namespace, emoji_font: str | None) -> bool:
     """Build ``out_pdf`` from one chat. Returns True when a PDF was written.
 
-    All intermediate files (Markdown, LaTeX sources, extracted images, TeX
-    auxiliary files, bibliography) are written to one build directory. Without
-    ``--keep-tex`` that is a fresh directory under ``$TMPDIR`` (usually /tmp)
-    created with mode 0700 and removed again when the conversion finishes,
-    also on errors. With ``--keep-tex`` it is ``<pdf name>_tex`` next to the
-    PDF, created with the same (umask-based) permissions as the PDF.
+    See :func:`build_pdf` for the build directory.
     """
-    if opts.keep_tex:
-        build_dir = (out_pdf.parent / (out_pdf.stem + "_tex")).resolve()
-        build_dir.mkdir(parents=True, exist_ok=True)
-        return _build(chat_item, out_pdf, opts, emoji_font, build_dir, keep=True)
-    # mkdtemp creates the directory with mode 0700; the context manager deletes it.
-    with tempfile.TemporaryDirectory(prefix="owui2pdf-") as tmp:
-        return _build(chat_item, out_pdf, opts, emoji_font, Path(tmp).resolve(), keep=False)
 
+    def markdown(media_dir: Path) -> tuple[str, dict, str | None]:
+        return build_markdown(chat_item, opts, media_dir)
 
-def _build(chat_item: dict, out_pdf: Path, opts: argparse.Namespace, emoji_font: str | None,
-           build_dir: Path, keep: bool) -> bool:
-    media_dir = build_dir / "media"
-    media_dir.mkdir(exist_ok=True)
-    md, meta, bib = build_markdown(chat_item, opts, media_dir)
-    if bib is not None:
-        which_or_die("biber")
-        (build_dir / "refs.bib").write_text(bib, encoding="utf-8")
-
-    (build_dir / "doc.md").write_text(md, encoding="utf-8")
-    (build_dir / "header.tex").write_text(build_header(opts, emoji_font, use_bib=bib is not None),
-                                          encoding="utf-8")
-    shutil.copyfile(RESOURCE_DIR / "filter.lua", build_dir / "filter.lua")
-    (build_dir / "langs.txt").write_text("\n".join(pandoc_langs()), encoding="utf-8")
-
-    fmt = PANDOC_FORMAT + ("+hard_line_breaks" if opts.hard_breaks else "")
-    cmd = [
-        "pandoc", "doc.md", "-f", fmt, "-t", "latex", "-s", "-o", "doc.tex",
-        "--wrap=none",
-        "-H", "header.tex",
-        "--lua-filter", "filter.lua",
-        "--highlight-style", opts.highlight_style,
-        "-V", f"papersize={opts.paper}",
-        "-V", f"fontsize={opts.font_size}",
-        "-V", "colorlinks=true", "-V", "urlcolor=NavyBlue", "-V", "linkcolor=NavyBlue",
-        "-V", "citecolor=NavyBlue",
-        "-M", f"title={meta['title']}",
-        "-M", f"date={meta['date']}",
-    ]
-    if meta["subtitle"]:
-        cmd += ["-M", f"subtitle={meta['subtitle']}"]
-    for kw in meta["keywords"]:
-        cmd += ["-M", f"keywords={kw}"]
-
-    env = dict(os.environ, OWUI_LANGS="langs.txt", max_print_line="10000")
-    res = run(cmd, cwd=build_dir, env=env)
-    if res.returncode != 0:
-        print(res.stderr, file=sys.stderr)
-        print(f"error: pandoc failed for '{meta['title']}'", file=sys.stderr)
-        return False
-    if res.stderr.strip() and opts.verbose:
-        print(res.stderr, file=sys.stderr)
-
-    lm = ["latexmk", "-lualatex", "-interaction=nonstopmode", "-file-line-error",
-          "-halt-on-error" if opts.strict else "-f", "doc.tex"]
-    res = run(lm, cwd=build_dir, env=env)
-    pdf = build_dir / "doc.pdf"
-    log = build_dir / "doc.log"
-    errors = latex_errors(log) if log.exists() else []
-    if not pdf.exists():
-        print(res.stdout[-4000:], file=sys.stderr)
-        print("\n".join(errors[:20]), file=sys.stderr)
-        print(f"error: LaTeX failed for '{meta['title']}' (build dir: {build_dir})", file=sys.stderr)
-        if not keep:
-            print("hint: rerun with --keep-tex to inspect the LaTeX sources", file=sys.stderr)
-        return False
-
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(pdf, out_pdf)
-    if errors:
-        print(f"warning: LaTeX reported {len(errors)} error(s) while building '{out_pdf}'; "
-              f"the PDF was produced but may have glitches:", file=sys.stderr)
-        for e in errors[:15]:
-            print("  " + e, file=sys.stderr)
-    print(f"wrote {out_pdf}")
-    return True
+    return build_pdf(markdown, out_pdf, opts, emoji_font)

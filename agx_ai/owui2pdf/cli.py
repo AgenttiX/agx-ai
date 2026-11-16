@@ -7,11 +7,12 @@ import os
 from pathlib import Path
 import sys
 
+from agx_ai.convert.fonts import find_emoji_font
+from agx_ai.convert.util import slugify, which_or_die
+
 from .build import convert_chat
 from .chat import chat_title, load_chats
-from .fonts import find_emoji_font
 from .notes import load_note_library
-from .util import slugify, which_or_die
 
 
 def build_parser() -> argparse.ArgumentParser:
