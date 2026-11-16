@@ -245,10 +245,6 @@ force-sort-within-sections = true
 "agx_ai/benchmark/**" = [
     "PT028"  # pytest-parameter-with-default-argument
 ]
-# The setup scripts are run directly, not imported.
-"agx_ai/claude/setup-claude.py" = [
-    "N999"  # invalid-module-name
-]
 # Percent formatting is more readable than f-strings for LaTeX code with many braces.
 "agx_ai/claude2pdf/**" = [
     "UP031"  # printf-string-formatting
