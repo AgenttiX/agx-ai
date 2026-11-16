@@ -10,7 +10,7 @@ import sys
 
 from agx_ai.convert.build import build_pdf
 from agx_ai.convert.fonts import find_emoji_font
-from agx_ai.convert.util import slugify, which_or_die
+from agx_ai.convert.util import date_time_options, slugify, which_or_die
 
 from .markdown import DEFAULT_LEVEL, DEFAULT_MAX_LINES, HEADER_EXTRA, LEVELS, build_markdown, options_for_level
 from .session import (
@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-lines", type=int, default=None, metavar="N",
                    help=f"truncate tool calls and results to N lines, 0 for no limit "
                         f"(default: {DEFAULT_MAX_LINES}, with -l full 0)")
+    date_time_options(p, "session")
     p.add_argument("-o", "--output", type=Path, help="output PDF (only for a single session)")
     p.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR,
                    help=f"directory for the output PDFs (default: {DEFAULT_OUTDIR}/ in the working directory)")

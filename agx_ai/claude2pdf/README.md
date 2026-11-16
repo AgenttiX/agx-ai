@@ -46,7 +46,20 @@ Below `full`, tool calls and results are truncated to 40 lines (`--max-lines N`,
 `--thinking` / `--no-thinking` and `--meta` / `--no-meta` override the level for the thinking and the injected text.
 Claude Code stores the thinking of most responses only as a signature, so usually little of it is shown.
 
+`--no-dates` leaves out the dates and `--no-times` the times of day (HH:MM), both below the title and in the
+message headers; with both, no timestamps are shown.
 The other options (fonts, paper, `--keep-tex`, `--strict`, …) are the same as in `owui2pdf`.
+
+## Link to the session
+
+If the session was connected to claude.ai (Remote Control, the desktop or mobile app), the session ID at the
+top of the PDF is a link to the session at `https://claude.ai/code/<session ID on claude.ai>`.
+The transcript does not contain that ID. While a session is running, Claude Code has it as `bridgeSessionId`
+in the process file `~/.claude/sessions/<pid>.json`, but it removes it when the session ends.
+Therefore the hook [`agx_ai/claude/session_urls.py`](../claude/session_urls.py), which runs at the start of every session and
+on every prompt (`hooks` in [`claude/settings.json`](../../claude/settings.json)), copies it to
+`~/.claude/session-urls.json`. claude2pdf reads both. Sessions that ended before the hook was set up, and sessions
+not connected to claude.ai, get no link.
 
 ## How it works
 

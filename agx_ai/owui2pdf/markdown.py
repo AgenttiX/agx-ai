@@ -20,7 +20,7 @@ import html
 from pathlib import Path
 import re
 
-from agx_ai.convert.util import fmt_timestamp, tex_escape
+from agx_ai.convert.util import datetime_format, fmt_timestamp, tex_escape
 
 from .chat import attachments_markdown, chat_body, chat_title, error_text, message_text, ordered_messages, usage_text
 from .notes import resolve_notes
@@ -274,7 +274,7 @@ def message_markdown(msg: dict, opts: argparse.Namespace, media_dir: Path, img_c
     meta_bits = []
     if role != "user" and msg.get("model"):
         meta_bits.append(str(msg["model"]))
-    ts = fmt_timestamp(msg.get("timestamp"))
+    ts = fmt_timestamp(msg.get("timestamp"), datetime_format(opts.show_dates, opts.show_times))
     if ts:
         meta_bits.append(ts)
     if opts.show_usage:
@@ -343,8 +343,8 @@ def build_markdown(chat_item: dict, opts: argparse.Namespace, media_dir: Path) -
     """Return (markdown document, pandoc metadata, bibtex or None) for one chat.
 
     ``opts`` needs the attributes ``show_usage``, ``show_sources``,
-    ``include_reasoning``, ``include_notes`` and ``user_paragraphs`` (the
-    parsed command line arguments work).
+    ``include_reasoning``, ``include_notes``, ``user_paragraphs``,
+    ``show_dates`` and ``show_times`` (the parsed command line arguments work).
     """
     chat = chat_body(chat_item)
     models = chat.get("models") or []
@@ -352,7 +352,7 @@ def build_markdown(chat_item: dict, opts: argparse.Namespace, media_dir: Path) -
     tags = (chat_item.get("meta") or {}).get("tags") or chat.get("tags") or []
     meta = {
         "title": chat_title(chat_item),
-        "date": fmt_timestamp(created),
+        "date": fmt_timestamp(created, datetime_format(opts.show_dates, opts.show_times)),
         "subtitle": ", ".join(str(m) for m in models),
         "keywords": [str(t) for t in tags if isinstance(t, (str, int))],
     }

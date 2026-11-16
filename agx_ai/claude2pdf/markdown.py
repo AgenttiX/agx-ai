@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 import re
 
-from agx_ai.convert.util import tex_escape
+from agx_ai.convert.util import datetime_format, tex_escape
 from agx_ai.owui2pdf.markdown import FENCE_RE, bookmark_preview, preprocess_markdown, raw_latex_block
 
 from .session import Event, SessionInfo, fmt_time, preview
@@ -249,8 +249,15 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
     """Return (Markdown document, pandoc metadata, None) for a session.
 
     ``opts`` needs the attributes ``level``, ``thinking``, ``meta`` and
-    ``max_lines`` (see :func:`options_for_level`).
+    ``max_lines`` (see :func:`options_for_level`), and ``show_dates`` and
+    ``show_times`` (False to leave out the dates or the times of day of the
+    messages and the session).
     """
+    fmt = datetime_format(opts.show_dates, opts.show_times)
+
+    def when(ts: str | None) -> str:
+        return fmt_time(ts, fmt)
+
     level = LEVELS.index(opts.level)
     show_tools = level >= LEVELS.index("tools")
     show_results = level >= LEVELS.index("results")
@@ -263,9 +270,9 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
     def claude_header(ev: Event) -> None:
         nonlocal in_claude
         if not in_claude:
-            meta = " · ".join(x for x in (ev.data.get("model", ""), fmt_time(ev.timestamp)) if x)
+            meta = " · ".join(x for x in (ev.data.get("model", ""), when(ev.timestamp)) if x)
             parts.append(header_block("claudeAssistantBg", "claudeAssistantFg", "Claude", meta,
-                                      f"Claude {fmt_time(ev.timestamp)}"))
+                                      f"Claude {when(ev.timestamp)}".rstrip()))
             in_claude = True
 
     for ev in events:
@@ -279,7 +286,7 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
             if ev.images:
                 body = (body + "\n\n" if body else "") + images_markdown(ev.images, media_dir, img_counter)
             preview_text = bookmark_preview(ev.text)
-            parts.append(header_block("owuiUserBg", "owuiUserFg", label, fmt_time(ev.timestamp),
+            parts.append(header_block("owuiUserBg", "owuiUserFg", label, when(ev.timestamp),
                                       f"User: {preview_text}" if preview_text else "User"))
             parts.append(body)
             in_claude = False
@@ -326,7 +333,7 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
                 continue
             if not opts.meta:
                 continue
-            parts.append(header_block("owuiSystemBg", "owuiSystemFg", ev.label, fmt_time(ev.timestamp), ev.label))
+            parts.append(header_block("owuiSystemBg", "owuiSystemFg", ev.label, when(ev.timestamp), ev.label))
             if ev.label in ("Skill instructions", "Compaction summary"):
                 parts.append(text_markdown(ev.text))
             else:
@@ -335,10 +342,12 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
                 parts.append(images_markdown(ev.images, media_dir, img_counter))
             in_claude = False
 
-    date = fmt_time(info.start)
-    if info.end and fmt_time(info.end) != date:
-        end = fmt_time(info.end)
-        date += " – " + (end[11:] if end[:10] == date[:10] else end)
+    date = fmt_time(info.start, fmt)
+    end = fmt_time(info.end, fmt)
+    if end and end != date:
+        if opts.show_dates and opts.show_times and info.start and info.end and info.start.date() == info.end.date():
+            end = fmt_time(info.end, "%H:%M")
+        date += " – " + end
     where = info.cwd + (f" ({info.git_branch})" if info.git_branch and info.git_branch != "HEAD" else "")
     meta = {
         "title": info.name,
@@ -346,11 +355,16 @@ def build_markdown(info: SessionInfo, events: list[Event], opts: argparse.Namesp
         "subtitle": where,
         "keywords": [],
     }
+    session_id = tex_escape(info.session_id)
+    if info.url:
+        session_id = "\\href{%s}{%s}" % (info.url, session_id)
     intro = " · ".join(x for x in (
-        f"Session {info.session_id}",
-        ", ".join(info.models),
-        f"Claude Code {info.version}" if info.version else "",
-        f"level: {opts.level}",
+        f"Session {session_id}",
+        *(tex_escape(x) for x in (
+            ", ".join(info.models),
+            f"Claude Code {info.version}" if info.version else "",
+            f"export level: {opts.level}",
+        )),
     ) if x)
-    parts.insert(0, raw_latex_block("{\\small\\color{owuiMeta}\\sffamily %s\\par}" % tex_escape(intro)))
+    parts.insert(0, raw_latex_block("{\\small\\color{owuiMeta}\\sffamily %s\\par}" % intro))
     return "\n\n".join(p for p in parts if p), meta, None

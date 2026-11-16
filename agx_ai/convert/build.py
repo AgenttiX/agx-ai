@@ -115,8 +115,9 @@ def _build(markdown: Callable[[Path], tuple[str, dict, str | None]], out_pdf: Pa
         "-V", "colorlinks=true", "-V", "urlcolor=NavyBlue", "-V", "linkcolor=NavyBlue",
         "-V", "citecolor=NavyBlue",
         "-M", f"title={meta['title']}",
-        "-M", f"date={meta['date']}",
     ]
+    if meta["date"]:
+        cmd += ["-M", f"date={meta['date']}"]
     if meta["subtitle"]:
         cmd += ["-M", f"subtitle={meta['subtitle']}"]
     for kw in meta["keywords"]:

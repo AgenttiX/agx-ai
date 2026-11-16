@@ -113,6 +113,7 @@ The modules in [`../convert/`](../convert/) are shared with [`claude2pdf`](../cl
 | `--include-notes` | Append the full text of referenced notes as an appendix |
 | `--notes PATH`, `--notes-url URL`, `--notes-token KEY` | Supply the complete text of referenced notes from files or from the server (see above) |
 | `--no-sources`, `--no-usage` | Omit citations and bibliography / token usage |
+| `--no-dates`, `--no-times` | Omit the dates (YYYY-MM-DD) / the times of day (HH:MM) of the chat and its messages; both together omit the timestamps |
 | `--main-font`, `--sans-font`, `--mono-font`, `--math-font` | Font overrides |
 | `--paper`, `--font-size`, `--highlight-style` | Layout tweaks |
 | `--strict` | Stop at the first LaTeX error instead of producing a best-effort PDF |

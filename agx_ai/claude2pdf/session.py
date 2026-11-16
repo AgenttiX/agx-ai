@@ -26,11 +26,15 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 import datetime as dt
+import functools
 import json
 from pathlib import Path
 import re
 import sys
 from typing import Any
+
+from agx_ai.claude import session_urls as urls
+from agx_ai.convert.util import DATETIME_FORMAT
 
 PROJECTS_DIR: Path = Path("~/.claude/projects").expanduser()
 
@@ -74,6 +78,7 @@ class SessionInfo:
     git_branch: str = ""
     version: str = ""
     models: list[str] = field(default_factory=list)
+    url: str = ""
 
     @property
     def name(self) -> str:
@@ -90,6 +95,17 @@ def project_dir(repo: Path) -> Path:
     return PROJECTS_DIR / re.sub(r"[^A-Za-z0-9]", "-", str(repo.expanduser().resolve()))
 
 
+@functools.cache
+def session_urls(sessions_dir: Path, urls_file: Path) -> dict[str, str]:
+    """Return the claude.ai links of the sessions, by local session ID.
+
+    The transcripts do not contain the ID of a session on claude.ai. It is read
+    from the running sessions and from the file of the hook that records it
+    (see :mod:`agx_ai.claude.session_urls`).
+    """
+    return urls.session_urls(sessions_dir, urls_file)
+
+
 def parse_timestamp(ts: str | None) -> dt.datetime | None:
     """Parse an ISO 8601 timestamp of a record into a local aware datetime."""
     if not ts:
@@ -100,10 +116,10 @@ def parse_timestamp(ts: str | None) -> dt.datetime | None:
         return None
 
 
-def fmt_time(ts: str | dt.datetime | None) -> str:
-    """Format a timestamp in local time as ``YYYY-MM-DD HH:MM``."""
+def fmt_time(ts: str | dt.datetime | None, fmt: str = DATETIME_FORMAT) -> str:
+    """Format a timestamp in local time with the strftime format ``fmt`` (default ``YYYY-MM-DD HH:MM``)."""
     t = parse_timestamp(ts) if isinstance(ts, str) or ts is None else ts
-    return t.strftime("%Y-%m-%d %H:%M") if t else ""
+    return t.strftime(fmt) if t and fmt else ""
 
 
 def preview(text: str, limit: int = 70) -> str:
@@ -369,6 +385,7 @@ def session_info(path: Path, records: list[dict] | None = None) -> SessionInfo:
     if parsed:
         info.start, info.end = min(parsed), max(parsed)
     info.models = list(models)
+    info.url = session_urls(urls.SESSIONS_DIR, urls.SESSION_URLS_FILE).get(info.session_id, "")
     return info
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 from agx_ai.convert.fonts import find_emoji_font
-from agx_ai.convert.util import slugify, which_or_die
+from agx_ai.convert.util import date_time_options, slugify, which_or_die
 
 from .build import convert_chat
 from .chat import chat_title, load_chats
@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--notes-token", metavar="KEY", help="API key for --notes-url")
     p.add_argument("--no-usage", dest="show_usage", action="store_false",
                    help="omit token usage in message headers")
+    date_time_options(p, "chat")
     p.add_argument("--emoji-font", help="path to a colour emoji font (CBDT/COLRv0 TTF)")
     p.add_argument("--no-emoji-font", action="store_true", help="do not use a colour emoji font")
     p.add_argument("--main-font", help="serif body font (default: Noto Serif)")

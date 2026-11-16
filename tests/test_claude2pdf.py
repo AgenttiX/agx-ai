@@ -9,12 +9,14 @@ import argparse
 import base64
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from typing import Any
 
 import pytest
 
+from agx_ai.claude import session_urls as urls
 from agx_ai.claude2pdf import cli, markdown, session
 from agx_ai.convert import build
 
@@ -77,6 +79,8 @@ def jsonl(tmp_path: Path) -> Path:
 
 
 def options(level: str = "results", **kw: Any) -> argparse.Namespace:
+    kw.setdefault("show_dates", True)
+    kw.setdefault("show_times", True)
     return markdown.options_for_level(argparse.Namespace(level=level, thinking=None, meta=None, max_lines=None,
                                                          **kw))
 
@@ -111,6 +115,27 @@ def test_session_info(jsonl: Path) -> None:
     assert info.start < info.end
     info.title = ""
     assert info.name == "Please <fix> the <b> bug. Second line"
+
+
+def test_session_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, jsonl: Path) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "1.json").write_text(json.dumps({"sessionId": "abcdef12-0000", "bridgeSessionId": "session_new"}),
+                                     encoding="utf-8")
+    monkeypatch.setattr(urls, "SESSIONS_DIR", sessions)
+    monkeypatch.setattr(urls, "SESSION_URLS_FILE", tmp_path / "session-urls.json")
+    info = session.session_info(jsonl)
+    assert info.url == "https://claude.ai/code/session_new"
+    records = session.read_records(jsonl)
+    md, _, _ = markdown.build_markdown(info, session.session_events(records), options(), tmp_path)
+    assert r"Session \href{https://claude.ai/code/session_new}{abcdef12-0000} ·" in md
+    # A recorded ID is used after the session has ended.
+    assert urls.record("abcdef12-0000", sessions, tmp_path / "session-urls.json")
+    (sessions / "1.json").unlink()
+    session.session_urls.cache_clear()
+    assert session.session_info(jsonl).url == "https://claude.ai/code/session_new"
+    monkeypatch.setattr(urls, "SESSION_URLS_FILE", tmp_path / "missing.json")
+    assert session.session_info(jsonl).url == ""
 
 
 def test_list_and_select(jsonl: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -159,6 +184,30 @@ def test_build_markdown_levels(jsonl: Path, tmp_path: Path, level: str, present:
     for text in absent:
         assert text not in md, text
     assert "Please \\<fix> the `<b>` bug." in md
+
+
+def test_build_markdown_times(jsonl: Path, tmp_path: Path) -> None:
+    records = session.read_records(jsonl)
+    info, events = session.session_info(jsonl, records), session.session_events(records)
+
+    def build(**kw: bool) -> tuple[str, str]:
+        md, meta, _ = markdown.build_markdown(info, events, options("results", **kw), tmp_path)
+        return md, meta["date"]
+
+    md, date = build()
+    assert re.fullmatch(r"2026-11-16 \d\d:\d\d – \d\d:\d\d", date)
+    assert "export level: results" in md
+    assert re.search(r"claude-test · 2026-11-16 \d\d:\d\d", md)
+    md, date = build(show_times=False)
+    assert date == "2026-11-16"
+    assert "claude-test · 2026-11-16}" in md
+    md, date = build(show_dates=False)
+    assert re.fullmatch(r"\d\d:\d\d – \d\d:\d\d", date)
+    assert "2026-11-16" not in md
+    md, date = build(show_dates=False, show_times=False)
+    assert date == ""
+    assert not re.search(r"\d\d:\d\d", md)
+    assert r"{User}{}{User: Please" in md
 
 
 def test_tool_use_markdown() -> None:

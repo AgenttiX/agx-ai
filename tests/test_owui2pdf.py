@@ -66,6 +66,12 @@ def test_fmt_timestamp() -> None:
     assert util.fmt_timestamp(None) == ""
     assert util.fmt_timestamp(0) == ""
     assert util.fmt_timestamp("yesterday") == "yesterday"
+    assert util.fmt_timestamp(seconds, "%H:%M") == expected[11:]
+    assert util.fmt_timestamp(seconds, "") == ""
+    assert util.datetime_format() == util.DATETIME_FORMAT
+    assert util.datetime_format(dates=False) == "%H:%M"
+    assert util.datetime_format(times=False) == "%Y-%m-%d"
+    assert util.datetime_format(False, False) == ""
 
 
 def test_slugify() -> None:
@@ -262,6 +268,15 @@ def test_message_markdown(tmp_path: Path) -> None:
     out = markdown.message_markdown(msg, options(), tmp_path, [0], None)
     assert r"\owuiheader{owuiUserBg}{owuiUserFg}{User (Mika)}" in out
     assert "> **Error:** failed" in out
+    stamp = util.fmt_timestamp(msg["timestamp"])
+    assert f"{{User (Mika)}}{{{stamp}}}" in out
+    date, time = stamp.split()
+    out = markdown.message_markdown(msg, options(show_times=False), tmp_path, [0], None)
+    assert f"{{User (Mika)}}{{{date}}}" in out
+    out = markdown.message_markdown(msg, options(show_dates=False), tmp_path, [0], None)
+    assert f"{{User (Mika)}}{{{time}}}" in out
+    out = markdown.message_markdown(msg, options(show_dates=False, show_times=False), tmp_path, [0], None)
+    assert r"\owuiheader{owuiUserBg}{owuiUserFg}{User (Mika)}{}" in out
     empty = markdown.message_markdown({"role": "assistant", "model": "m"}, options(), tmp_path, [0], None)
     assert "*(empty message)*" in empty
     assert "{owuiAssistantBg}" in empty
@@ -276,6 +291,9 @@ def test_build_markdown_example(tmp_path: Path) -> None:
     if bib is not None:
         assert r"\printbibliography" in md
         assert bib.startswith("@")
+    assert meta["date"]
+    assert len(markdown.build_markdown(item, options(show_times=False), tmp_path)[1]["date"]) == 10
+    assert markdown.build_markdown(item, options(show_dates=False, show_times=False), tmp_path)[1]["date"] == ""
     md2, _, bib2 = markdown.build_markdown(item, options(show_sources=False), tmp_path)
     assert bib2 is None
     assert r"\printbibliography" not in md2

@@ -136,6 +136,28 @@
       }
     }
   },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
+          }
+        ]
+      }
+    ]
+  },
   "remoteControlAtStartup": true,
   "statusLine": {
     "type": "command",

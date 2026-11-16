@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import re
 import shutil
@@ -33,9 +34,29 @@ def md_escape_inline(s: str) -> str:
     return re.sub(r"([\\`*_{}\[\]<>#|])", r"\\\1", s)
 
 
-def fmt_timestamp(ts: float | str | None) -> str:
-    """Open WebUI stores seconds, milliseconds or nanoseconds; normalise."""
-    if not ts:
+DATETIME_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def datetime_format(dates: bool = True, times: bool = True) -> str:
+    """Return the strftime format of ``YYYY-MM-DD HH:MM`` without the left out parts ("" for neither)."""
+    return " ".join(fmt for fmt, show in (("%Y-%m-%d", dates), ("%H:%M", times)) if show)
+
+
+def date_time_options(p: argparse.ArgumentParser, what: str) -> None:
+    """Add the options ``--no-dates`` and ``--no-times`` (``show_dates``, ``show_times``) to a parser."""
+    p.add_argument("--no-dates", dest="show_dates", action="store_false",
+                   help=f"omit the dates (YYYY-MM-DD) of the {what} and its messages; "
+                        "with --no-times, omit the timestamps altogether")
+    p.add_argument("--no-times", dest="show_times", action="store_false",
+                   help=f"omit the times of day (HH:MM) of the {what} and its messages")
+
+
+def fmt_timestamp(ts: float | str | None, fmt: str = DATETIME_FORMAT) -> str:
+    """Format a timestamp with the strftime format ``fmt``.
+
+    Open WebUI stores seconds, milliseconds or nanoseconds; normalise.
+    """
+    if not ts or not fmt:
         return ""
     try:
         ts = float(ts)
@@ -43,7 +64,7 @@ def fmt_timestamp(ts: float | str | None) -> str:
         return str(ts)
     while ts > 1e11:  # ms or ns -> s
         ts /= 1000.0
-    return dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    return dt.datetime.fromtimestamp(ts).strftime(fmt)
 
 
 def slugify(s: str) -> str:
