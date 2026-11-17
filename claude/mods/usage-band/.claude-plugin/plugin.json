@@ -1,0 +1,1 @@
+{ "name": "usage-band", "version": "0.1.0", "description": "Shows context fill and Claude usage limits above the prompt and in the status line", "types": "./types/index.d.ts" }
