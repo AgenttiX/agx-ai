@@ -4,9 +4,13 @@
 This applies to all projects on this host (the "Big Machine").
 - Git over SSH (fetch, pull, push, clone) uses keys from the user's SSH client via SSH agent forwarding.
   There are no usable private keys on this host.
-- If `SSH_AUTH_SOCK` is not set or `ssh-add -l` fails in the shell session, look for the agent socket in `~/.ssh`
-  (`ls ~/.ssh/*.sock`, e.g. `~/.ssh/agent-<short hostname>.sock`, a symlink to `/tmp/ssh-*/agent.*` created by the user's
-  SSH session) and use it: `SSH_AUTH_SOCK=~/.ssh/agent-....sock git push ...`. Check it with `ssh-add -l`.
+- If SSH or Git (e.g. `git pull`) fail due to missing or non-functional `SSH_AUTH_SOCK`, retry by running the command like this:
+  ```sh
+  ssh-add -l >/dev/null 2>&1 || for s in ~/.ssh/*.sock; do SSH_AUTH_SOCK=$s ssh-add -l >/dev/null 2>&1 && export SSH_AUTH_SOCK=$s && break; done; git pull ...
+  ```
+  - The SSH agent socket is `~/.ssh/agent-<short hostname>.sock`, which is a symlink to `/tmp/ssh-*/agent.*` created by the user's SSH session.
+    You can use it as `SSH_AUTH_SOCK=~/.ssh/agent-....sock git pull ...`, and check it with `ssh-add -l`.
+    This uses the current agent if it works, and otherwise the first working socket in `~/.ssh`:
   - The socket target is in `/tmp`, so in a sandboxed shell with its own `/tmp` the agent is unreachable
     ("Error connecting to agent: No such file or directory"). Then run the Git command outside the sandbox.
   - Don't use other agent sockets in `/tmp`, and don't try the `-sk` key files directly.
