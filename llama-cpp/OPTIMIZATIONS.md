@@ -258,6 +258,25 @@ What has given the largest gains, roughly in order:
   native was faster than WSL (+4-11 % tg, 4-6x faster loading).
 - ARM big.LITTLE (frame): do not build with `GGML_NATIVE` (it detects the small core).
 
+## Block-diffusion models (DiffusionGemma)
+
+DiffusionGemma 26B-A4B is not in upstream llama.cpp (2026-11-20); the images of
+[`../llama-cpp-diffusion-gemma`](../llama-cpp-diffusion-gemma/README.md) build the server of the draft pull request
+ggml-org/llama.cpp#24427 (rtx3090, radeon-vii).
+
+- **Memory:** the KV cache is full-size in all layers, also the sliding-window ones (~200 KiB per token with f16), and
+  the server adds an F16 copy of the embedding on the GPU (1.4 GiB). q8_0 halves the KV cache for ~8 % slower
+  denoising steps on CUDA; on rtx3090, 16384 tokens fit with q8_0 vs 8192 with f16.
+- **`n-cpu-moe`** works once the server passes the common model parameters on (the patch of the image): on
+  radeon-vii, 10 layers in RAM to fit 16384 tokens, ~4 % slower steps per layer (measured with a busy CPU).
+- The context size itself costs ~4 % per 8192 tokens per step (radeon-vii). `--diffusion-cuda-mmq-max-x 64` made no
+  difference on either GPU.
+- **Speed:** each denoising step is a forward pass over 256 tokens (~0.12 s on rtx3090, ~0.6 s on radeon-vii), 10-35
+  steps per block, so chat speed is ~106 t/s (rtx3090) and ~17 t/s (radeon-vii), 2-7 times slower than autoregressive
+  Gemma 4 26B-A4B with MTP. vLLM runs it 2.7 times as fast on rtx3090.
+- **Benchmarking:** use `bench_http --tests prompt chat depth`; the raw-completion `generation` test stops after a few
+  tokens without the chat template.
+
 ## Power, clocks and the OS
 
 - RTX 3070 "fell off the bus" (Xid 79) under long full-load prompts: a 170 W power limit or a clock lock

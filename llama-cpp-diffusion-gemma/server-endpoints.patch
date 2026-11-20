@@ -1,0 +1,78 @@
+--- a/examples/diffusion-gemma/diffusion-gemma-server.cpp
++++ b/examples/diffusion-gemma/diffusion-gemma-server.cpp
+@@ -765,12 +765,9 @@
+ 
+     SRV_INF("%s\n", "loading model");
+ 
+-    llama_model_params model_params = llama_model_default_params();
++    // the common model parameters, so that --n-cpu-moe, -ot, --tensor-split, --split-mode etc. apply
++    llama_model_params model_params = common_model_params_to_llama(params);
+     model_params.n_gpu_layers = params.n_gpu_layers >= 0 ? params.n_gpu_layers : 999;
+-    model_params.devices      = params.devices.data();
+-    model_params.use_mmap     = params.use_mmap;
+-    model_params.use_extra_bufts = !params.no_extra_bufts;
+-    model_params.no_host         = params.no_host;
+ 
+     diffusion_server srv;
+     srv.model = llama_model_load_from_file(params.model.path.c_str(), model_params);
+@@ -815,6 +812,15 @@
+     ctx_params.n_batch  = srv.n_ub;
+     ctx_params.n_ubatch = srv.n_ub;
+     ctx_params.no_perf  = params.no_perf;
++    // the KV cache types, flash attention, KV offload and threads of the command line
++    ctx_params.type_k          = params.cache_type_k;
++    ctx_params.type_v          = params.cache_type_v;
++    ctx_params.flash_attn_type = params.flash_attn_type;
++    ctx_params.offload_kqv     = !params.no_kv_offload;
++    ctx_params.op_offload      = !params.no_op_offload;
++    ctx_params.n_threads       = params.cpuparams.n_threads;
++    ctx_params.n_threads_batch = params.cpuparams_batch.n_threads == -1 ? params.cpuparams.n_threads
++                                                                        : params.cpuparams_batch.n_threads;
+     ctx_params.diffusion_self_cond_top_k = srv.diffusion.self_cond_top_k;
+     ctx_params.diffusion_input_gpu_groups = srv.diffusion.input_gpu_groups;
+     ctx_params.diffusion_fused_self_cond_embd = srv.diffusion.fused_self_cond_embd;
+@@ -1142,11 +1148,31 @@
+             });
+     });
+ 
+-    // POST /v1/completions (plain prompt)
+-    http.Post("/v1/completions", [&](const httplib::Request & req, httplib::Response & res) {
++    // POST /tokenize and /detokenize (llama-server analogues, for benchmark clients)
++    http.Post("/tokenize", [&srv](const httplib::Request & req, httplib::Response & res) {
+         json body;
+         try { body = json::parse(req.body); }
+         catch (const std::exception & e) { res.status = 400; res.set_content(error_json(std::string("invalid JSON: ") + e.what(), "invalid_request_error", 400).dump(), "application/json"); return; }
++        const std::string content = body.value("content", std::string());
++        const bool add_special = body.value("add_special", false);
++        res.set_content(json{{"tokens", common_tokenize(srv.vocab, content, add_special, true)}}.dump(), "application/json");
++    });
++    http.Post("/detokenize", [&srv](const httplib::Request & req, httplib::Response & res) {
++        json body;
++        try { body = json::parse(req.body); }
++        catch (const std::exception & e) { res.status = 400; res.set_content(error_json(std::string("invalid JSON: ") + e.what(), "invalid_request_error", 400).dump(), "application/json"); return; }
++        const std::vector<llama_token> tokens = body.value("tokens", std::vector<llama_token>());
++        res.set_content(json{{"content", common_detokenize(srv.vocab, tokens, false)}}.dump(), "application/json");
++    });
++
++    // POST /v1/completions (plain prompt), and /completion (llama-server's, with n_predict)
++    const auto completions = [&](const httplib::Request & req, httplib::Response & res) {
++        json body;
++        try { body = json::parse(req.body); }
++        catch (const std::exception & e) { res.status = 400; res.set_content(error_json(std::string("invalid JSON: ") + e.what(), "invalid_request_error", 400).dump(), "application/json"); return; }
++        if (!body.contains("max_tokens") && body.contains("n_predict")) {
++            body["max_tokens"] = body["n_predict"];
++        }
+         if (!body.contains("prompt") || !body["prompt"].is_string()) {
+             res.status = 400; res.set_content(error_json("'prompt' (string) is required", "invalid_request_error", 400).dump(), "application/json"); return;
+         }
+@@ -1162,7 +1188,9 @@
+             {"timings", timings_json(r)},
+         };
+         res.set_content(out.dump(), "application/json");
+-    });
++    };
++    http.Post("/v1/completions", completions);
++    http.Post("/completion", completions);
+ 
+     SRV_INF("server is listening on http://%s:%d\n", hostname.c_str(), port);
+     SRV_INF("%s\n", "all slots are idle");

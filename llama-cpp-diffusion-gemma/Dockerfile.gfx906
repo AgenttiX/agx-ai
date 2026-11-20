@@ -1,0 +1,41 @@
+# llama.cpp with DiffusionGemma support for gfx906 (Radeon VII, MI50, MI60) with ROCm, see README.md.
+# The same source as Dockerfile, built with HIP in mixa3607's ROCm image for gfx906 (https://github.com/mixa3607/ML-gfx906),
+# the ROCm version of ../llama-cpp-radeon-vii.
+# Built by ../.github/workflows/deploy-docker-llama-cpp-diffusion-gemma.yml.
+# Locally: docker build -f Dockerfile.gfx906 -t ghcr.io/agenttix/agx-ai/llama-cpp-diffusion-gemma-gfx906:latest .
+ARG ROCM_IMAGE=docker.io/mixa3607/rocm-gfx906:10.1-complete
+
+FROM ${ROCM_IMAGE} AS build
+
+ARG LLAMA_CPP_REPO=lnigam/llama.cpp
+ARG LLAMA_CPP_COMMIT=dd0cf04459b0c4f43aa6667dbc0879ac0cd50323
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential cmake curl ca-certificates libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN curl -fsSL "https://codeload.github.com/${LLAMA_CPP_REPO}/tar.gz/${LLAMA_CPP_COMMIT}" | tar xz --strip-components=1
+COPY server-endpoints.patch /tmp/
+RUN patch -p1 < /tmp/server-endpoints.patch
+
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    cmake -B build -DGGML_NATIVE=OFF -DGGML_HIP=ON -DGPU_TARGETS=gfx906 -DLLAMA_BUILD_TESTS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j"$(nproc)" \
+        --target llama-diffusion-gemma-server llama-diffusion-gemma-cli \
+    && mkdir -p /app \
+    && cp build/bin/llama-diffusion-gemma-server build/bin/llama-diffusion-gemma-cli /app/ \
+    && find build -name "*.so*" -exec cp -P {} /app/ \;
+
+FROM ${ROCM_IMAGE}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app /app
+ENV LD_LIBRARY_PATH=/app
+WORKDIR /app
+HEALTHCHECK CMD [ "curl", "-f", "http://localhost:8080/health" ]
+ENTRYPOINT [ "/app/llama-diffusion-gemma-server" ]

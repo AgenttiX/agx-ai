@@ -24,6 +24,12 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 | [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S` (better than [Unsloth Dynamic 3.1](#unsloth-dynamic-31) `UD-Q3_K_XL`), experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 31 t/s, 28 t/s at 36k, 23 t/s at 100k | 790 t/s at 16-100k, 940 t/s at 260k |
 | [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
 
+[DiffusionGemma](#diffusiongemma) 26B-A4B, Google's block-diffusion model, is not in upstream llama.cpp. It runs with
+the server of a draft pull request from
+[`docker-compose-diffusiongemma.yml`](docker-compose-diffusiongemma.yml) (`Q4_K_M`, q8_0 KV cache, 16384 tokens of
+context, 106 t/s in chat), but vLLM is 2.7 times as fast for it on this GPU and fits 6 times the context
+([`../vllm-rtx3090`](../vllm-rtx3090/README.md#diffusiongemma)).
+
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
 (`no-mmproj-offload = 1`) for the Gemma 4 31B models. Each preset has the context size for the other choice as a
 comment; see [Vision encoder on the CPU](#vision-encoder-on-the-cpu-no-mmproj-offload).
@@ -487,6 +493,49 @@ CPU, ctx 262144, q8_0 K and V, ub 2048, 24 threads):
   20 t/s on 2026-10-12). vLLM is still faster for this model on this GPU
   ([`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next)): chat 32 t/s, 32 t/s at 100k, 2050 t/s of prompt
   processing at 260k.
+
+## DiffusionGemma
+
+[DiffusionGemma 26B-A4B](https://huggingface.co/google/diffusiongemma-26B-A4B-it) (2026-11-20) is Google's
+block-diffusion variant of Gemma 4 26B-A4B: it fills a canvas of 256 tokens at once and refines it over up to 48
+denoising steps, each a forward pass over the whole canvas. It is not in upstream llama.cpp, so
+[`docker-compose-diffusiongemma.yml`](docker-compose-diffusiongemma.yml) runs `llama-diffusion-gemma-server` of the
+draft pull request [ggml-org/llama.cpp#24427](https://github.com/ggml-org/llama.cpp/pull/24427), built by
+[`../llama-cpp-diffusion-gemma`](../llama-cpp-diffusion-gemma/README.md) (one slot, an OpenAI-compatible API) with
+Unsloth's `Q4_K_M` (15.6 GiB). The server also keeps an F16 copy of the embedding on the GPU (1.4 GiB), and its KV
+cache is full-size in all layers (~200 KiB per token with f16), so only 8192 tokens of context fit with an f16 KV
+cache and 16384 with q8_0 (-c 32768 failed to allocate the compute buffers).
+
+Probes (two chat requests, one and two 256-token blocks; the time per denoising step from the server's timings):
+
+| Setting | Time per step | VRAM with the desktop |
+|---|---|---|
+| f16 KV, 4096 context | 115-119 ms | 21206 MiB |
+| f16 KV, 8192 context | 113-117 ms | 22104 MiB |
+| q8_0 KV, 8192 context | 122-127 ms | 21247 MiB |
+| **q8_0 KV, 16384 context (current)** | 122-128 ms | 22140 MiB |
+| `--diffusion-cuda-mmq-max-x 64` (recommended in the pull request) | no change | |
+
+The q8_0 KV cache costs ~8 % per step; it was chosen for twice the context. The number of steps per block depends on
+the content (10-35 in the probes), so the speed of single requests varies by a factor of 2-3.
+
+`bench_http.py --tests prompt chat depth --depth 6400 14000 --prompt-tokens 8192` (the raw-completion `generation`
+test does not work with this model, see [`../llama-cpp-diffusion-gemma`](../llama-cpp-diffusion-gemma/README.md)).
+"Generation" is the answer tokens over the denoising time (`timings.predicted_per_second`), "end to end" the answer
+tokens over the wall time of the request, prompt processing included:
+
+| Test | DiffusionGemma, q8_0 KV, 16384 context |
+|---|---|
+| Prompt processing, 8192 tokens | 2474 t/s |
+| Chat, 18 requests up to 512 tokens | 106.8 t/s (62.7-177.3), end to end 105.6 t/s |
+| 6.4k-token code context | 73.6 t/s, end to end 53.1 t/s (prompt 2461 t/s) |
+| 14k-token code context | 62.2 t/s, end to end 34.7 t/s (prompt 2180 t/s) |
+| Peak VRAM of the server | 20030 MiB |
+
+Autoregressive Gemma 4 26B-A4B with MTP ([`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini)) is 2 times
+as fast in chat (216 t/s), 2.5 times as fast at 6.4k tokens of context, processes prompts 1.8 times as fast and fits
+10 times the context. vLLM runs DiffusionGemma at 281 t/s end to end in chat with 98304 tokens of context
+([`../vllm-rtx3090`](../vllm-rtx3090/README.md#diffusiongemma)).
 
 ## Commands
 

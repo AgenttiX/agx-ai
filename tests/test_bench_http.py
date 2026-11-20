@@ -75,6 +75,10 @@ def test_timings_summary() -> None:
         "draft_acceptance": 75.0,
     }
     assert "draft_acceptance" not in bench_http.timings_summary({"draft_n": 0})
+    # With the wall time of the request: the end-to-end output speed.
+    assert bench_http.timings_summary({"predicted_n": 256, "wall_ms": 2000.0})["output_tps"] == 128.0
+    assert bench_http.output_tps_mean([{"output_tps": 10.0}, {"output_tps": 20.0}, {}]) == {"output_tps_mean": 15.0}
+    assert bench_http.output_tps_mean([{}]) == {}
 
 
 def test_synthetic_png() -> None:
@@ -151,6 +155,41 @@ def test_vllm_stream(fake_vllm: FakeServer) -> None:
     payload = next(p for method, path, p in fake_vllm.requests if path == "/v1/chat/completions")
     assert len(payload["cache_salt"]) == 16
     assert payload["stream"] is True
+
+
+def test_vllm_stream_wall_time(fake_vllm: FakeServer) -> None:
+    timings = bench_http.connect(fake_vllm.url, None, 5).chat(CHAT_MODEL, "one two three", 16)["timings"]
+    assert timings["wall_ms"] >= timings["prompt_ms"] > 0
+    assert bench_http.timings_summary(timings)["output_tps"] > 0
+
+
+def test_vllm_diffusion_retries_without_sampling_params() -> None:
+    message = "The temperature, min_p, seed, ... sampling parameters are not yet supported with diffusion models."
+    with FakeServer("vllm", seed_error=message) as fake:
+        server = bench_http.connect(fake.url, None, 5)
+        assert isinstance(server, bench_http.VllmServer)
+        out = server.chat(CHAT_MODEL, "one two three", 16)
+        assert out["text"] == "".join(REPLY)
+        assert server.drop_sampling_params
+        # Later requests leave the parameters out from the start.
+        server.chat(CHAT_MODEL, "one two three", 16)
+        chats = [p for _, path, p in fake.requests if path == "/v1/chat/completions"]
+        assert [("seed" in p) for p in chats] == [True, False, False]
+
+
+def test_vllm_stream_error() -> None:
+    with FakeServer("vllm", seed_error="something else is wrong") as fake:
+        server = bench_http.connect(fake.url, None, 5)
+        with pytest.raises(SystemExit, match="something else is wrong"):
+            server.chat(CHAT_MODEL, "one two three", 16)
+
+
+def test_llama_server_wall_time(fake_llama: FakeServer) -> None:
+    server = bench_http.connect(fake_llama.url, None, 5)
+    assert server.chat(CHAT_MODEL, "one two three", 16)["timings"]["wall_ms"] > 0
+    assert server.completion(CHAT_MODEL, "one two three", 8)["timings"]["wall_ms"] > 0
+    chat = bench_http.test_chat(server, CHAT_MODEL, 16, 1)
+    assert chat["output_tps_mean"] > 0
 
 
 def test_vllm_props(fake_vllm: FakeServer) -> None:

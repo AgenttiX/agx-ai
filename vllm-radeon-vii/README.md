@@ -387,6 +387,21 @@ prompt is processed again. The V2 model runner crashes with offloading (`Memory 
 _gather_block_tables_kernel`), so the V1 runner is used (`VLLM_USE_V2_MODEL_RUNNER=0`); it is as fast (Gemma: chat 109.1
 vs 111.5 t/s, the depth tests within 1 %). The offloading takes no GPU memory and no CPU time while idle.
 
+## DiffusionGemma (2026-11-20)
+
+[DiffusionGemma 26B-A4B](https://huggingface.co/google/diffusiongemma-26B-A4B-it), Google's block-diffusion variant
+of Gemma 4 26B-A4B, does not fit in the 16 GB with vLLM, so there is no configuration for it. The smallest checkpoint,
+[cyankiwi's AWQ int4](https://huggingface.co/cyankiwi/diffusiongemma-26B-A4B-it-AWQ-INT4), takes 15.36 GiB on the GPU
+without the vision tower (on the RTX 3090, see
+[`../vllm-rtx3090`](../vllm-rtx3090/README.md#diffusiongemma)): the dense MLPs, the self-conditioning MLP and the tied
+embedding/lm_head (1.4 GiB) are fp16. vLLM's runtime on this GPU takes another 1.0-1.35 GiB (see above). Quantizing
+the dense MLPs to int4 would save ~0.8 GiB, not enough for a KV cache. The self-conditioning of the denoising
+multiplies the previous step's token probabilities by the embedding matrix, so a quantized embedding like that of the
+Gemma 4 checkpoints would need changes to vLLM's model code. Not tried in the image.
+
+DiffusionGemma runs on this GPU with the llama.cpp of a draft pull request, with the experts of 10 layers in RAM, at
+17 t/s in chat: see [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md#diffusiongemma-2026-11-20).
+
 ## Other findings
 
 - `bench_http.py` and `quality_http.py` now support vLLM, and `vllm/test_server.py` starts test

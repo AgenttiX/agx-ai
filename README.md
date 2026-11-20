@@ -33,6 +33,7 @@ These are the configurations that run the local LLMs.
   - [NVIDIA RTX A4000 (2x 16 GB): PaperQA2 RAG](llama-cpp-rtx-a4000/README.md)
   - [NVIDIA RTX 3070 (8 GB)](llama-cpp-rtx3070/README.md)
   - [NVIDIA RTX 3090 (24 GB)](llama-cpp-rtx3090/README.md)
+  - [DiffusionGemma (draft pull request) for the RTX 3090 and the Radeon VII: custom containers](llama-cpp-diffusion-gemma/README.md)
   - [NVIDIA T550 Laptop GPU (4 GB) with for Docker Desktop on Windows](llama-cpp-t550/README.md)
   - [ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U) iGPU](llama-cpp-l14/README.md)
   - [ThinkPad T480 (Intel Core i7-8550U, NVIDIA GeForce MX150 2 GB) CPU + dGPU config](llama-cpp-t480/README.md)

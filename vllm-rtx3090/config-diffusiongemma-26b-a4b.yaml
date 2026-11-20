@@ -1,0 +1,32 @@
+# vllm serve --config for DiffusionGemma 26B-A4B (block diffusion) on the RTX 3090 of agx-z2e. Benchmarks: README.md
+# The model fills a canvas of 256 tokens at once and refines it over up to 48 denoising steps; vLLM supports it
+# natively. AWQ int4 (group size 32) of the experts and the attention, in compressed-tensors format; the dense MLPs,
+# the self-conditioning MLP and the tied embedding/lm_head are fp16 (15.4 GiB on the GPU).
+model: cyankiwi/diffusiongemma-26B-A4B-it-AWQ-INT4
+served-model-name: google/diffusiongemma-26b-a4b
+dtype: float16
+# Do not load the vision tower.
+language-model-only: true
+# The KV cache below holds 141030 tokens. Peak 21082 MiB with a 95000-token prompt (23584 MiB with the desktop).
+max-model-len: 98304
+# Set explicitly instead of gpu-memory-utilization: 0.88 ran out of memory after the CUDA graph capture. vLLM still
+# checks at startup that gpu-memory-utilization of the GPU memory is free.
+kv-cache-memory-bytes: 3700000000
+gpu-memory-utilization: 0.8
+# The dynamic causal attention of the diffusion model is implemented in the Triton and FlashAttention backends.
+# int8 with a scale per token and head is the format closest to llama.cpp's q8_0.
+kv-cache-dtype: int8_per_token_head
+attention-backend: TRITON_ATTN
+# One sequence at a time (more are untested): each one needs self-conditioning buffers of canvas x vocabulary
+# (256 x 262144) on the GPU.
+max-num-seqs: 1
+# The checkpoint's generation_config.json limits max_tokens to 256.
+generation-config: vllm
+# The sampler of Google's model card. Requests with temperature, seed or min_p are rejected (HTTP 400): the
+# denoising follows the model's own temperature schedule.
+hf-overrides: {"diffusion_sampler": "entropy_bound", "diffusion_entropy_bound": 0.1}
+diffusion-config: {"canvas_length": 256}
+enable-prefix-caching: true
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4

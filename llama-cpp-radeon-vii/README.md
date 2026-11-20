@@ -17,6 +17,11 @@ context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90
 [images and videos](#images-and-videos-2026-10-29). They are faster and fit more context than with
 [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#images-and-videos-2026-10-29).
 
+[DiffusionGemma](#diffusiongemma-2026-11-20) 26B-A4B, Google's block-diffusion model, runs with the server of a
+draft llama.cpp pull request from [`docker-compose-diffusiongemma.yml`](docker-compose-diffusiongemma.yml) (`Q4_K_M`,
+experts of 10 layers in RAM, q8_0 KV cache, 16384 tokens of context), but at only 17 t/s in chat, 7 times slower than
+autoregressive Gemma 4 26B-A4B. vLLM cannot fit it in 16 GB.
+
 The Gemma context is larger than the 77824 of [`../llama-cpp-rtx3070`](../llama-cpp-rtx3070), so that the same agentic
 workloads can be split between the two. Qwen3.8-27B is a dense model, so it is 4 times slower than the
 mixture-of-experts Gemma; see [Qwen3.8-27B](#qwen38-27b-2026-10-09). This file has the benchmarks behind the
@@ -543,6 +548,56 @@ contexts):
 | Peak VRAM | 16291 MiB | 16284 MiB |
 
 No errors in the logs.
+
+## DiffusionGemma (2026-11-20)
+
+[DiffusionGemma 26B-A4B](https://huggingface.co/google/diffusiongemma-26B-A4B-it) is Google's block-diffusion
+variant of Gemma 4 26B-A4B: it fills a canvas of 256 tokens at once and refines it over up to 48 denoising steps, each
+a forward pass over the whole canvas. It is not in upstream llama.cpp, so
+[`docker-compose-diffusiongemma.yml`](docker-compose-diffusiongemma.yml) runs `llama-diffusion-gemma-server` of the
+draft pull request [ggml-org/llama.cpp#24427](https://github.com/ggml-org/llama.cpp/pull/24427), built for gfx906 with
+the ROCm 10.1 of the image above by [`../llama-cpp-diffusion-gemma`](../llama-cpp-diffusion-gemma/README.md) (one
+slot, an OpenAI-compatible API). Its GPU sampling and device denoising loop work with HIP.
+
+The smallest GGUF is Unsloth's `Q4_K_M` (15.6 GiB), and the server also puts an F16 copy of the embedding on the GPU
+(1.4 GiB) for the self-conditioning. Its KV cache is full-size in all 30 layers (~1 GiB per 8192 tokens with q8_0). The
+pull request's server ignored `--n-cpu-moe` and the KV cache types; the patch of the image passes them on. With them,
+the experts of the first layers stay in RAM. The cost per denoising step, from two chat requests each (one and two
+blocks), all with a q8_0 KV cache:
+
+| Experts in RAM (`n-cpu-moe`) | Context | Time per step | VRAM |
+|---|---|---|---|
+| 6 | 4096 | 542-566 ms | 15474 MB |
+| 8 | 8192 | 569-600 ms | 15092 MB |
+| **10 (current)** | **16384** | 643-672 ms | 15130 MB |
+| 12 | 8192 | 663-694 ms | 13156 MB |
+| 12 | 24576 | 733 ms | 15167 MB |
+| 14 | 32768 | 702-739 ms | 15291 MB |
+
+These probes ran while a CUDA build used all the CPU cores, which slows the experts in RAM down, so the cost of
+`n-cpu-moe` is probably overstated (roughly 4 % per layer here). A larger context costs ~4 % per 8192 tokens.
+`--diffusion-cuda-mmq-max-x 64` made no difference. 10 layers and 16384 tokens of context are a compromise; with
+`n-cpu-moe` 14, 32768 tokens fit at a ~10 % slower step. The experts of 10 layers take ~4.4 GB of RAM (estimated from
+the tensor sizes).
+
+`bench_http.py --tests prompt chat depth --depth 6400 14000 --prompt-tokens 8192` with the CPU idle (the raw-completion
+`generation` test does not work with this model). "Generation" is the answer tokens over the denoising time, "end to
+end" over the wall time of the request, prompt processing included:
+
+| Test | DiffusionGemma, `n-cpu-moe` 10, q8_0 KV, 16384 context |
+|---|---|
+| Prompt processing, 8192 tokens | 409 t/s |
+| Chat, 18 requests up to 512 tokens | 16.9 t/s (13.2-20.4), end to end 16.7 t/s |
+| 6.4k-token code context | 14.0 t/s, end to end 9.6 t/s (prompt 390 t/s) |
+| 14k-token code context | 10.8 t/s, end to end 5.8 t/s (prompt 353 t/s) |
+| Peak VRAM | 15798 MiB of 16368 |
+
+Autoregressive Gemma 4 26B-A4B ([`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini)) is 7 times as fast
+in chat (~124 t/s), processes prompts ~3 times as fast and fits 5 times the context, all on the GPU. Each denoising
+step of 256 tokens takes ~0.6 s on this GPU, as long as processing ~250 tokens of a prompt, and a block needs 10-35
+steps: the Radeon VII has too little compute for block diffusion to pay off. On the RTX 3090, the same server takes
+~0.12 s per step (106 t/s in chat), and vLLM is faster still
+([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#diffusiongemma)).
 
 ## Commands
 

@@ -155,6 +155,14 @@ class Server:
         """Cut the text to its first n_tokens tokens."""
         return self.detokenize(model, self.tokenize(model, text)[:n_tokens])
 
+    def timed(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST the request and add its client-measured wall time in ms to the server's ``timings`` as ``wall_ms``."""
+        start = time.perf_counter()
+        out = self.request(path, payload)
+        if isinstance(out, dict) and isinstance(out.get("timings"), dict):
+            out["timings"]["wall_ms"] = 1000 * (time.perf_counter() - start)
+        return out
+
     def completion(self, model: str, prompt: str, n_predict: int) -> dict[str, Any]:
         """Raw completion (no chat template, so no thinking mode); returns the server's timings."""
         payload = {
@@ -165,7 +173,7 @@ class Server:
             "cache_prompt": False,  # measure real prompt processing, not a KV-cache hit
             "ignore_eos": True,  # always generate exactly n_predict tokens
         }
-        return self.request("/completion", payload)
+        return self.timed("/completion", payload)
 
     def chat(self, model: str, content: str, max_tokens: int, thinking: bool = True) -> dict[str, Any]:
         """Chat completion with the chat template and the server's sampling settings; returns the server's timings."""
@@ -178,7 +186,7 @@ class Server:
         }
         if not thinking:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
-        return self.request("/v1/chat/completions", payload)
+        return self.timed("/v1/chat/completions", payload)
 
     def chat_image(self, model: str, png: bytes, text: str, max_tokens: int) -> dict[str, Any]:
         """Chat completion with one PNG image (for models with a vision encoder, mmproj)."""
@@ -200,6 +208,10 @@ class Server:
         return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float"})
 
 
+# Request parameters that vLLM rejects for diffusion models (e.g. DiffusionGemma).
+UNSUPPORTED_DIFFUSION_PARAMS = ("seed", "temperature", "min_p", "min_tokens")
+
+
 class VllmServer(Server):
     """The same interface for a vLLM server, which has no ``timings``, ``/props`` or ``cache_prompt``.
 
@@ -210,6 +222,11 @@ class VllmServer(Server):
     draft acceptance of speculative decoding comes from the difference of the counters in ``/metrics`` before and
     after the request, so it is only exact for one request at a time.
     """
+
+    def __init__(self, url: str, api_key: str | None, timeout: float) -> None:
+        super().__init__(url, api_key, timeout)
+        # Set when the server rejects the sampling parameters of UNSUPPORTED_DIFFUSION_PARAMS.
+        self.drop_sampling_params: bool = False
 
     def text(self, path: str) -> str:
         """Fetch a plain-text (non-JSON) response."""
@@ -263,6 +280,8 @@ class VllmServer(Server):
         """
         payload = {"cache_salt": os.urandom(8).hex(), **payload, "stream": True,
                    "stream_options": {"include_usage": True}}
+        if self.drop_sampling_params:
+            payload = {k: v for k, v in payload.items() if k not in UNSUPPORTED_DIFFUSION_PARAMS}
         draft0, accepted0 = self.spec_counters()
         req = urllib.request.Request(self.url + path, data=json.dumps(payload).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
@@ -279,6 +298,14 @@ class VllmServer(Server):
                     if not line.startswith("data:") or line == "data: [DONE]":
                         continue
                     chunk = json.loads(line[5:])
+                    if "error" in chunk:
+                        message = str(chunk["error"].get("message", chunk["error"]))
+                        if "diffusion models" in message and not self.drop_sampling_params:
+                            # vLLM rejects seed and temperature for diffusion models (e.g. DiffusionGemma), whose
+                            # sampling follows a schedule of their own: retry without them.
+                            self.drop_sampling_params = True
+                            return self.stream(path, payload)
+                        raise SystemExit(f"Error in the stream of {path}: {message[:300]}")
                     usage = chunk.get("usage") or usage
                     for choice in chunk.get("choices", []):
                         delta = choice.get("delta") or {}
@@ -300,6 +327,7 @@ class VllmServer(Server):
             "prompt_per_second": prompt_n / (first - start),
             "predicted_n": predicted_n,
             "predicted_per_second": (predicted_n - 1) / (last - first) if predicted_n > 1 and last > first else 0.0,
+            "wall_ms": 1000 * (time.perf_counter() - start),
         }
         if draft1 > draft0:
             timings["draft_n"] = draft1 - draft0
@@ -513,9 +541,20 @@ def timings_summary(t: dict[str, Any]) -> dict[str, Any]:
         "generated_tokens": t.get("predicted_n"),
         "generation_tps": round(t.get("predicted_per_second") or 0, 1),
     }
+    if t.get("wall_ms"):
+        # Generated tokens over the wall time of the whole request, prompt processing included. The figure to compare
+        # for block-diffusion models (e.g. DiffusionGemma), which emit their tokens in blocks, so that the streaming
+        # timings of vLLM count the first block as prompt processing.
+        out["output_tps"] = round(1000 * (t.get("predicted_n") or 0) / t["wall_ms"], 1)
     if t.get("draft_n"):
         out["draft_acceptance"] = round(100 * t.get("draft_n_accepted", 0) / t["draft_n"], 1)
     return out
+
+
+def output_tps_mean(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """The mean ``output_tps`` of the runs, if they have it."""
+    out = [r["output_tps"] for r in runs if "output_tps" in r]
+    return {"output_tps_mean": round(statistics.mean(out), 1)} if out else {}
 
 
 def test_generation(server: Server, model: str, n_predict: int, repeat: int) -> dict[str, Any]:
@@ -542,6 +581,7 @@ def test_chat(server: Server, model: str, max_tokens: int, repeat: int) -> dict[
         "requests": len(runs),
         "max_tokens": max_tokens,
         "generation_tps_mean": round(statistics.mean(tps), 1),
+        **output_tps_mean(runs),
         "generation_tps_median": round(statistics.median(tps), 1),
         "generation_tps_min": min(tps),
         "generation_tps_max": max(tps),
@@ -567,6 +607,7 @@ def test_depth(server: Server, model: str, depth: int, max_tokens: int) -> dict[
         "max_tokens": max_tokens,
         "prompt_tps_mean": round(statistics.mean(r["prompt_tps"] for r in runs), 1),
         "generation_tps_mean": round(statistics.mean(tps), 1),
+        **output_tps_mean(runs),
         "generation_tps_min": min(tps),
         "generation_tps_max": max(tps),
     }
@@ -597,6 +638,7 @@ def test_edit(server: Server, model: str, depth: int) -> dict[str, Any]:
         "generated_tokens_mean": round(statistics.mean(r["generated_tokens"] or 0 for r in runs)),
         "prompt_tps_mean": round(statistics.mean(r["prompt_tps"] for r in runs), 1),
         "generation_tps_mean": round(statistics.mean(tps), 1),
+        **output_tps_mean(runs),
         "generation_tps_min": min(tps),
         "generation_tps_max": max(tps),
     }
@@ -799,6 +841,11 @@ ALL_TESTS = ["generation", "prompt", "concurrency", "embedding", "chat", "depth"
 DEFAULT_TESTS = ["generation", "prompt", "concurrency", "embedding"]
 
 
+def end_to_end(r: dict[str, Any]) -> str:
+    """The end-to-end output speed for the result table, if measured."""
+    return f", end to end {r['output_tps_mean']} tokens/s" if "output_tps_mean" in r else ""
+
+
 def main() -> int:
     """Parse the arguments, run the selected tests and store and print the result."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -968,26 +1015,29 @@ def main() -> int:
     print("\n| Test | Result |\n|---|---|")
     if g := result.get("generation"):
         acc = f", draft acceptance {g['draft_acceptance']} %" if "draft_acceptance" in g else ""
-        print(f"| Generation, 1 request, {g['generated_tokens']} tokens | **{g['generation_tps']} tokens/s**{acc} |")
+        out = f", end to end {g['output_tps']} tokens/s" if "output_tps" in g else ""
+        print(f"| Generation, 1 request, {g['generated_tokens']} tokens "
+              f"| **{g['generation_tps']} tokens/s**{out}{acc} |")
     if p := result.get("prompt_processing"):
         print(f"| Prompt processing, {p['prompt_tokens']} tokens | **{p['prompt_tps']} tokens/s** |")
     if ch := result.get("chat"):
         acc = f", draft acceptance {ch['draft_acceptance_mean']} %" if "draft_acceptance_mean" in ch else ""
         print(f"| Chat, {ch['requests']} requests, up to {ch['max_tokens']} tokens "
               f"| **{ch['generation_tps_mean']} tokens/s** "
-              f"(median {ch['generation_tps_median']}, {ch['generation_tps_min']}-{ch['generation_tps_max']}){acc} |")
+              f"(median {ch['generation_tps_median']}, {ch['generation_tps_min']}-{ch['generation_tps_max']})"
+              f"{end_to_end(ch)}{acc} |")
     for d in result.get("depth", []):
         acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
         print(f"| Code context of {d['prompt_tokens']} tokens, up to {d['max_tokens']} generated "
               f"| prompt **{d['prompt_tps_mean']} tokens/s**, "
               f"generation **{d['generation_tps_mean']} tokens/s** "
-              f"({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
+              f"({d['generation_tps_min']}-{d['generation_tps_max']}){end_to_end(d)}{acc} |")
     for d in result.get("edit", []):
         acc = f", draft acceptance {d['draft_acceptance_mean']} %" if "draft_acceptance_mean" in d else ""
         print(f"| Edit: {EDIT_FILE} copied with a change ({d['generated_tokens_mean']} tokens) after "
               f"{d['prompt_tokens']} prompt tokens | prompt **{d['prompt_tps_mean']} tokens/s**, "
               f"generation **{d['generation_tps_mean']} tokens/s** "
-              f"({d['generation_tps_min']}-{d['generation_tps_max']}){acc} |")
+              f"({d['generation_tps_min']}-{d['generation_tps_max']}){end_to_end(d)}{acc} |")
     for c in result["concurrency"]:
         mixed = c.get("concurrent_embedding")
         extra = f" + embeddings at {mixed['tokens_per_s']} tokens/s" if mixed else ""

@@ -78,6 +78,18 @@ the prompt length over the time to the first token, and generation the remaining
 to the last one. Each request gets its own `cache_salt` instead of `cache_prompt: false`, so that the prefix cache
 is not hit. The draft acceptance comes from the counters of `/metrics` before and after each request. vLLM does not
 report its arguments; `--server-config FILE` stores the YAML file given to `vllm serve --config` with the result.
+
+### Block-diffusion models
+
+Block-diffusion models such as DiffusionGemma generate a canvas of tokens (256) at once over several denoising steps,
+so they emit their tokens in blocks. vLLM streams each block as one chunk, which makes the time to the first token
+include the denoising of the first block and the generation speed cover only the later blocks. For all servers, the
+results therefore also have `output_tps` (`output_tps_mean`): the generated tokens over the wall time of the whole
+request, prompt processing included ("end to end" in the table). vLLM rejects `seed` and `temperature` for diffusion
+models; the script then retries without them. The llama.cpp server of DiffusionGemma
+([`../../llama-cpp-diffusion-gemma`](../../llama-cpp-diffusion-gemma/README.md)) reports the answer tokens over the
+denoising time as its generation speed. With either, use the `prompt`, `chat` and `depth` tests: the raw-completion
+`generation` test of a repeated paragraph does not make such a model write.
 `quality_http.py` works with vLLM in the same way.
 
 ### OpenVINO Model Server

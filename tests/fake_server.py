@@ -33,10 +33,12 @@ class FakeServer:
     """A fake server in a background thread. Use as a context manager; ``url`` is its base URL."""
 
     def __init__(self, kind: Kind = "llama", api_key: str | None = None, models: list[dict[str, Any]] | None = None,
-                 reasoning: bool = False) -> None:
+                 reasoning: bool = False, seed_error: str | None = None) -> None:
         self.kind: Kind = kind
         self.api_key: str | None = api_key
         self.reasoning: bool = reasoning
+        # If set, a streamed request with a seed gets this error message in the stream, like vLLM for diffusion models.
+        self.seed_error: str | None = seed_error
         self.vocab: dict[str, int] = {}
         self.words: list[str] = []
         self.requests: list[tuple[str, str, Any]] = []
@@ -201,6 +203,10 @@ class FakeServer:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
+                if server.seed_error and "seed" in payload:
+                    error = {"error": {"message": server.seed_error, "type": "BadRequestError", "code": 400}}
+                    self.wfile.write(f"data: {json.dumps(error)}\n\ndata: [DONE]\n\n".encode())
+                    return
                 for chunk in server.stream_chunks(chat, prompt_n, max_tokens):
                     self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                     self.wfile.flush()

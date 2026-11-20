@@ -1,0 +1,48 @@
+# DiffusionGemma 26B-A4B (block diffusion) with llama.cpp on the Radeon VII, on the same port as docker-compose.yml
+# (9932): only one of them fits on the GPU at a time. DiffusionGemma is not in upstream llama.cpp yet, so this runs the
+# llama-diffusion-gemma-server of a draft pull request, see ../llama-cpp-diffusion-gemma/README.md.
+# docker compose stop (here), then: docker compose -f docker-compose-diffusiongemma.yml up -d
+# Benchmarks: README.md (DiffusionGemma). vLLM cannot fit this model in 16 GB.
+services:
+  llama-cpp-radeon-vii-diffusiongemma:
+    # Built by ../.github/workflows/deploy-docker-llama-cpp-diffusion-gemma.yml.
+    # Locally: docker build -f Dockerfile.gfx906 -t <the image> ../llama-cpp-diffusion-gemma
+    image: ghcr.io/agenttix/agx-ai/llama-cpp-diffusion-gemma-gfx906:latest
+    container_name: llama-cpp-radeon-vii-diffusiongemma
+    # The API key of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env).
+    entrypoint: ["/bin/sh", "-c", "exec /app/llama-diffusion-gemma-server --api-key \"$$LLAMA_API_KEY\" \"$$@\"", "--"]
+    command: [
+      "--model", "/root/.cache/huggingface/hub/models--unsloth--diffusiongemma-26B-A4B-it-GGUF/snapshots/f4183a2c7a354128d02545752303c4354d165bf0/diffusiongemma-26B-A4B-it-Q4_K_M.gguf",
+      "--host", "0.0.0.0",
+      "--port", "9931",
+      "--n-gpu-layers", "99",
+      # The Q4_K_M weights (15.6 GiB) and the F16 copy of the embedding that the server puts on the GPU for
+      # self-conditioning (1.4 GiB) do not fit in 16 GB: the experts of the first 10 layers stay in RAM. Each two
+      # layers there make a denoising step ~8 % slower, and each 8192 tokens of context ~3 % (see README.md).
+      "--n-cpu-moe", "10",
+      # The KV cache is full-size in all layers (~1 GiB per 8192 tokens with q8_0).
+      "--ctx-size", "16384",
+      "--cache-type-k", "q8_0",
+      "--cache-type-v", "q8_0",
+      "--flash-attn", "on",
+      "--metrics",
+      "--slots",
+    ]
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    group_add:
+      - video
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    ports:
+      - "9932:9931"
+    volumes:
+      # Download first: hf download unsloth/diffusiongemma-26B-A4B-it-GGUF --include "*Q4_K_M*"
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9931/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -249,6 +249,26 @@ What has given the largest gains, roughly in order:
   and generation unchanged except +11-13 % past 100k tokens of context
   (see [`../vllm-rtx3090-hyperqwen/README.md`](../vllm-rtx3090-hyperqwen/README.md#gpu-unlock)).
 
+## Block-diffusion models (DiffusionGemma)
+
+DiffusionGemma 26B-A4B (rtx3090, [`config-diffusiongemma-26b-a4b.yaml`](../vllm-rtx3090/config-diffusiongemma-26b-a4b.yaml)),
+natively supported by vLLM 0.33.0:
+
+- The checkpoint: cyankiwi's AWQ int4 (compressed-tensors) takes 15.36 GiB without the vision tower (fp16 dense MLPs
+  and tied embedding). It does not fit radeon-vii's 16 GB. NVFP4 and FP8 need matrix units that Ampere lacks.
+- `generation-config: vllm` (the checkpoint limits `max_tokens` to 256), `hf-overrides` with the entropy-bound sampler
+  and `diffusion-config: {"canvas_length": 256}` as in Google's recipe.
+- The int8 KV cache with `TRITON_ATTN` works. The KV cache of 3.7 GB holds 141030 tokens (98304 of context), as the
+  sliding-window layers do not grow with the context. `gpu-memory-utilization: 0.88` ran out of memory after the CUDA
+  graph capture; set `kv-cache-memory-bytes`.
+- Requests must not have `temperature`, `seed`, `min_p` or `min_tokens` (HTTP 400, also inside a stream).
+- Speed on rtx3090: 281 t/s end to end in chat, 148 t/s from the second block on at 32k tokens of context, prompt
+  processing 2100-2500 t/s: as fast in chat as autoregressive Gemma 4 26B-A4B with MTP, but with 2.4 times slower
+  prompt processing and 60 % of its context. 2.7 times as fast as llama.cpp's draft implementation.
+- The stream sends each 256-token block as one chunk, so compare the end-to-end speed (`output_tps` in
+  `bench_http`) rather than the generation speed between chunks.
+- Not tried: `max-num-seqs` > 1, FULL CUDA graphs.
+
 ## vLLM or llama.cpp?
 
 - **vLLM won:** Qwen3.8-27B on the RTX 3090 (+52 % context, 65-155 % faster tg; hyperqwen faster still), throughput

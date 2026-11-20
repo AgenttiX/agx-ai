@@ -27,6 +27,7 @@ left 0.8-1.0 GiB free:
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
 | [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 32.4 t/s | 33 / 33 / 32 t/s, 52 t/s in code edits | 1750 t/s at 6.4k, 2050 t/s at 260k |
+| [`config-diffusiongemma-26b-a4b.yaml`](config-diffusiongemma-26b-a4b.yaml) | [DiffusionGemma](#diffusiongemma) 26B-A4B AWQ int4 (block diffusion), no MTP | int8 | 98304 | 281 t/s end to end | 194 / 148 t/s, 80 t/s at 64k (after the first 256-token block) | 2120 t/s at 6.4k, 1650 t/s at 64k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#results-of-the-current-presets)):
 
@@ -40,6 +41,9 @@ left 0.8-1.0 GiB free:
 - **Gemma 4 31B: llama.cpp is much better.** It fits 1.5 times the context (61440 vs 40960) with MTP and generates
   twice as fast (77 vs 36 t/s in chat). The dense 31B model leaves vLLM no room for the MTP drafter next to a useful
   context (see [Gemma 4 31B](#gemma-4-31b)).
+- **DiffusionGemma: vLLM is much better.** It generates 2.7 times as fast in chat (281 vs 106 t/s end to end) and
+  fits 6 times the context (98304 vs 16384), as llama.cpp's draft implementation keeps a full-size KV cache in all
+  layers. llama.cpp processes 8k-token prompts faster (2470 vs 1750 t/s). See [DiffusionGemma](#diffusiongemma).
 - **Qwen3.8-Flash-Next: vLLM is better, except for images.** Both fit the full 262144 tokens of context and generate
   ~27-32 t/s in chats, bound by the memory bandwidth of the CPU (vLLM: 52 t/s when copying code with MTP). vLLM stays at ~28 t/s up to 100k tokens of context
   (llama.cpp: 20 t/s at 100k), processes prompts 2.4-2.8 times as fast (1650-2090 vs 600-780 t/s) and supports
@@ -452,6 +456,57 @@ Results with the settings of 2026-10-14 (24 CPU pool threads; `--tests generatio
 | Video 30 s 1080p | 35.4 s until the first token (5999 tokens) | not supported |
 | Peak VRAM | 20876 MiB | 20618 MiB |
 | RAM | 71 GiB container limit (56.4 GiB of experts, 1.7 GiB vision tower, 1.2 GiB token embedding, up to ~1.5 GiB more for a video) | ~66 GB |
+
+## DiffusionGemma
+
+[DiffusionGemma 26B-A4B](https://huggingface.co/google/diffusiongemma-26B-A4B-it) (2026-11-20) is Google's
+block-diffusion variant of Gemma 4 26B-A4B: it fills a canvas of 256 tokens at once and refines it over up to 48
+denoising steps, each a forward pass over the whole canvas, and then moves on to the next canvas. vLLM supports it
+natively. The configuration [`config-diffusiongemma-26b-a4b.yaml`](config-diffusiongemma-26b-a4b.yaml) uses the
+[cyankiwi AWQ int4](https://huggingface.co/cyankiwi/diffusiongemma-26B-A4B-it-AWQ-INT4) checkpoint (int4 experts and
+attention, fp16 dense MLPs and embedding; 15.36 GiB on the GPU), the sampler of the model card (entropy-bounded,
+`diffusion_entropy_bound` 0.1), an int8 KV cache with Triton attention and one sequence at a time. With 3.7 GB of KV
+cache (141030 tokens), the context is 98304 tokens; a 95000-token prompt peaked at 21082 MiB (23584 MiB with the
+desktop). `gpu-memory-utilization: 0.88` ran out of memory after the CUDA graph capture.
+
+Notes:
+
+- vLLM rejects `temperature`, `seed`, `min_p` and `min_tokens` in requests to diffusion models (HTTP 400, also inside
+  a stream): the denoising follows the model's own temperature schedule. `bench_http` now drops them and retries.
+- The stream sends each 256-token block as one chunk, so the time to the first token includes the denoising of the first
+  block. In the table below, "generation" is the speed from the second block on (only answers longer than 256
+  tokens), "end to end" the generated tokens over the wall time of the whole request, prompt processing included, and
+  prompt processing the prompt over the time to the first chunk (which includes the first block).
+
+[`../agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py), production containers stopped, desktop
+using 2.4 GiB:
+
+| | 98304 context, 3.7 GB KV (current) | 32768 context, 3.0 GB KV |
+|---|---|---|
+| Chat, 18 requests up to 512 tokens, end to end | **281 t/s** | 251 t/s |
+| Prompt processing, 8192 tokens | 1754 t/s | 1610 t/s |
+| 6.4k-token code context: prompt / generation / end to end | 2123 / 194 / 87 t/s | 1911 / 271 / 92 t/s |
+| 16k | - | 2490 / 180 / 54 t/s |
+| 30-32k | 2537 / 148 / 32 t/s | 2331 / 143 / 31 t/s |
+| 64k | 1647 / 80 / 11 t/s | - |
+| Peak VRAM (vLLM) | 21102 MiB | 20422 MiB |
+
+The two runs have the same settings except for the context and the KV cache size. Their differences at the same depth
+(e.g. 194 vs 271 t/s at 6.4k, three requests each) are probably noise: the number of denoising steps per block
+depends on the sampled content (up to 48; 10-35 per block in the probes with llama.cpp).
+
+**Compared with autoregressive Gemma 4 26B-A4B on this GPU** ([`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml),
+with MTP): DiffusionGemma is no faster in chat (281 t/s end to end vs 255 t/s generation) and generates about as fast
+with a long context (148 vs 130 t/s at 32k), but it processes prompts 2.4 times slower (2123 vs 5030 t/s at 6.4k) and
+fits 60 % of the context (98304 vs 163840). The 3-6 times speedups of the vLLM blog were measured with FP8 weights on
+an H100 and H200, which presumably compute a 256-token canvas almost as fast as one token; the RTX 3090 has less
+compute per byte of memory bandwidth, so a denoising step costs more relative to an autoregressive step. With
+llama.cpp, the model is 2.7 times slower on this GPU (see [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#diffusiongemma)).
+On the Radeon VII, it does not fit with vLLM (see
+[`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#diffusiongemma-2026-11-20)).
+
+Not tried: more than one sequence (`max-num-seqs`), FULL CUDA graphs, the NVFP4 and FP8 checkpoints (no FP8/FP4
+matrix units on Ampere).
 
 ## Commands
 

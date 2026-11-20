@@ -46,6 +46,8 @@ services:
       - ./config-qwen3.8-27b.yaml:/etc/vllm/config.yaml:ro
       # - ./config-gemma-4-26b-a4b-qat.yaml:/etc/vllm/config.yaml:ro
       # - ./config-gemma-4-31b-qat.yaml:/etc/vllm/config.yaml:ro
+      # DiffusionGemma (block diffusion). Download first: hf download cyankiwi/diffusiongemma-26B-A4B-it-AWQ-INT4
+      # - ./config-diffusiongemma-26b-a4b.yaml:/etc/vllm/config.yaml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
