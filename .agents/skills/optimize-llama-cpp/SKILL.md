@@ -20,8 +20,9 @@ loss of output quality. Every change is measured; nothing is set from assumption
 4. Record the hardware for the README (see AGENTS.md: OS, CPU, RAM type and frequency, GPU, architecture, VRAM,
    for laptops both GPUs, the dGPU power limit and PCIe width). Check the actual power limit
    (`nvidia-smi -q -d POWER`) and what else uses the GPU (desktop session, other servers).
-5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and remind the user to turn off the LiteLLM health check
-   on the agx-ai server during the benchmarks.
+5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and check that the LiteLLM health check is off
+   (`background_health_checks: false` in `litellm/config.yaml`); if not, remind the user to turn it off on the agx-ai
+   server during the benchmarks.
 
 ## Work on test servers
 

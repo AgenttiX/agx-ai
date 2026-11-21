@@ -253,16 +253,17 @@ text the model has a perplexity of ~300 and is chaotic, so that settings that ar
 a q8_0 KV cache. Use `quality_http.py` for such models; check the noise floor (e.g. `--variant "noise=-ub 256"`)
 before trusting KLD numbers for others.
 
-## Before benchmarking: turn off the LiteLLM health check
+## Before benchmarking: the LiteLLM health check must be off
 
 LiteLLM runs on Mika's personal agx-ai server, not on the machine being benchmarked, and routes to the llama.cpp
-servers over the network. Its background health check (`../../litellm/config.yaml`, `background_health_checks: true`,
-`health_check_interval: 60`) probes every model once a minute. On a llama-server router this reloads models that
-were just unloaded and adds requests to the slots, which shows up as unexpected reloads in
-`llama_cpp/bench_container.py` and as noise in `bench_http.py`, even though nothing on the benchmarked machine
-sends requests. Set `background_health_checks: false` on the agx-ai server (or stop its LiteLLM container) for the
-duration of the tests, and turn it back on afterwards. Claude Code: if models reload by themselves during a
-benchmark, remind Mika of this; `docker ps` on the benchmarked machine will not show LiteLLM.
+servers over the network. Its background health check (`background_health_checks` in
+[`../../litellm/config.yaml`](../../litellm/config.yaml)) would probe every model once per `health_check_interval`. On a
+llama-server router this reloads models that were just unloaded and adds requests to the slots, which shows up as
+unexpected reloads in `llama_cpp/bench_container.py` and as noise in `bench_http.py`, even though nothing on the
+benchmarked machine sends requests. It is currently disabled (`background_health_checks: false`, since 2026-10-13). Check
+that it still is before benchmarking; if it has been turned on again, set it to `false` on the agx-ai server (or stop
+its LiteLLM container) for the duration of the tests. Claude Code: if models reload by themselves during a benchmark,
+remind Mika of this; `docker ps` on the benchmarked machine will not show LiteLLM.
 
 ## Results so far
 

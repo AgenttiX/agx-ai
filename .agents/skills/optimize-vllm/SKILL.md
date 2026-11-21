@@ -20,8 +20,9 @@ loss of output quality. Every change is measured; nothing is set from assumption
    existing configuration (same GPU architecture, VRAM size or model) as a starting point.
 4. Record the hardware for the README (see AGENTS.md) and check what else uses the GPU (desktop session, other
    servers) and the actual power limit.
-5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and remind the user to turn off the LiteLLM health check
-   on the agx-ai server during the benchmarks.
+5. Read [`agx_ai/benchmark/README.md`](../../../agx_ai/benchmark/README.md) and check that the LiteLLM health check is off
+   (`background_health_checks: false` in `litellm/config.yaml`); if not, remind the user to turn it off on the agx-ai
+   server during the benchmarks.
 6. Check whether llama.cpp is known to be better for this model and hardware (the catalog's "vLLM or llama.cpp?"
    section and [`llama-cpp/OPTIMIZATIONS.md`](../../../llama-cpp/OPTIMIZATIONS.md)), and say so before investing in
    vLLM.
