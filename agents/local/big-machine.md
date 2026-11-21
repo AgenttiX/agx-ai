@@ -1,7 +1,10 @@
 # Local notes for the Big Machine
 
-## Git and SSH
 This applies to all projects on this host (the "Big Machine").
+
+@~/git/agx-ai/agents/local/zsh.md
+
+## Git and SSH
 - Git over SSH (fetch, pull, push, clone) uses keys from the user's SSH client via SSH agent forwarding.
   There are no usable private keys on this host.
 - If SSH or Git (e.g. `git pull`) fail due to missing or non-functional `SSH_AUTH_SOCK`, retry by running the command like this:
