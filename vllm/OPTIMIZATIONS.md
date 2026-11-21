@@ -118,6 +118,14 @@ What has given the largest gains, roughly in order:
   164/176 retrieval answers vs 166 for the base model's quant). llm-compressor 0.15 keeps the MTP module (BF16).
 - An int8 lm_head (HyperQwen's `prepare`) costs 526 MiB at the peak more than the GPTQ int4 one of its "fast"
   variant, which needs the drafter pipeline (captured hidden states) for each model.
+- **MoE fine-tunes without a 4-bit checkpoint** (Phai-A1-35B-1M, a Qwen3.6-35B-A3B fine-tune, rtx3090):
+  [`quantize_qwen35_moe_w4a16.py`](quantize_qwen35_moe_w4a16.py) uses llm-compressor's `model_free_ptq`
+  (round-to-nearest, 1.5 min on the GPU, little RAM): int4 experts, int8 dense projections and lm_head, int4
+  embedding. Unlike `oneshot`, it also quantizes the MTP layer (whose 256 experts would take 1.6 GB in BF16). Retrieval
+  152/176 vs 154 for llama.cpp's imatrix IQ4_XS; vLLM was 17-56 % faster than llama.cpp but fit 98304 instead of 151552
+  tokens.
+- **Fine-tunes published without their MTP head:** [`graft_mtp.py`](graft_mtp.py) copies the base model's MTP tensors
+  into a checkpoint directory of symlinks (Phai-A1-35B-1M: 43-65 % acceptance with 3 drafts, 99 % in code edits).
 
 ## CUDA graphs and compilation
 

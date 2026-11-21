@@ -48,6 +48,8 @@ services:
       # - ./config-gemma-4-31b-qat.yaml:/etc/vllm/config.yaml:ro
       # DiffusionGemma (block diffusion). Download first: hf download cyankiwi/diffusiongemma-26B-A4B-it-AWQ-INT4
       # - ./config-diffusiongemma-26b-a4b.yaml:/etc/vllm/config.yaml:ro
+      # Phai-A1-35B-1M. Build the checkpoint first, see README.md.
+      # - ./config-phai-a1-35b-1m.yaml:/etc/vllm/config.yaml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

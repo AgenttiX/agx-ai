@@ -1,0 +1,38 @@
+# vllm serve --config for Phai-A1-35B-1M on the RTX 3090 of agx-z2e. Benchmarks: README.md
+# A coding and agent fine-tune of Qwen3.6-35B-A3B (MoE, 3B active parameters). Built locally (see README.md): the MTP
+# head of Qwen3.6-35B-A3B grafted on with ../vllm/graft_mtp.py (the published checkpoint has none), then
+# ../vllm/quantize_qwen35_moe_w4a16.py: round-to-nearest int4 experts (also those of the MTP layer), int8 attention,
+# Gated DeltaNet and shared-expert projections and lm_head, int4 embedding (group size 128). 18.1 GiB on the GPU.
+model: /models/Phai-A1-35B-1M-W4A16-mtp
+served-model-name: PhaiModelLab/Phai-A1-35B-1M
+# Do not load the vision tower (0.9 GiB), which would cost ~65k tokens of context.
+language-model-only: true
+# The KV cache below holds 107730 tokens (the scheduler needs some extra blocks for the recurrent states). Peak
+# 21150 MiB with a 96804-token prompt. llama.cpp fits 151552 tokens of context on this GPU, but it is slower.
+max-model-len: 98304
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
+# startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
+kv-cache-memory-bytes: 1500000000
+gpu-memory-utilization: 0.8
+# int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (see config-qwen3.8-27b.yaml).
+kv-cache-dtype: int8_per_token_head
+attention-backend: CUSTOM
+# The recurrent state of the 30 Gated DeltaNet layers in FP16 instead of FP32 (as for Qwen3.8-27B).
+mamba-ssm-cache-dtype: float16
+# The prefill chunk.
+max-num-batched-tokens: 2048
+# Full CUDA graphs for decoding, for up to 4 sequences with 4 tokens each (MTP 3).
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 4, 8, 12, 16]}
+# Every sequence needs its own recurrent state for the 30 Gated DeltaNet layers.
+max-num-seqs: 4
+# MTP with the grafted head of Qwen3.6-35B-A3B: 3 drafted tokens are 17 % faster than 2 in code edits (360/341 vs
+# 307/291 t/s) and as fast in chats and at depth (acceptance 43-65 %, 99 % in edits).
+speculative-config: {"method": "mtp", "num_speculative_tokens": 3, "attention_backend": "CUSTOM"}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM (see config-qwen3.8-27b.yaml).
+kv-offloading-size: 16
+kv-offloading-backend: native
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as for Qwen3.6.

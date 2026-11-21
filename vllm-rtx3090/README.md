@@ -28,6 +28,7 @@ left 0.8-1.0 GiB free:
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
 | [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 32.4 t/s | 33 / 33 / 32 t/s, 52 t/s in code edits | 1750 t/s at 6.4k, 2050 t/s at 260k |
 | [`config-diffusiongemma-26b-a4b.yaml`](config-diffusiongemma-26b-a4b.yaml) | [DiffusionGemma](#diffusiongemma) 26B-A4B AWQ int4 (block diffusion), no MTP | int8 | 98304 | 281 t/s end to end | 194 / 148 t/s, 80 t/s at 64k (after the first 256-token block) | 2120 t/s at 6.4k, 1650 t/s at 64k |
+| [`config-phai-a1-35b-1m.yaml`](config-phai-a1-35b-1m.yaml) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) int4 experts + int8 dense layers, round-to-nearest, built locally; grafted MTP head, MTP 3 | int8 | 98304 | 215-227 t/s | 226-231 / 228 t/s (36.5k), 186 t/s at 94k; edits 341-360 t/s | 8730 t/s at 6.4k, 4580 t/s at 97k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#results-of-the-current-presets)):
 
@@ -50,6 +51,12 @@ left 0.8-1.0 GiB free:
   videos (~35 s for 30 s of 1080p). llama.cpp processes images faster (3.2 s vs ~8 s for 1280x960, as vLLM's vision
   tower runs on the CPU), starts in 1.5 min instead of 7, and uses the stock image. See
   [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#qwen38-flash-next).
+- **Phai-A1-35B-1M: vLLM is faster, llama.cpp fits more context.** vLLM generates 17-23 % faster in chats (215-227
+  vs 184 t/s), 46 % faster at 36.5k tokens of context (228 vs 156 t/s) and 37-56 % faster in code edits, and processes
+  prompts 1.4-1.7 times as fast. llama.cpp fits 1.5 times the context (151552 vs 98304) and keeps the vision encoder.
+  See [Phai-A1-35B-1M](#phai-a1-35b-1m).
+- **Inkling 2 Mini: not possible with vLLM on this GPU**, see
+  [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
 [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md), on test servers ([`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py),
@@ -508,6 +515,47 @@ On the Radeon VII, it does not fit with vLLM (see
 Not tried: more than one sequence (`max-num-seqs`), FULL CUDA graphs, the NVFP4 and FP8 checkpoints (no FP8/FP4
 matrix units on Ampere).
 
+## Phai-A1-35B-1M
+
+Added on 2026-11-21. [Phai-A1-35B-1M](https://huggingface.co/PhaiModelLab/Phai-A1-35B-1M), a coding and agent
+fine-tune of Qwen3.6-35B-A3B, has no published checkpoint that fits on this GPU (BF16 70 GB, FP8 35 GB, NVFP4 23.6 GB
+with a mean KLD of 0.147 according to its model card), and the published checkpoint has no MTP weights. The checkpoint
+of [`config-phai-a1-35b-1m.yaml`](config-phai-a1-35b-1m.yaml) is built locally (commands below) in two steps:
+
+1. [`../vllm/graft_mtp.py`](../vllm/graft_mtp.py) adds the MTP head of the base model Qwen3.6-35B-A3B to a checkpoint
+   directory whose other files are symlinks to the Phai checkpoint. The head drafts well for the fine-tune: 43-65 % of
+   3 drafts are accepted in chats and at depth, 99 % in code edits (as in
+   [prestonlogan's NVFP4 graft](https://huggingface.co/prestonlogan/Phai-A1-35B-1M-NVFP4): 74 %).
+2. [`../vllm/quantize_qwen35_moe_w4a16.py`](../vllm/quantize_qwen35_moe_w4a16.py) quantizes it with llm-compressor's
+   `model_free_ptq` (round-to-nearest, 1.5 min on the GPU, no calibration): int4 routed experts (also those of the MTP
+   layer, which llm-compressor's `oneshot` would leave in BF16, 1.6 GB), int8 attention, Gated DeltaNet and
+   shared-expert projections, MTP fc and lm_head, int4 embedding, group size 128. 18.1 GiB on the GPU with the MTP
+   layer, without the vision tower.
+
+Quality: the retrieval test of `quality_http.py` (176 questions at 8k-75k tokens, greedy, no MTP) got 152/176, against
+154/176 for llama.cpp's imatrix `IQ4_XS` with an f16 KV cache, 156 with q8_0 and 154 in its noise run; all 128 single
+lookups were right. The KL divergence against the llama.cpp runs is not meaningful: exactly one top token per answer
+differs (176 of 176), a systematic offset between the two servers' answer tokens, not the quantization. A GPTQ
+quantization might be more accurate, but the round-to-nearest one is not measurably worse in this test.
+
+Memory: the KV cache of 1.5 GB holds 107730 tokens (int8 per token and head; 10 full-attention layers, plus the MTP
+layer), for a `max-model-len` of 98304 with the margin that the recurrent states need. Peak 21150-21170 MiB with a
+96804-token prompt.
+
+Results (`bench_http.py`, 2 drafts unless noted; MTP 3 is the configuration):
+
+| Test | MTP 2 | MTP 3 |
+|---|---|---|
+| Chat, 12 requests | 226.9 t/s (196-269), acceptance 56 % | 214.6-220.6 t/s (158-293), acceptance 43 % |
+| Depth 6.4k / 16k / 36.5k / 60k / 94k | 226.2 / 220.0 / 228.0 / 215.1 / 186.2 t/s; prompt 8728 / 8070 / 6643 / 5526 / 4419 t/s | 230.9 / - / 229.2 / - / - t/s |
+| Edit after 2.3k / 34k tokens | 306.5 / 290.8 t/s | 359.6 / 340.6 t/s |
+| Full-context prompt (96804 tokens) | 4576 t/s | 4580 t/s |
+| 1 / 2 / 4 concurrent requests (1024 + 256 tokens) | 259 / 418 / 586 t/s in total | 303 / 374 / 593 t/s in total |
+| Peak VRAM of vLLM | 21170 MiB | 21150 MiB |
+
+MTP 3 is 17 % faster in code edits and as fast otherwise (the chat results vary by ±5 % between runs), so the
+configuration uses 3, with CUDA graphs for up to 16 tokens (4 sequences of 4 tokens).
+
 ## Commands
 
 ```sh
@@ -526,4 +574,10 @@ uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file ../
 uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file ../llama-cpp/llama-cpp.env \
     --tests retrieval --depth 16000 60000 --logprobs 0 --label "..."
 docker rm -f vllm-test && docker compose -f ../vllm-rtx3090/docker-compose.yml start
+# Phai-A1-35B-1M: graft the MTP head of the base model and quantize (the downloads as in ../llama-cpp-rtx3090/README.md)
+uv run ../vllm/graft_mtp.py PhaiModelLab/Phai-A1-35B-1M Qwen/Qwen3.6-35B-A3B ~/.cache/vllm-models/Phai-A1-35B-1M-mtp
+docker run --rm --gpus all -v ~/.cache:$HOME/.cache -v ~/.cache/vllm-models:/models -v $PWD/../vllm:/work -w /work \
+    --entrypoint sh ghcr.io/agenttix/agx-ai/vllm:latest -c "pip install -q llmcompressor==0.15.0 && \
+    python3 quantize_qwen35_moe_w4a16.py $HOME/.cache/vllm-models/Phai-A1-35B-1M-mtp /models/Phai-A1-35B-1M-W4A16-mtp && \
+    chown -R $(id -u):$(id -g) /models/Phai-A1-35B-1M-W4A16-mtp"
 ```

@@ -19,6 +19,8 @@ services:
       # - ./preset-qwen3.8-27b-uncensored.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-qwen3.8-flash-next.ini:/etc/llama.cpp/preset.ini:ro
       # - ./preset-terminal-rsi-27b.ini:/etc/llama.cpp/preset.ini:ro
+      # Phai-A1-35B-1M. Build the GGUF first, see README.md.
+      # - ./preset-phai-a1-35b-1m.ini:/etc/llama.cpp/preset.ini:ro
     deploy:
       resources:
         reservations:

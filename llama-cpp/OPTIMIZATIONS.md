@@ -212,6 +212,12 @@ What has given the largest gains, roughly in order:
   Qwen3.8-27B `UD-IQ4_XS` Dynamic 3.1 was also as fast, retrieval 124 vs 123/132, +95 MiB (~2k tokens of context on
   radeon-vii). Both new files have a mean KLD 10-30x the noise floor against the old ones (0.0037 and 0.0048), i.e.
   they are different weights, but without a BF16 reference it is unknown which is closer to the original model.
+- **Fine-tunes without an MTP head** (Phai-A1-35B-1M): graft the base model's head with
+  [`../vllm/graft_mtp.py`](../vllm/graft_mtp.py), convert and quantize with a published imatrix (it has no entries for
+  the MTP layer: fine for IQ4_XS, IQ3_XXS needs `--tensor-type 'blk\.40\.=iq4_xs'`). MTP then gave +14-36 % on the
+  RTX 3090. IQ3_XXS was clearly lossy for this MoE model (KLD 0.068 vs IQ4_XS, 19x the noise floor, 148 vs 154/176):
+  on the Radeon VII, IQ4_XS with 12 expert layers on the CPU was preferred over IQ3_XXS entirely on the GPU, although
+  it is 10-20 % slower and slows down to 27 t/s (from 64) when the CPU is busy.
 - QAT models (Gemma 4) are worth it: E4B QAT was ~39 % faster, accepted more drafts (66 vs 52 %) and had 2.7x the
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is

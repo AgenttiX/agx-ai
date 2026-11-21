@@ -23,6 +23,7 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 | [`preset-gemma-4-31b-qat-uncensored.ini`](preset-gemma-4-31b-qat-uncensored.ini) | Gemma 4 31B QAT Uncensored `Q4_K_M` | q8_0 | 37888 | 51 t/s, 40 t/s at 36k | 920 t/s at 16k, 790 t/s at 36k |
 | [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S` (better than [Unsloth Dynamic 3.1](#unsloth-dynamic-31) `UD-Q3_K_XL`), experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 31 t/s, 28 t/s at 36k, 23 t/s at 100k | 790 t/s at 16-100k, 940 t/s at 260k |
 | [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
+| [`preset-phai-a1-35b-1m.ini`](preset-phai-a1-35b-1m.ini) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) `IQ4_XS` built locally with a grafted MTP head, vision encoder on the CPU, MTP 3 | q8_0 | 151552 | 184 t/s, 156 t/s at 36.5k, 111 t/s at 100k; edits 219-263 t/s | 5210 t/s at 6.4k, 2740 t/s at 150k |
 
 [DiffusionGemma](#diffusiongemma) 26B-A4B, Google's block-diffusion model, is not in upstream llama.cpp. It runs with
 the server of a draft pull request from
@@ -537,6 +538,96 @@ as fast in chat (216 t/s), 2.5 times as fast at 6.4k tokens of context, processe
 10 times the context. vLLM runs DiffusionGemma at 281 t/s end to end in chat with 98304 tokens of context
 ([`../vllm-rtx3090`](../vllm-rtx3090/README.md#diffusiongemma)).
 
+## Phai-A1-35B-1M
+
+Added on 2026-11-21 with build b12242. [PhaiModelLab/Phai-A1-35B-1M](https://huggingface.co/PhaiModelLab/Phai-A1-35B-1M)
+is a coding and agent fine-tune of Qwen3.6-35B-A3B (a 35B MoE with 256 experts of which 8 are active, 3B active
+parameters; 40 layers, of which 10 have a KV cache and 30 a fixed-size Gated DeltaNet state) with YaRN (factor 4) for
+1M tokens of context. The same model runs with vLLM in [`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m)
+and on the Radeon VII in [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md#phai-a1-35b-1m-2026-11-21).
+
+**The GGUF is built locally.** The published checkpoint declares an MTP layer in its config but has no MTP weights,
+and none of the published GGUFs has both an MTP layer and an imatrix. [`../vllm/graft_mtp.py`](../vllm/graft_mtp.py)
+copies the MTP head of the base model Qwen3.6-35B-A3B into a checkpoint directory whose other files are symlinks to
+the Phai checkpoint (1.7 GB of new data), which `convert_hf_to_gguf.py` converts (to Q8_0, as the disk had no room for
+the 70 GB BF16 GGUF), and `llama-quantize` quantizes with mradermacher's imatrix of the model to `IQ4_XS` (17.85 GiB,
+18280 MiB). The imatrix has no entries for the grafted MTP layer, which is fine for `IQ4_XS`; `IQ3_XXS` needs
+`--tensor-type 'blk\.40\.=iq4_xs'` for it. The grafted head drafts well: 50-65 % of the drafts are accepted in chats
+and at depth, 99 % in code edits. The commands are [at the end](#commands).
+
+Measured with test servers and `bench_http.py`, q8_0 K and V caches and the vision encoder on the CPU unless noted:
+
+| Setting | Result |
+|---|---|
+| ubatch (`llama bench` pp2048 at depth 0 / 16k, q8_0) | 512: 5338 / 4414, 1024: 6518 / 5247, 2048: 7309 / 5761 t/s; tg 169 / 149 t/s for all |
+| KV cache (`llama bench` tg64 at depth 16k / 65k, ub 2048) | f16: 162 / 134 t/s, q8_0: 144 / 101 t/s (-11 % / -24 %); pp2048 3 % / 2 % slower |
+| Memory at 65536 tokens of context (peak with a full-context prompt) | q8_0, ub 2048, vision encoder on the GPU: 21680 MiB; f16: +596 MiB; ub 512: -892 MiB; vision encoder on the CPU: -1108 MiB |
+| Memory per 1024 tokens of context | q8_0: 21 MiB (with the f16 conversion buffers of the CUDA flash attention), f16: ~30 MiB |
+| Largest context at a peak of ~21.5 GiB (q8_0, vision encoder on the CPU) | ub 2048: ~113k, ub 1024: ~153k, ub 512: ~181k tokens; with f16 and ub 2048: ~80k |
+| MTP draft length (chat / depth 6.4k / 36.5k, t/s) | 1: 185 / 177 / 142, 2: 184 / 181 / 155, 3: 183 / 183 / 157, 4: 167 / 158 / 152; without MTP: 159 / 148 / 114 |
+| MTP 2 vs 3 in code edits (after 2.3k / 34k tokens) | 244 / 199 vs 263 / 219 t/s |
+
+- **KV cache:** with `quality_http.py --tests retrieval --logprobs 20` (176 questions at 8k-75k tokens, MTP off,
+  ctx 77824, ub 1024), q8_0 is slightly above the noise floor: mean KLD 0.0062 vs 0.0036 for ub 512, 99 % 0.149 vs
+  0.113, first token 0.029 vs 0.017, 8 vs 7 changed top tokens, 168 vs 169 answers the same as with f16. The
+  accuracy is the same (156, 154 and 154 of 176 for q8_0, f16 and the noise run; all single lookups right, the
+  two-step lookups at 60-75k tokens are hard for the model with thinking off). As for Gemma 4 26B-A4B (also an MoE
+  model), the effect is marginal, and q8_0 fits 1.4 times the context of f16 (ub 2048: ~113k vs ~80k), so the preset
+  uses q8_0 and gives up 11-24 % of generation speed at long contexts.
+- **ubatch 1024** is the compromise between prompt processing (+19-22 % over 512) and context (2048 would cost ~40k
+  tokens).
+- **MTP 3 drafts:** 2 and 3 are equal in chats and at depth; 3 is 8-10 % faster in code edits for 38 MiB more.
+- **Vision encoder on the CPU** (`no-mmproj-offload`): frees 1108 MiB, ~52k tokens of context; an image of 1280x960
+  takes 5.3-5.6 s (not measured with the encoder on the GPU; ~1.8 s for Qwen3.8-27B). The preset has the context for the GPU as a comment.
+- `IQ3_XXS` (13.1 GiB) is clearly lossy: 148/176 right, mean KLD 0.068 against `IQ4_XS` (19 times the noise floor),
+  29 changed top tokens. The other published 4-bit quants (`Q4_K_S` 19.9 GB, `Q4_K_M` 21.2 GB) are too large for a
+  useful context.
+
+Results of the preset (`--tests generation prompt chat depth edit image --repeat 2`, with 2 drafts; 3 drafts measured
+with chat, depth 36.5k/100k and edits):
+
+| Test | Phai-A1-35B-1M, MTP 3 (MTP 2) |
+|---|---|
+| ctx-size | 151552 |
+| Chat, 12 requests | 184.5 (180.8) t/s |
+| Depth 6.4k / 16k / 36.5k / 60k / 100k | 182.9 / - / 155.8 / - / 111.3 (180.6 / 173.1 / 153.8 / 136.9 / 112.8) t/s; prompt 5208 / 5158 / 4565 / 3954 / 3221 t/s |
+| Edit after 2.3k / 34k tokens | 263.4 / 219.1 (240.5 / 197.2) t/s, acceptance 99 % |
+| Full-context prompt (150052 tokens) | 2736 t/s |
+| Image 1280x960, prompt processing | 5.3 s (vision encoder on the CPU) |
+| Peak VRAM of llama-server | 21612 MiB (21574 MiB with 2 drafts) |
+
+The logs show only `common_download_get_hf_plan: no GGUF files found in repository mradermacher/Phai-A1-35B-1M-i1-GGUF`,
+as the router lists the Hugging Face cache, where only the imatrix of that repository is; it is harmless.
+
+**vLLM is faster for this model on this GPU** ([`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m)): chat
+215-227 vs 184 t/s, 228 vs 156 t/s at 36.5k tokens of context, 186 t/s at 94k vs 111 t/s at 100k, code edits 341-360
+vs 219-263 t/s and prompt processing 1.4-1.7 times as fast. llama.cpp fits 1.5 times the context (151552 vs 98304)
+and keeps the vision encoder.
+
+## Inkling 2 Mini
+
+[thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) (2026-11-20) is a 26B MoE (128
+experts, 8 active) whose middle 12 of 24 layers run three times per token with shared weights. Its feasibility on this
+computer, checked on 2026-11-21 (no configurations yet):
+
+- **llama.cpp: feasible on both GPUs, but not yet in a release.** The model is in upstream llama.cpp since
+  [ggml-org/llama.cpp#32694](https://github.com/ggml-org/llama.cpp/pull/32694), but its NVFP4-derived GGUFs give
+  gibberish without [#32704](https://github.com/ggml-org/llama.cpp/pull/32704) (merged on 2026-11-21 after b12608, the
+  latest release then). The configurations should wait for the next release images (`server-cuda13`, `full-vulkan`)
+  and a newer gfx906 image instead of a custom build. Its own DSpark block drafter (0.4 GB, `--spec-type draft-dspark`)
+  is in the open [#32218](https://github.com/ggml-org/llama.cpp/pull/32218) and in Unsloth's fork. Memory estimate:
+  Unsloth's `UD-Q4_K_XL` (16.4 GiB, use the files of `Mainline_Support/` with upstream llama.cpp) and the 0.6 GiB
+  vision encoder; each pass through the loop has its own KV cache, so the 4 global-attention layers (2 of them in
+  the loop) store 8 layers of KV, 32 KiB per token with f16 (17 KiB with q8_0), plus a fixed ~160 MiB for the
+  1024-token windows of the 40 local-attention passes. That leaves room for ~100-150k tokens of context on the RTX
+  3090. On the Radeon VII, `UD-IQ3_XXS` (10.9 GiB) fits entirely; with a 4-bit quant, the experts of the layers
+  outside the loop (0-5, 18-23) should go to the CPU with `override-tensor`, since those of the loop are used three
+  times per token.
+- **vLLM: not feasible on either GPU.** Its support ([vllm-project/vllm#69028](https://github.com/vllm-project/vllm/pull/69028),
+  open) has kernels only for Hopper, Blackwell and DGX Spark (`get_min_capability` 90: TRT-LLM-gen expert GEMMs and
+  NVFP4 operations), and the checkpoint is NVFP4/MXFP8. The RTX 3090 (sm_86) and the Radeon VII (gfx906) would need
+  a port of the model's kernels.
+
 ## Commands
 
 ```sh
@@ -557,4 +648,18 @@ docker rm -f llama-test-cuda && docker compose -f ../llama-cpp-rtx3090/docker-co
 uv run -m agx_ai.benchmark.llama_cpp.bench_container --image ghcr.io/ggml-org/llama.cpp:full-cuda13-b10689 --docker-arg=--gpus=all \
     --model /root/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/.../Qwen3.8-27B-UD-Q4_K_M.gguf \
     --keep-loaded --label "..." -- -ngl 999 -fa 1 -ctk q8_0 -ctv q8_0 -ub 256,512,1024,2048 -p 2048 -n 0 -d 0,16384
+# Phai-A1-35B-1M: graft the MTP head of the base model, convert, quantize with mradermacher's imatrix
+hf download PhaiModelLab/Phai-A1-35B-1M
+hf download Qwen/Qwen3.6-35B-A3B model-00025-of-00026.safetensors model-00026-of-00026.safetensors model.safetensors.index.json
+hf download mradermacher/Phai-A1-35B-1M-i1-GGUF Phai-A1-35B-1M.imatrix.gguf
+uv run ../vllm/graft_mtp.py PhaiModelLab/Phai-A1-35B-1M Qwen/Qwen3.6-35B-A3B ~/.cache/vllm-models/Phai-A1-35B-1M-mtp
+D=~/.cache/huggingface/hub/local-gguf/Phai-A1-35B-1M-MTP && mkdir -p $D
+IMAGE=ghcr.io/ggml-org/llama.cpp:full-cuda13-b12242
+docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint python3 $IMAGE /app/convert_hf_to_gguf.py \
+    ~/.cache/vllm-models/Phai-A1-35B-1M-mtp --outtype q8_0 --outfile $D/Phai-A1-35B-1M-MTP-Q8_0.gguf
+docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint python3 $IMAGE /app/convert_hf_to_gguf.py \
+    ~/.cache/vllm-models/Phai-A1-35B-1M-mtp --mmproj --outtype f16 --outfile $D/mmproj-F16.gguf
+docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint /app/llama-quantize $IMAGE --allow-requantize \
+    --imatrix $(readlink -f ~/.cache/huggingface/hub/models--mradermacher--Phai-A1-35B-1M-i1-GGUF/snapshots/*/Phai-A1-35B-1M.imatrix.gguf) \
+    $D/Phai-A1-35B-1M-MTP-Q8_0.gguf $D/Phai-A1-35B-1M-MTP-IQ4_XS.gguf IQ4_XS 64
 ```

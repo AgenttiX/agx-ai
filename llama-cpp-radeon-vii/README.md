@@ -2,15 +2,16 @@
 
 llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e. The image is
 `mixa3607/llama.cpp-gfx906:b12230-rocm-10.1` (see [`docker-compose.yml`](docker-compose.yml), where the model is
-selected). There are two presets, one model at a time, both entirely on the GPU with MTP speculative decoding and
-q8_0 K and V caches:
+selected). There are three presets, one model at a time, with MTP speculative decoding and q8_0 K and V caches, the
+first two entirely on the GPU:
 
 | Preset | Model | Context | Chat generation | Prompt processing |
 |---|---|---|---|---|
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 86016 | ~124 t/s, 61-80 t/s at 36-83k tokens of context | ~1190 t/s at 16k, ~740 t/s at 83k |
 | [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` (Unsloth Dynamic 3.1) | 43008 | ~31 t/s, 24-26 t/s at 30-40k tokens of context | ~250 t/s at 16k, ~220 t/s at 41k |
+| [`preset-phai-a1-35b-1m.ini`](preset-phai-a1-35b-1m.ini) | [Phai-A1-35B-1M](#phai-a1-35b-1m-2026-11-21) (Qwen3.6-35B-A3B fine-tune) `IQ4_XS` built locally with a grafted MTP head, experts of 12 layers on the CPU | 112640 | ~64 t/s, 60 t/s at 36k, 48 t/s at 100k; edits 76-85 t/s; slows down when the CPU is busy | ~830 t/s at 16k, ~520 t/s at 100k |
 
-Both use the whole 16 GB (peak ~16290 MiB of 16368 in the benchmarks). See
+All use the whole 16 GB (peak ~16210-16290 MiB of 16368 in the benchmarks). See
 [the update to b12230 and Dynamic 3.1](#image-update-to-b12230-and-qwen38-27b-dynamic-31-2026-11-12) for the
 latest measurements. Both presets take images and videos, with the vision encoder (mmproj) on the CPU, so that it needs no VRAM and no
 context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90 s; see
@@ -598,6 +599,59 @@ step of 256 tokens takes ~0.6 s on this GPU, as long as processing ~250 tokens o
 steps: the Radeon VII has too little compute for block diffusion to pay off. On the RTX 3090, the same server takes
 ~0.12 s per step (106 t/s in chat), and vLLM is faster still
 ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#diffusiongemma)).
+
+## Phai-A1-35B-1M (2026-11-21)
+
+[Phai-A1-35B-1M](https://huggingface.co/PhaiModelLab/Phai-A1-35B-1M) is a coding and agent fine-tune of
+Qwen3.6-35B-A3B with 1M tokens of context. Its GGUF with a grafted MTP head is built locally, see
+[`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#phai-a1-35b-1m), which also has the measurements of the KV cache
+type (q8_0 is marginally above the noise floor) and the quality of the quants. The image is the same
+`mixa3607/llama.cpp-gfx906:b12230-rocm-10.1`.
+
+`IQ4_XS` (17.85 GiB) does not fit in the 16 GB, and `IQ3_XXS` (13.1 GiB) does, but it is clearly lossy (148 instead
+of 154 of 176 retrieval answers right, mean KLD 0.068 against `IQ4_XS`, 19 times the noise floor). `llama bench`
+(q8_0 K and V):
+
+| Configuration | pp2048 / tg64 at depth 0 | at depth 16384 |
+|---|---|---|
+| `IQ3_XXS`, all on the GPU, ub 512 | 1073 / 70.5 t/s | 840 / 58.7 t/s |
+| `IQ3_XXS`, all on the GPU, ub 1024 | 1415 / 70.6 t/s | 1043 / 58.8 t/s |
+| `IQ4_XS`, experts of 12 layers on the CPU, ub 1024 | 968 / 61.6 t/s | 784 / 52.5 t/s |
+
+With 12 layers of experts on the CPU (400 MiB each, ~4.8 GiB of RAM with `load-mode = none`), `IQ4_XS` needs as much VRAM as `IQ3_XXS` entirely on the GPU
+(peak 15354 vs 15325 MiB at 65536 tokens of context, ub 1024, vision encoder on the CPU), so both fit the same
+context. With MTP (2 drafts), `bench_http.py --tests chat depth`:
+
+| Configuration | Chat | Depth 6.4k | Depth 36.5k | Chat with all 64 threads busy |
+|---|---|---|---|---|
+| `IQ3_XXS`, all on the GPU, no MTP | 68.2 t/s | 62.6 t/s (1293) | 48.4 t/s (1035) | |
+| `IQ3_XXS`, all on the GPU, MTP 2 | 71.9 t/s | 78.9 t/s (1230) | 76.1 t/s (963) | 71.0 t/s |
+| `IQ3_XXS`, all on the GPU, MTP 3 | 67.1 t/s | 76.4 t/s (1234) | 78.6 t/s (967) | |
+| **`IQ4_XS`, 12 layers on the CPU, MTP 2** | 64.6 t/s | 63.5 t/s (830) | 60.7 t/s (728) | 27.0 t/s (median 12) |
+
+(Prompt processing in parentheses.) `IQ4_XS` is 10-20 % slower and processes prompts ~25 % slower, and it depends on
+the CPU: with 64 busy loops running, its chats dropped to 27 t/s (4-68 t/s), whereas `IQ3_XXS` kept 71 t/s. The
+preset nevertheless uses `IQ4_XS` for its clearly better output; the `IQ3_XXS` file is a commented-out line in the
+preset for when the CPU is needed for other work. Threads for the experts on the CPU (chat / depth 6.4k): 8: 60.7 /
+60.4, 16: 63.8 / 62.8, 32 (the default): 64.7 / 63.7 t/s, so the preset uses 16.
+
+Context: peak 15354 MiB at 65536 tokens and 16341 MiB at 116736 (too close to the 16368 MiB); 112640 peaked at
+16212 MiB. Results of the preset (`--tests generation prompt chat depth edit image --repeat 2`, with ctx 116736;
+the full-context prompt and the chat with 112640):
+
+| Test | Result |
+|---|---|
+| Chat, 12 requests | 63.5 t/s (60.8-66.9), draft acceptance 56 % |
+| Depth 6.4k / 16k / 36.5k / 60k / 100k | 62.8 / 63.7 / 60.1 / 54.6 / 48.0 t/s; prompt 829 / 829 / 727 / 633 / 517 t/s |
+| Edit after 2.3k / 34k tokens | 84.8 / 75.7 t/s, acceptance 99 % |
+| Full-context prompt (111140 tokens) | 498 t/s |
+| Image 1280x960, prompt processing | 10.3 s (vision encoder on the CPU) |
+| Peak VRAM | 16212 MiB of 16368 (ctx 112640) |
+
+vLLM was not tried for this model on the Radeon VII: its 4-bit weights take 18.1 GiB
+([`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m)), and vLLM can only stream weights that do not fit
+from RAM over PCIe 3.0 in every step (`cpu-offload-gb`), whereas llama.cpp computes the experts in RAM on the CPU.
+Inkling 2 Mini: see [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
 ## Commands
 
