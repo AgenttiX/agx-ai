@@ -1,0 +1,33 @@
+# Qwen3.8-27B with NVIDIA's external 4B draft model on the RTX 3090, on the same port as docker-compose.yml (9931): only
+# one of them fits on the GPU at a time. Experimental: slower than the MTP preset of docker-compose.yml, see README.md
+# (External draft model). Its image is llama.cpp b12627 with ../llama-cpp-draft/draft-rollback.patch.
+# docker compose stop (here), then: docker compose -f docker-compose-draft.yml up -d
+services:
+  llama-cpp-draft:
+    # Built by ../.github/workflows/deploy-docker-llama-cpp-draft.yml.
+    # Locally: docker build -t <the image> ../llama-cpp-draft
+    image: ghcr.io/agenttix/agx-ai/llama-cpp-draft:latest
+    container_name: llama-cpp-draft
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    restart: unless-stopped
+    ports:
+      # The image sets LLAMA_ARG_PORT=8080, which overrides the port of config.ini.
+      - "9931:8080"
+    volumes:
+      # Download the draft model first, see the preset.
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset-qwen3.8-27b-draft-4b.ini:/etc/llama.cpp/preset.ini:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3

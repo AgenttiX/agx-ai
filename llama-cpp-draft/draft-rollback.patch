@@ -1,0 +1,75 @@
+diff --git a/common/common.cpp b/common/common.cpp
+index b009d46..50c3cd9 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1255,7 +1255,7 @@ void common_fit_apply(common_params & params, llama_model_params & mparams, llam
+     if (spec_mtp) {
+         cparams_dft.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+     }
+-    cparams_dft.n_rs_seq = 0;
++    cparams_dft.n_rs_seq = params.speculative.need_n_rs_seq_dft();
+ 
+     const common_fit_extra_model extra = {
+         /*.paths_model  =*/ params_dft.model.get_paths(),
+diff --git a/common/common.h b/common/common.h
+index a8e89ed..d0a2ad8 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -417,6 +417,7 @@ struct common_params_speculative {
+     uint32_t need_n_rs_seq() const {
+         bool needs_rs_seq = std::any_of(types.begin(), types.end(), [&](auto t) {
+             return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP     ||
++                   t == COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE  ||
+                    t == COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3  ||
+                    t == COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH  ||
+                    t == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK  ||
+@@ -426,6 +427,12 @@ struct common_params_speculative {
+ 
+         return needs_rs_seq ? draft.n_max : 0u;
+     }
++
++    // rollback snapshots of a recurrent/hybrid draft model (draft-simple), for its copy of the verify batch
++    uint32_t need_n_rs_seq_dft() const {
++        const bool simple = std::find(types.begin(), types.end(), COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE) != types.end();
++        return simple && has_dft() ? draft.n_max : 0u;
++    }
+ };
+ 
+ struct common_params_diffusion {
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index b40eb55..230fc7f 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -3120,7 +3120,7 @@ common_speculative_init_result::common_speculative_init_result(
+ 
+     // note: for small models maybe we can set this to the maximum possible draft from all speculative types
+     //       the extra memory for small models is likely negligible?
+-    cparams.n_rs_seq  = 0;
++    cparams.n_rs_seq  = params.speculative.need_n_rs_seq_dft();
+     cparams.ctx_other = ctx_tgt;
+ 
+     std::string model_path;
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index b458a17..caa7da4 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3828,7 +3828,8 @@ private:
+                 common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
+ 
+                 const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+-                const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
++                const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
++                                          ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS;
+ 
+                 const int n_draft_max = slot.get_n_draft_max();
+ 
+@@ -3892,7 +3893,8 @@ private:
+             slot.stats.n_draft_tokens += draft.size();
+ 
+             // TODO: avoid restoring the draft context and re-evaluating the drafted tokens when not needed [TAG_SPEC_AVOID_DRAFT_REEVAL]
+-            const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
++            const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
++                                      ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS;
+ 
+             if (ctx_dft) {
+                 if (use_ckpt_dft) {

@@ -136,6 +136,16 @@ What has given the largest gains, roughly in order:
 - **Drafter load bug** ([llama.cpp#29044](https://github.com/ggml-org/llama.cpp/issues/29044)): when VRAM is nearly
   full, the drafter fails to load (`vector::_M_range_check`); `tensor-split = 1` on a single GPU works around it.
 - `device-draft = CUDA1` places the drafter on another GPU.
+- **Separate draft models with recurrent layers** (`spec-type = draft-simple`, e.g. nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft
+  for Qwen3.8-27B) need [`../llama-cpp-draft`](../llama-cpp-draft/README.md): upstream (b12627) gives them no rollback
+  snapshots, restores host checkpoints and replays the accepted tokens through the target (rtx3090 chat 21 t/s, less
+  than without speculation, 35 t/s patched). Even patched, the 4B draft was slower than MTP (35 vs 59 t/s) with 40 %
+  of the context: a drafted token costs ~20 % of a target step, while an MTP head is almost free. Use 4-6 drafts,
+  `IQ4_XS` (faster than `Q8_0`), q8_0 draft KV cache. Only code edits gain from long drafts (10: 81 vs 76 t/s).
+- **A draft model on a slower device does not pay off:** drafting and verification are serial, and the draft also
+  processes every prompt. The 4B draft on the Radeon VII (Vulkan, `device-draft = Vulkan0` in a CUDA+Vulkan build)
+  with the target on the RTX 3090: 22 t/s and 700 t/s of prompt processing, slower than no speculative decoding (34.5
+  t/s); on the Threadripper CPU it drafts at 17 t/s, slower than the target itself.
 
 ## Multiple GPUs (`split-mode`, `tensor-split`, `device`)
 

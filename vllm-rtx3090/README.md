@@ -191,6 +191,34 @@ Checked on 2026-10-26 with the current settings:
   down generation. A 25k-token conversation that was evicted from the GPU by a 140k-token prompt came back in 4.0 s
   instead of 25.8 s.
 
+### External draft model: Qwen3.5-4B-Qwen3.8-27B-Draft (2026-11-23)
+
+[`nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft`](https://huggingface.co/nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft) is a complete
+4.2B Qwen3.5 model (`Qwen3_5ForCausalLM`, 24 Gated DeltaNet and 8 attention layers, 8.4 GB in BF16) trained to
+propose tokens for Qwen3.8-27B; NVIDIA reports 5.58 accepted tokens per step at 16 drafts vs 3.81 for the MTP head.
+**It does not work with vLLM v0.33.0, so there is no configuration for it here.** Tried with an int4 version of the
+draft ([`../vllm/quantize_qwen35_dense_w4a16.py`](../vllm/quantize_qwen35_dense_w4a16.py): round-to-nearest int4
+projections, BF16 tied embedding, 3.1 GB) next to the int4 target of
+[`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml), `speculative-config: {"method": "draft_model", "model":
+"/models/Qwen3.5-4B-Qwen3.8-27B-Draft-W4A16", "num_speculative_tokens": 4}`, 32768 tokens of context:
+
+- vLLM turns every Qwen3.5 draft config (`qwen3_5_text` included) into an MTP head (`Qwen3_5MultiTokenPredictor`)
+  and fails with `There is no module or parameter named 'embed_tokens.weight'`. Skipping that rewrite for a
+  `Qwen3_5ForCausalLM` checkpoint in `SpeculativeConfig.hf_config_override` (`vllm/config/speculative.py`) makes it
+  load (19.4 GiB of VRAM at 32k tokens).
+- The draft model speculator of the default (v2) model runner (`StandaloneARSpeculator`) does not keep the recurrent
+  state of a hybrid draft model: the draft acceptance fell from 12.5 % in chat to 1-2 % with 6.4-16k tokens of
+  context, and generation to 10-15 t/s (83 t/s with MTP). The draft model itself is fine: served alone, the int4
+  version answers coherently.
+- The v1 model runner (`VLLM_USE_V2_MODEL_RUNNER=0`) refuses it: `Speculative Decoding with draft models or parallel
+  drafting does not support M-RoPE yet`.
+
+The fix of the first point is not in [`../vllm/vllm.patch`](../vllm/vllm.patch), as it does not make the draft
+usable. On this GPU, the draft would also have to beat the MTP head and the DFlash2 drafter of
+[`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen) (136 t/s in chat), which cost the target almost nothing,
+while the 4B draft costs ~20 % of a target step per drafted token (see
+[`../llama-cpp-draft`](../llama-cpp-draft/README.md), where it works but is slower than MTP).
+
 ## Gemma 4 26B-A4B
 
 The bit-exact checkpoint of [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#checkpoints-2026-10-09) (all linear

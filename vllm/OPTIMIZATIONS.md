@@ -178,6 +178,10 @@ What has given the largest gains, roughly in order:
   edits (RTX 3090).
 - **N-gram drafting alone and MTP are bad for MoE models with experts on the CPU or behind PCIe:** verifying more
   tokens reads more experts (flash-next on the RTX 3070: edits 1.7x, everything else 2-4x slower).
+- **External Qwen3.5 draft models do not work in v0.33.0** (`method: draft_model`, e.g.
+  nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft): the draft config is rewritten into an MTP head, and once that is skipped, the
+  v2 runner's draft speculator does not keep the draft's Gated DeltaNet state (acceptance 1-12 %); the v1 runner
+  rejects M-RoPE drafts. See [`../vllm-rtx3090`](../vllm-rtx3090/README.md#external-draft-model-qwen35-4b-qwen38-27b-draft-2026-11-23).
 - Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with
   repeated text gives ~98 % acceptance.
 

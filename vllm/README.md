@@ -148,3 +148,7 @@ of [`../vllm-radeon-vii`](../vllm-radeon-vii), with this directory mounted:
   or a directory built by `repack_gemma4_qat.py`), with the functions of `repack_gemma4_qat.py`, and copies all other
   tensors unchanged. Used by the Gemma 4 26B-A4B (int8 embedding) and 31B (int4 embedding and lm_head)
   configurations of [`../vllm-rtx3090`](../vllm-rtx3090) (see its README for the commands).
+- [`quantize_qwen35_dense_w4a16.py`](quantize_qwen35_dense_w4a16.py) quantizes a dense Qwen3.5 text model to int4
+  (round-to-nearest, BF16 tied embedding), e.g. nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft to 3.1 GB. That draft model does
+  not work with vLLM v0.33.0 yet, see
+  [`../vllm-rtx3090`](../vllm-rtx3090/README.md#external-draft-model-qwen35-4b-qwen38-27b-draft-2026-11-23).

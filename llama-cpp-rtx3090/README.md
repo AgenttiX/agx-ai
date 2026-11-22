@@ -25,6 +25,7 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 | [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
 | [`preset-phai-a1-35b-1m.ini`](preset-phai-a1-35b-1m.ini) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) `IQ4_XS` built locally with a grafted MTP head, vision encoder on the CPU, MTP 3 | q8_0 | 151552 | 184 t/s, 156 t/s at 36.5k, 111 t/s at 100k; edits 219-263 t/s | 5210 t/s at 6.4k, 2740 t/s at 150k |
 | [`preset-phai-a1-35b-1m-262k.ini`](preset-phai-a1-35b-1m-262k.ini) | [Phai-A1-35B-1M](#262144-tokens-of-context-2026-11-22) with 262144 tokens: the same GGUF, experts of 6 layers on the CPU, MTP 3 | q8_0 | 262144 | 114 t/s, 111 t/s at 36.5k, 81 t/s at 100k, 66 t/s at 200k; edits 184 t/s | 3270 t/s at 6.4k, 1650 t/s at 260k |
+| [`preset-qwen3.8-27b-draft-4b.ini`](preset-qwen3.8-27b-draft-4b.ini) (experimental, [`docker-compose-draft.yml`](docker-compose-draft.yml)) | Qwen3.8-27B `UD-Q4_K_M` with NVIDIA's [external 4B draft model](#external-draft-model-2026-11-23) `IQ4_XS` instead of MTP, 6 drafts, vision encoder on the CPU; **slower than the MTP preset with 40 % of its context** | q8_0 | 40960 | 35 t/s, 28 t/s at 16k, 25 t/s at 36.5k; edits 68 t/s | 1040 t/s at 6.4k, 970 t/s at 39k |
 
 [DiffusionGemma](#diffusiongemma) 26B-A4B, Google's block-diffusion model, is not in upstream llama.cpp. It runs with
 the server of a draft pull request from
@@ -659,6 +660,88 @@ Results of the preset (`--tests generation prompt chat depth edit image`):
 The 262k preset is 35-40 % slower up to ~60k tokens of context and 30 % slower in code edits; use it only when the
 extra context is needed.
 
+## External draft model (2026-11-23)
+
+[`nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft`](https://huggingface.co/nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft) (2026-11-17) is a
+complete 4.2B Qwen3.5 model (24 Gated DeltaNet and 8 attention layers, the vocabulary of Qwen3.8) trained to draft
+tokens for Qwen3.8-27B. NVIDIA reports 5.58 accepted tokens per step with 16 drafts, vs 3.81 for the MTP head, but on
+an LPU, where the draft is cheap. Used with
+[bartowski's GGUFs](https://huggingface.co/bartowski/Qwen3.5-4B-Qwen3.8-27B-Draft-GGUF) (`spec-type = draft-simple`).
+They have fused tensors (`attn_qkv_gate`, `ssm_beta_alpha`) that the pinned build b12242 cannot read
+(`tensor 'blk.0.ssm_beta.weight' not found`), so everything here is b12627.
+
+**Result: it works, but it is slower than the MTP head on this GPU and leaves 40 % of the context**, so the default
+preset keeps MTP. The draft costs ~20 % of a target step per drafted token, while the MTP head is almost free, and in
+real chats its acceptance is only a little higher than MTP's. [`preset-qwen3.8-27b-draft-4b.ini`](preset-qwen3.8-27b-draft-4b.ini)
+is the best configuration found, kept as an experiment ([`docker-compose-draft.yml`](docker-compose-draft.yml)).
+vLLM v0.33.0 cannot use this draft at all (see
+[`../vllm-rtx3090`](../vllm-rtx3090/README.md#external-draft-model-qwen35-4b-qwen38-27b-draft-2026-11-23)).
+
+Measured with test servers and `bench_http.py` (chat: 6 requests, depth: code context, edits: a 2.2k-token file copied
+with one rename), q8_0 K and V caches, without the vision encoder unless noted. Generation in t/s, prompt processing
+in parentheses:
+
+| Configuration | Context | Chat | Depth 6.4k | Depth 16k | Edit | Peak VRAM |
+|---|---|---|---|---|---|---|
+| MTP 2 (the default preset), b12627 | 100352 | **59.0** (acc. 57 %) | **55.5** (1193) | **52.1** (1213) | **75.9** | 20420 MiB |
+| No speculative decoding, b12627 | 32768 | 34.5 | 33.2 (1233) | | | 16600 MiB |
+| Draft `IQ4_XS`, 6 drafts, b12627 upstream (greedy) | 32768 | 21.4 (acc. 35 %) | 19.2 (1134) | 17.6 (1102) | | 19768 MiB |
+| The same, probabilistic drafting | 32768 | 20.4 (32 %) | 18.3 (1116) | | | 19766 MiB |
+| **Draft `IQ4_XS`, 6 drafts, probabilistic, [patched](../llama-cpp-draft/README.md)** | 32768 | **35.7** (41 %) | 30.9 (1127) | 29.3 (1072) | | 20964 MiB |
+| The same, 4 drafts | 32768 | 34.1 (51 %) | 31.8 (1101) | | | 20496 MiB |
+| The same, 3 drafts | 32768 | 33.6 (57 %) | 30.1 (1075) | | | 20296 MiB |
+| The same, 2 drafts | 32768 | 31.9 (66 %) | 30.0 (1095) | | | 20096 MiB |
+| The same, 10 drafts | 32768 | 29.7 (30 %) | | | 81.1 | 21762 MiB |
+| Draft `Q8_0`, 6 drafts, patched | 16384 | 31.5 (44 %) | 28.8 (1093) | | | 21930 MiB |
+| Draft `Q4_K_M` on the Radeon VII (Vulkan), 2 drafts, patched | 32768 | 22.1 (65 %) | 21.8 (708) | | | 16900 MiB |
+| The same, 4 drafts | 32768 | 22.9 (53 %) | 19.7 (702) | | | 17200 MiB |
+| **[The preset](preset-qwen3.8-27b-draft-4b.ini)** (6 drafts, patched, vision encoder on the CPU) | 40960 | 35.0 (41 %) | 29.7 (1040) | 28.5 (1025) | 68.3 | 21484 MiB |
+
+The preset also generated 24.5 t/s at 36.5k tokens of context (960 t/s prompt processing), processed a 39460-token
+prompt at 973 t/s and an image of 1280x960 in 7.0 s (vision encoder on the CPU). One run each, two for the preset.
+
+- **Upstream llama.cpp is slower with this draft than without speculative decoding**: it gives a separate draft model
+  no rollback snapshots for recurrent states, so after each partially accepted draft, it restores host checkpoints of
+  both models and runs the accepted tokens through the target a second time (~116 ms per step instead of ~50).
+  [`../llama-cpp-draft`](../llama-cpp-draft/README.md) builds b12627 with a 13-line patch that gives the draft the
+  snapshots of the MTP drafter: +70 % (35.7 instead of 21.4 t/s in chat).
+- **Even then, a step costs twice as much as with MTP.** With 2 drafts, the draft is accepted at 84 % / 65 % at the two
+  positions (2.49 tokens per step, MTP 2.13), but a step takes ~70 ms instead of ~36 ms: 3 draft decodes (14.8 ms in
+  total, measured), the 27B verification (~30 ms), the draft's pass over the verified tokens and its host checkpoint.
+  Even without any overhead, 2 drafts would give ~49 t/s, below MTP's 59. `llama bench`: the draft generates 193 t/s
+  (`IQ4_XS`) or 133 t/s (`Q8_0`) and the target 40.8 t/s, so a drafted token costs 21 % of a target step.
+- **Longer drafts only pay off when the model copies text:** 10 drafts edit code at 81 t/s (MTP 76) with 99.5 %
+  acceptance, but chat at 30 t/s, and their snapshots leave only 32k tokens of context.
+- **`Q8_0` is not better than `IQ4_XS`:** slightly higher acceptance (44 vs 41 %), but slower drafting and 1.9 GiB more.
+  **Greedy and probabilistic drafting** (`spec-draft-sampling`) performed the same.
+- **VRAM:** the draft (2.3 GiB), its KV cache (17 KiB per token in q8_0, on top of the target's 34 KiB) and the
+  snapshots of both models (~1.2 GiB for 6 drafts) leave 40960 tokens of context instead of 100352 with MTP.
+- **MTP on b12627** generated 59.0 t/s in chat and 55.5 / 52.1 t/s at 6.4k / 16k tokens (one run, without the vision
+  encoder), vs 50.4 and 52.8 / 47.4 t/s with b12242 in the [results of the default preset](#unsloth-dynamic-31). The
+  default preset may gain from an update to b12627; not checked with the full benchmark yet.
+
+### Draft model on the CPU or the Radeon VII
+
+The idea: the draft model on another device frees VRAM of the RTX 3090 for context and takes work off it. But
+speculative decoding is serial (draft, then verify), so a slower drafting device makes every step longer, and the
+draft also has to process every prompt before generation starts.
+
+- **CPU (Threadripper 3970X, 4-channel DDR4-2666):** `llama bench` of the `IQ4_XS` draft: 16.6-16.9 t/s with 8-32
+  threads, i.e. 59 ms per drafted token, 2.4 times a whole target step (24.5 ms), and 209 t/s of prompt processing (a
+  100k-token prompt would take 8 minutes). Slower than no speculative decoding with any draft length; not tried
+  end to end.
+- **Radeon VII (Vulkan, b12627):** the draft generates 109-121 t/s (`IQ4_XS`, `Q4_K_M`, `Q8_0`: 8.3-9.4 ms per token,
+  1.6-1.8 times the RTX 3090) and processes prompts at 1550-1770 t/s. End to end, with the target on `CUDA0` and the
+  draft on `Vulkan0` in one llama-server (the patched image built with the Vulkan backend too, see
+  [`../llama-cpp-draft`](../llama-cpp-draft/README.md#draft-model-on-another-gpu)): 22-23 t/s in chat and 700 t/s of
+  prompt processing, at 16.9-17.2 GiB on the RTX 3090 with 32768 tokens. Without speculative decoding, the RTX 3090
+  alone is faster (34.5 t/s, 1233 t/s) with less VRAM (16.6 GiB), so the Radeon VII placement loses on both counts.
+  It would also take the Radeon VII away from its own server.
+- For more context than the MTP preset, the cheaper option is therefore no speculative decoding (34.5 t/s in chat; by
+  the measurements above an estimated ~1.5 GiB or ~45k tokens more than with MTP), or the vision encoder on the CPU (127k tokens with MTP, see
+  [the preset](preset-qwen3.8-27b.ini)); vLLM fits 155k tokens with MTP at 66 t/s at 100k
+  ([`../vllm-rtx3090`](../vllm-rtx3090/README.md)).
+
 ## Inkling 2 Mini
 
 [thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) (2026-11-20) is a 26B MoE (128
@@ -753,6 +836,20 @@ docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint python3 $
 docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint /app/llama-quantize $IMAGE --allow-requantize \
     --imatrix $(readlink -f ~/.cache/huggingface/hub/models--mradermacher--Phai-A1-35B-1M-i1-GGUF/snapshots/*/Phai-A1-35B-1M.imatrix.gguf) \
     $D/Phai-A1-35B-1M-MTP-Q8_0.gguf $D/Phai-A1-35B-1M-MTP-IQ4_XS.gguf IQ4_XS 64
+# The external 4B draft model (experimental): the draft GGUF, the patched image, then a test server or the compose file
+hf download bartowski/Qwen3.5-4B-Qwen3.8-27B-Draft-GGUF Qwen3.5-4B-Qwen3.8-27B-Draft-IQ4_XS.gguf
+docker build --build-arg CUDA_ARCHITECTURES=86 -t ghcr.io/agenttix/agx-ai/llama-cpp-draft:latest ../llama-cpp-draft
+NAME=llama-test-cuda DOCKER_ARGS="--gpus all" uv run -m agx_ai.benchmark.llama_cpp.test_server ghcr.io/agenttix/agx-ai/llama-cpp-draft:latest \
+    ../llama-cpp-rtx3090/preset-qwen3.8-27b-draft-4b.ini ../llama-cpp/config.ini ../llama-cpp/llama-cpp.env 9934
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9934 --env-file ../llama-cpp/llama-cpp.env --no-embedding \
+    --tests generation prompt chat depth edit image --prompt-tokens 39460 --repeat 2 --depth 6400 16000 36500 --label "..."
+# The raw speed of the draft on the CPU and on the Radeon VII (stop llama-cpp-radeon-vii first)
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --image ghcr.io/ggml-org/llama.cpp:server-cuda13-b12627 \
+    --model /root/.cache/huggingface/hub/models--bartowski--Qwen3.5-4B-Qwen3.8-27B-Draft-GGUF/snapshots/.../Qwen3.5-4B-Qwen3.8-27B-Draft-IQ4_XS.gguf \
+    -- -ngl 0 -dev none -fa 1 -p 64 -n 32 -t 8,16,24,32
+uv run -m agx_ai.benchmark.llama_cpp.bench_container --image ghcr.io/ggml-org/llama.cpp:server-vulkan-b12627 \
+    --model /root/.cache/huggingface/hub/models--bartowski--Qwen3.5-4B-Qwen3.8-27B-Draft-GGUF/snapshots/.../Qwen3.5-4B-Qwen3.8-27B-Draft-Q4_K_M.gguf \
+    -- -ngl 99 -fa 1 -p 512 -n 64
 # Inkling 2 Mini: Unsloth's GGUFs for upstream llama.cpp (Mainline_Support/; the Radeon VII uses UD-IQ3_XXS), its
 # DSpark drafter and ggml-org's vision encoder, linked with the names of the presets
 hf download unsloth/Inkling-2-Mini-GGUF --include "Mainline_Support/*UD-Q4_K_XL*" "Mainline_Support/*UD-IQ3_XXS*" \
