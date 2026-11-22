@@ -1,0 +1,673 @@
+diff -ruN a/models/inkling2/nvidia/attention.py b/models/inkling2/nvidia/attention.py
+--- a/models/inkling2/nvidia/attention.py	2026-11-22 15:24:51.517240905 +0200
++++ b/models/inkling2/nvidia/attention.py	2026-11-22 15:25:46.849326814 +0200
+@@ -59,6 +59,7 @@
+     rel_decode_attention,
+ )
+ from .ops.attention_sm90 import MODE_OUT_LSE, rel_attention
++from .ops import w8_linear as w8
+ from .ops.linear import linear
+ from .ops.ll_gemm_sm120 import qkv_bmm, use_qkv_bmm
+ from .ops.sconv import attention_prologue, shift_rel_proj
+@@ -248,6 +249,8 @@
+         self.rel_logits_proj = nn.Parameter(
+             torch.empty(self.d_rel, self.rel_extent), requires_grad=False
+         )
++        # agx-ai: qkvr and wo_ud in int8 after loading (`ops.w8_linear`).
++        self.int8_weights = w8.int8_weights_enabled()
+         self.q_scale = nn.Parameter(
+             torch.empty(self.num_heads, self.head_dim), requires_grad=False
+         )
+@@ -309,6 +312,9 @@
+ 
+     def process_weights_after_loading(self) -> None:
+         self.rel_proj_shifted = shift_rel_proj(self.rel_logits_proj, self.is_local)
++        if self.int8_weights:
++            w8.quantize_module(self.qkvr)
++            w8.quantize_module(self.wo_ud)
+ 
+     def get_attn_backend(self) -> type[AttentionBackend]:
+         return Inkling2AttentionBackend
+@@ -328,6 +334,14 @@
+         cache = self.pass_caches[pass_idx - 1]
+         return cache.prefix, cache.kv_cache
+ 
++    def _qkvr(self, x: torch.Tensor, rows: slice | None = None) -> torch.Tensor:
++        """`x` times rows `rows` of `qkvr`, int8 with `inkling2_int8_weights`."""
++        if w8.is_quantized(self.qkvr):
++            rows = rows or slice(None)
++            return w8.w8_linear(x, self.qkvr.w8_q[rows], self.qkvr.w8_scale[rows])
++        weight = self.qkvr.weight
++        return linear(x, weight if rows is None else weight[rows])
++
+     def _project(
+         self, x_q: torch.Tensor, x_k: torch.Tensor, x_v: torch.Tensor
+     ) -> list[torch.Tensor]:
+@@ -335,21 +349,26 @@
+         # forward), so the LoRA deltas are added here (no-op without LoRA).
+         weight = self.qkvr.weight
+         if x_k is x_q and x_v is x_q:
+-            projected = linear(x_q, weight)
++            projected = self._qkvr(x_q)
+             add_linear_lora(self.qkvr, projected, x_q, range(6))
+             return list(projected.split(self.split_sizes, dim=-1)[:6])
+         q_side, kv_size = sum(self.split_sizes[:4]), self.split_sizes[4]
+         k_end = q_side + kv_size
+-        if use_qkv_bmm(x_q, x_k, x_v, weight):
++        if w8.is_quantized(self.qkvr) and w8.use_w8_qkv(x_q, x_k, x_v):
++            projected = w8.w8_qkv(
++                x_q, x_k, x_v, self.qkvr.w8_q, self.qkvr.w8_scale, q_side, k_end
++            )
++            return list(projected.split(self.split_sizes, dim=-1)[:6])
++        if not w8.is_quantized(self.qkvr) and use_qkv_bmm(x_q, x_k, x_v, weight):
+             projected = qkv_bmm(x_q, x_k, x_v, weight, q_side, k_end)
+             splits = projected.split(self.split_sizes, dim=-1)
+             add_linear_lora(self.qkvr, projected, x_q, range(4))
+             add_linear_lora(self.qkvr, splits[4], x_k, [4])
+             add_linear_lora(self.qkvr, splits[5], x_v, [5])
+             return list(splits[:6])
+-        projected = linear(x_q, weight[: sum(self.q_side_splits)])
+-        k = linear(x_k, weight[q_side:k_end])
+-        v = linear(x_v, weight[k_end : k_end + kv_size])
++        projected = self._qkvr(x_q, slice(0, sum(self.q_side_splits)))
++        k = self._qkvr(x_k, slice(q_side, k_end))
++        v = self._qkvr(x_v, slice(k_end, k_end + kv_size))
+         add_linear_lora(self.qkvr, projected, x_q, range(4))
+         add_linear_lora(self.qkvr, k, x_k, [4])
+         add_linear_lora(self.qkvr, v, x_v, [5])
+@@ -403,7 +422,10 @@
+             output,
+             pass_idx,
+         )
+-        out = linear(output, self.wo_ud.weight, out)
++        if w8.is_quantized(self.wo_ud):
++            out = w8.w8_linear(output, self.wo_ud.w8_q, self.wo_ud.w8_scale, out=out)
++        else:
++            out = linear(output, self.wo_ud.weight, out)
+         add_linear_lora(self.wo_ud, out, output)
+         return out
+ 
+diff -ruN a/models/inkling2/nvidia/dspark.py b/models/inkling2/nvidia/dspark.py
+--- a/models/inkling2/nvidia/dspark.py	2026-11-22 15:24:51.517274449 +0200
++++ b/models/inkling2/nvidia/dspark.py	2026-11-22 15:25:46.849365057 +0200
+@@ -38,6 +38,7 @@
+ 
+ from ..configs import Inkling2DSparkConfig
+ from ..speculator_config import Inkling2DSparkSpeculatorConfig
++from .ops import w8_linear as w8
+ from .ops.attention import block_decode_attention, plan_decode_attention
+ from .ops.dspark import (
+     add_softcap,
+@@ -427,7 +428,7 @@
+         block = self.config.draft_block_size
+         ids = input_ids.view(-1, block)
+         x = self.mask_embed.expand(ids.shape[0], block, -1).clone()
+-        x[:, 0] = self.embed_norm(self.embed_tokens(ids[:, 0].contiguous()))
++        x[:, 0] = self.embed_norm(w8.embed(self.embed_tokens, ids[:, 0].contiguous()))
+         return x.view(-1, self.config.hidden_size)
+ 
+     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+@@ -501,7 +502,7 @@
+         assert self.lm_head is not None
+         head = self.model.markov_head
+         assert head.rnn_bias is not None
+-        head.fold(self.lm_head.weight)
++        head.fold(w8.weight_rows(self.lm_head))
+         head.rnn_bias.copy_(head.rnn_proj.bias)
+         self.model.fuse_alpha.copy_(
+             torch.softmax(self.model.fuse_weight.float(), dim=-1)
+@@ -544,6 +545,8 @@
+     def compute_base_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         """TP-local bf16 base logits (bf16 GEMM, as the reference)."""
+         assert self.lm_head is not None
++        if w8.is_quantized(self.lm_head):
++            return w8.w8_linear(hidden_states, self.lm_head.w8_q, self.lm_head.w8_scale)
+         return linear(hidden_states, self.lm_head.weight)
+ 
+     def markov_step(
+diff -ruN a/models/inkling2/nvidia/model.py b/models/inkling2/nvidia/model.py
+--- a/models/inkling2/nvidia/model.py	2026-11-22 15:24:51.517363007 +0200
++++ b/models/inkling2/nvidia/model.py	2026-11-22 15:25:46.849451431 +0200
+@@ -67,9 +67,10 @@
+     PACKED_MODULES_MAPPING,
+ )
+ from .lora import register as register_lora
+-from .moe import Inkling2MoE, QuantFormat
++from .moe import Inkling2MoE, QuantFormat, cpu_expert_layers
+ from .ops.allreduce import Inkling2AllReduceWorkspace
+ from .ops.attention import compute_log_scaling_tau
++from .ops import w8_linear as w8
+ from .ops.attn_res import attn_res
+ from .ops.ll_gemm_sm120 import sm12x_bf16_ll_gemm, use_sm12x_bf16_ll_gemm
+ from .ops.norm import rms_norm
+@@ -96,6 +97,14 @@
+             UnquantizedEmbeddingMethod,
+         )
+ 
++        if w8.is_quantized(lm_head):
++            assert embedding_bias is None
++            return w8.w8_linear(
++                hidden_states,
++                lm_head.w8_q,
++                lm_head.w8_scale,
++                out_dtype=self.head_dtype or hidden_states.dtype,
++            )
+         if (
+             self.head_dtype == torch.float32
+             and isinstance(
+@@ -220,6 +229,7 @@
+             else "nvfp4"
+         )
+         self.mlp = Inkling2MoE(config, expert_format, config.layer_visit_ids(layer_id))
++        self.mlp.experts.cpu_offload = layer_id in cpu_expert_layers()
+         self.attn_sconv, self.mlp_sconv = (
+             Inkling2ShortConv(
+                 config.hidden_size, config.sconv_kernel_size, self.conv_state, stream
+@@ -310,7 +320,7 @@
+         return Inkling2DecoderLayer(config, layer_id, quant_config, prefix)
+ 
+     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+-        return self.embed_norm(self.embed_tokens(input_ids))
++        return self.embed_norm(w8.embed(self.embed_tokens, input_ids))
+ 
+     def _mix(
+         self,
+@@ -584,6 +594,8 @@
+         self.lm_head = ParallelLMHead(
+             text_config.padded_vocab_size, text_config.hidden_size
+         )
++        # agx-ai: the LM head and embedding in int8 after loading.
++        self.int8_weights = w8.int8_weights_enabled()
+         processor = (
+             Inkling2LogitsProcessor
+             if vllm_config.lora_config is None
+@@ -761,6 +773,13 @@
+     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
+         return self.logits_processor(self.lm_head, hidden_states)
+ 
++    def process_weights_after_loading(self) -> None:
++        """agx-ai: with `inkling2_int8_weights`, the LM head and the token
++        embedding in int8 (the attention projections: `Inkling2Attention`)."""
++        if self.int8_weights:
++            w8.quantize_module(self.lm_head)
++            w8.quantize_module(self.model.embed_tokens)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         params = dict(self.named_parameters())
+         num_layers = self.text_config.num_hidden_layers
+diff -ruN a/models/inkling2/nvidia/moe.py b/models/inkling2/nvidia/moe.py
+--- a/models/inkling2/nvidia/moe.py	2026-11-22 15:24:51.517399336 +0200
++++ b/models/inkling2/nvidia/moe.py	2026-11-22 15:25:46.849489533 +0200
+@@ -25,7 +25,7 @@
+ from vllm.model_executor.utils import set_weight_attrs
+ from vllm.platforms import current_platform
+ 
+-from .ops import use_sm100_kernels
++from .ops import agx_option, use_sm100_kernels
+ from .ops.activation import swiglu_quantize
+ from .ops.block_scales import shuffle_rows, swizzle_block_scales
+ from .ops.moe import NUM_COUNTERS, combine, combine_push, route
+@@ -38,6 +38,15 @@
+ QuantFormat = Literal["nvfp4", "mxfp8"]
+ 
+ 
++def cpu_expert_layers() -> frozenset[int]:
++    """agx-ai: the layers whose routed experts stay in pinned host memory
++    (`inkling2_cpu_expert_layers`, a list of layer ids, see `agx_option`).
++    Each visit of such a layer reads its tokens' experts over PCIe, so the
++    layers outside the loop (0-5 and 18-23; the loop runs 6-17 three times)
++    cost the least per byte."""
++    return frozenset(agx_option("inkling2_cpu_expert_layers", []))
++
++
+ class ExpertsLoRA(Protocol):
+     """Adds the routed experts' LoRA deltas (`lora.Inkling2MoEWithLoRA`),
+     for an experts implementation over expert-sorted rows: row `r` is token
+@@ -157,6 +166,8 @@
+             and vllm_config.kernel_config.moe_backend == "humming"
+         )
+         self.humming: HummingExperts | None = None
++        # agx-ai: experts in pinned host memory (`cpu_expert_layers`).
++        self.cpu_offload = False
+         if self.sm100:
+             load_kernels(
+                 (self.w13_weight, self.w2_weight),
+@@ -203,6 +214,7 @@
+ 
+     def process_weights_after_loading(self) -> None:
+         if self.sm100 or (self.sm120 and not self.humming_nvfp4):
++            assert not self.cpu_offload, "experts in host memory need Humming"
+             return
+         weights = {}
+         for name in ("w13", "w2"):
+@@ -222,12 +234,35 @@
+             if self.humming_nvfp4
+             else HummingExperts(weights, self.shapes, self.nvfp4)
+         )
++        if self.cpu_offload:
++            self._offload_to_host()
+         # The Humming copies replace the checkpoint layout.
+         for name in ("w13", "w2"):
+             for suffix in ("weight", "weight_scale"):
+                 param = getattr(self, f"{name}_{suffix}")
+                 param.data = param.data.new_empty((0,))
+ 
++    def _offload_to_host(self) -> None:
++        """agx-ai: move the Humming weights and block scales of this layer
++        to pinned host memory, which the kernels read over PCIe (UVA). A
++        decoding step reads only its tokens' experts (8 of 128), so this
++        frees VRAM for the KV cache at the cost of PCIe reads."""
++        from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
++
++        assert isinstance(self.humming, HummingExperts)
++        self.host_tensors = []
++        for tensors in self.humming.tensors.values():
++            for key, tensor in tensors.items():
++                if tensor is None or tensor.numel() < 1 << 20:
++                    continue
++                host = torch.empty(
++                    tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=True
++                )
++                host.copy_(tensor)
++                self.host_tensors.append(host)
++                tensors[key] = get_accelerator_view_from_cpu_tensor(host)
++        torch.cuda.empty_cache()
++
+     def plan(self, tokens: int):
+         return expert_plan(tokens, self.topk, self.num_experts, self.nvfp4, self.shapes)
+ 
+diff -ruN a/models/inkling2/nvidia/ops/__init__.py b/models/inkling2/nvidia/ops/__init__.py
+--- a/models/inkling2/nvidia/ops/__init__.py	2026-11-22 15:24:51.518062725 +0200
++++ b/models/inkling2/nvidia/ops/__init__.py	2026-11-22 15:25:46.850244195 +0200
+@@ -63,3 +63,21 @@
+ 
+ 
+ _disable_pdl_before_sm90()
++
++
++def agx_option(name: str, default=None):
++    """agx-ai: an option of these patches from `additional_config` of the vLLM
++    configuration (`--additional-config '{"inkling2_int8_weights": true}'`,
++    part of the compile cache key), else from the environment variable of
++    the same name in upper case."""
++    import json
++    import os
++
++    from vllm.config import get_current_vllm_config_or_none
++
++    config = get_current_vllm_config_or_none()
++    extra = config.additional_config if config is not None else None
++    if isinstance(extra, dict) and name in extra:
++        return extra[name]
++    value = os.environ.get(name.upper())
++    return default if value is None else json.loads(value)
+diff -ruN a/models/inkling2/nvidia/ops/w8_linear.py b/models/inkling2/nvidia/ops/w8_linear.py
+--- a/models/inkling2/nvidia/ops/w8_linear.py	1970-01-01 02:00:00.000000000 +0200
++++ b/models/inkling2/nvidia/ops/w8_linear.py	2026-11-22 15:25:46.850291244 +0200
+@@ -0,0 +1,366 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""agx-ai: int8 weight-only linears for the BF16 projections of Inkling 2
++(the attention's `qkvr` and `wo_ud`, the LM head) and an int8 token
++embedding, with the option `inkling2_int8_weights` (`agx_option`).
++
++Decoding reads every BF16 weight once per step, and on GPUs without much
++memory bandwidth (the RTX 3090: 936 GB/s) these weights take about half of
++a step. Each output row gets one symmetric fp32 scale (`amax / 127`); the
++activations stay BF16 and the products accumulate in fp32. Batches of at most
++`MAX_M` rows run a split-K Triton kernel derived from `ll_gemm_sm120`
++(weights converted to BF16 in registers); larger batches dequantize the
++weights in row chunks and use cuBLAS."""
++
++import functools
++
++import torch
++from torch import nn
++
++from vllm.triton_utils import tl, triton
++from vllm.utils.torch_utils import current_stream
++
++from . import agx_option
++from .ll_gemm_sm120 import _MAX_TILES, _MP, MAX_M
++
++# Rows of a weight dequantized at a time for batches over MAX_M rows (bounds
++# the temporary memory of the LM head: 16384 x 2304 BF16 = 72 MiB).
++_DEQUANT_ROWS = 16384
++
++
++def int8_weights_enabled() -> bool:
++    """Whether to store the BF16 projections and embedding in int8
++    (`inkling2_int8_weights`, see `agx_option`)."""
++    return bool(agx_option("inkling2_int8_weights", False))
++
++
++@triton.jit
++def _w8_gemm_kernel(
++    X,
++    W,
++    WS,
++    Y,
++    P,
++    C,
++    M,
++    N,
++    K,
++    SXM,
++    SWN,
++    SYM,
++    BN: tl.constexpr,
++    BK: tl.constexpr,
++    K_PER_SPLIT: tl.constexpr,
++    SPLIT: tl.constexpr,
++    MP: tl.constexpr,
++):
++    """`_ll_gemm_kernel` with int8 weights: program `(n, s)` computes column
++    tile `n` over K range `s`. The last program of a tile to finish (counted
++    in `C`, reset to 0 after) sums the fp32 partials in split order, so
++    results are deterministic, and applies the row scales."""
++    pid_n = tl.program_id(0)
++    s = tl.program_id(1)
++    rows = tl.arange(0, MP)
++    cols = pid_n * BN + tl.arange(0, BN)
++    ks = s * K_PER_SPLIT + tl.arange(0, BK)
++    x_ptrs = X + (rows[:, None] * SXM + ks[None, :])
++    w_ptrs = W + (cols[None, :] * SWN + ks[:, None])
++    acc = tl.zeros((MP, BN), tl.float32)
++    for _ in range(0, tl.minimum(K - s * K_PER_SPLIT, K_PER_SPLIT), BK):
++        w = tl.load(w_ptrs, (cols[None, :] < N) & (ks[:, None] < K), other=0)
++        x = tl.load(x_ptrs, (rows[:, None] < M) & (ks[None, :] < K), other=0)
++        acc += tl.dot(x, w.to(tl.bfloat16))
++        x_ptrs += BK
++        w_ptrs += BK
++        ks += BK
++    is_last = True
++    if SPLIT > 1:
++        offs = rows[:, None] * N + cols[None, :]
++        mask = (rows[:, None] < M) & (cols < N)[None, :]
++        tl.store(P + (s * MP * N + offs), acc, mask)
++        tl.debug_barrier()
++        is_last = tl.atomic_add(C + pid_n, 1, sem="acq_rel", scope="gpu") == SPLIT - 1
++        if is_last:
++            acc = tl.zeros((MP, BN), tl.float32)
++            for i in tl.static_range(SPLIT):
++                acc += tl.load(P + (i * MP * N + offs), mask, cache_modifier=".cg")
++            tl.atomic_xchg(C + pid_n, 0, sem="relaxed", scope="gpu")
++    if is_last:
++        acc *= tl.load(WS + cols, cols < N, other=0)[None, :]
++        tl.store(
++            Y + (rows[:, None] * SYM + cols[None, :]),
++            acc.to(Y.dtype.element_ty),
++            (rows[:, None] < M) & (cols[None, :] < N),
++        )
++
++
++@triton.jit
++def _w8_qkv_kernel(
++    XQ,
++    XK,
++    XV,
++    W,
++    WS,
++    Y,
++    M,
++    N,
++    K,
++    S1,
++    S2,
++    SXQ,
++    SXK,
++    SXV,
++    SWN,
++    SYM,
++    BN: tl.constexpr,
++    BK: tl.constexpr,
++    MP: tl.constexpr,
++):
++    """Three int8 linears in one launch (`ll_gemm_sm120.qkv_bmm`): columns
++    `[0, S1)` of `Y` are from `XQ`, `[S1, S2)` from `XK` and `[S2, N)` from
++    `XV`. Each segment has its own column tiles, so that no tile spans two
++    inputs."""
++    pid = tl.program_id(0)
++    tiles_q = tl.cdiv(S1, BN)
++    tiles_k = tl.cdiv(S2 - S1, BN)
++    x, sx, start, end = XQ, SXQ, pid * 0, S1
++    if pid >= tiles_q + tiles_k:
++        x, sx, start, end = XV, SXV, S2 + (pid - tiles_q - tiles_k) * BN, N
++    elif pid >= tiles_q:
++        x, sx, start, end = XK, SXK, S1 + (pid - tiles_q) * BN, S2
++    else:
++        start = pid * BN
++    rows = tl.arange(0, MP)
++    cols = start + tl.arange(0, BN)
++    ks = tl.arange(0, BK)
++    x_ptrs = x + (rows[:, None] * sx + ks[None, :])
++    w_ptrs = W + (cols[None, :] * SWN + ks[:, None])
++    acc = tl.zeros((MP, BN), tl.float32)
++    for _ in range(0, K, BK):
++        w = tl.load(w_ptrs, (cols[None, :] < end) & (ks[:, None] < K), other=0)
++        xv = tl.load(x_ptrs, (rows[:, None] < M) & (ks[None, :] < K), other=0)
++        acc += tl.dot(xv, w.to(tl.bfloat16))
++        x_ptrs += BK
++        w_ptrs += BK
++        ks += BK
++    acc *= tl.load(WS + cols, cols < end, other=0)[None, :]
++    tl.store(
++        Y + (rows[:, None] * SYM + cols[None, :]),
++        acc.to(Y.dtype.element_ty),
++        (rows[:, None] < M) & (cols[None, :] < end),
++    )
++
++
++@triton.jit
++def _w8_dequant_kernel(W, WS, Y, K, SWN, BLOCK: tl.constexpr):
++    row = tl.program_id(0)
++    offs = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
++    mask = offs < K
++    w = tl.load(W + row * SWN + offs, mask, other=0).to(tl.float32)
++    tl.store(Y + row * K + offs, (w * tl.load(WS + row)).to(tl.bfloat16), mask)
++
++
++@functools.cache
++def _counter(stream: int) -> torch.Tensor:
++    """Split-K tile counters for one stream; each launch leaves them zeroed."""
++    return torch.zeros(_MAX_TILES, dtype=torch.int32, device="cuda")
++
++
++@functools.cache
++def _config(n: int, k: int) -> tuple[int, int, int, int, int]:
++    """`(BN, BK, split, num_warps, num_stages)` from a sweep on the RTX 3090
++    with one row (a decoding step): 32-column tiles over all of K for the
++    wide projections (qkvr: 26 us, 765 GB/s; the LM head: 528 us, 877 GB/s),
++    split-K for the narrow ones (k, v: 5 us)."""
++    if n < 2048:
++        return 32, 256, 6, 4, 3
++    return 32, 128, 1, 4, 3
++
++
++def quantize_rows(weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++    """Symmetric int8 with one fp32 scale per row, in chunks of rows to bound
++    the temporary memory."""
++    q = torch.empty(weight.shape, dtype=torch.int8, device=weight.device)
++    scale = torch.empty(weight.shape[0], dtype=torch.float32, device=weight.device)
++    for start in range(0, weight.shape[0], 8192):
++        rows = slice(start, start + 8192)
++        w = weight[rows].float()
++        s = w.abs().amax(dim=1).clamp(min=1e-12) / 127
++        q[rows] = torch.round(w / s[:, None]).clamp(-127, 127).to(torch.int8)
++        scale[rows] = s
++    return q, scale
++
++
++def dequantize_rows(q: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
++    """BF16 `q * scale[:, None]` of int8 rows `[N, K]`."""
++    n, k = q.shape
++    out = torch.empty((n, k), dtype=torch.bfloat16, device=q.device)
++    if n:
++        block = 1024
++        _w8_dequant_kernel[(n, triton.cdiv(k, block))](
++            q, scale, out, k, q.stride(0), BLOCK=block
++        )
++    return out
++
++
++def w8_linear(
++    x: torch.Tensor,
++    q: torch.Tensor,
++    scale: torch.Tensor,
++    out_dtype: torch.dtype | None = None,
++    out: torch.Tensor | None = None,
++) -> torch.Tensor:
++    """`x @ (q * scale[:, None]).T` for BF16 `x` `[..., K]` and int8 `q`
++    `[N, K]` (possibly a slice of rows), into `out` `[M, N]` if given."""
++    n, k = q.shape
++    assert q.stride(1) == 1 and x.shape[-1] == k
++    lead = x.shape[:-1]
++    x2 = x.reshape(-1, k)
++    m = x2.shape[0]
++    if out is None:
++        out = x2.new_empty((m, n), dtype=out_dtype or x.dtype)
++    if m == 0:
++        return out.view(*lead, n)
++    if m > MAX_M:
++        for start in range(0, n, _DEQUANT_ROWS):
++            rows = slice(start, start + _DEQUANT_ROWS)
++            w = dequantize_rows(q[rows], scale[rows])
++            if out.dtype == torch.bfloat16:
++                torch.mm(x2, w.t(), out=out[:, rows])
++            else:
++                out[:, rows] = torch.mm(x2, w.t(), out_dtype=out.dtype)
++        return out.view(*lead, n)
++    if x2.stride(1) != 1:
++        x2 = x2.contiguous()
++    bn, bk, split, num_warps, num_stages = _config(n, k)
++    k_tiles = triton.cdiv(k, bk)
++    split = min(split, k_tiles)
++    tiles_per_split = triton.cdiv(k_tiles, split)
++    split = triton.cdiv(k_tiles, tiles_per_split)
++    n_tiles = triton.cdiv(n, bn)
++    partials = counter = None
++    if split > 1:
++        assert n_tiles <= _MAX_TILES
++        partials = torch.empty((split, _MP, n), dtype=torch.float32, device=x.device)
++        counter = _counter(current_stream().cuda_stream)
++    _w8_gemm_kernel[(n_tiles, split)](
++        x2,
++        q,
++        scale,
++        out,
++        partials,
++        counter,
++        m,
++        n,
++        k,
++        x2.stride(0),
++        q.stride(0),
++        out.stride(0),
++        BN=bn,
++        BK=bk,
++        K_PER_SPLIT=tiles_per_split * bk,
++        SPLIT=split,
++        MP=_MP,
++        num_warps=num_warps,
++        num_stages=num_stages,
++    )
++    return out.view(*lead, n)
++
++
++def quantize_module(module: nn.Module) -> None:
++    """Replace `module.weight` (BF16 `[N, K]`) by int8 rows `w8_q` and scales
++    `w8_scale`; `weight` keeps its dtype with no elements."""
++    weight = module.weight
++    q, scale = quantize_rows(weight.data)
++    module.register_buffer("w8_q", q, persistent=False)
++    module.register_buffer("w8_scale", scale, persistent=False)
++    weight.data = weight.data.new_empty((0,))
++
++
++def is_quantized(module: nn.Module) -> bool:
++    return getattr(module, "w8_q", None) is not None
++
++
++def weight_rows(module: nn.Module, rows: slice | None = None) -> torch.Tensor:
++    """BF16 rows of a weight, dequantized if `module` is quantized."""
++    if not is_quantized(module):
++        weight = module.weight
++        return weight if rows is None else weight[rows]
++    rows = rows or slice(None)
++    return dequantize_rows(module.w8_q[rows], module.w8_scale[rows])
++
++
++def embedding(module: nn.Module, ids: torch.Tensor) -> torch.Tensor:
++    """BF16 rows `ids` of a quantized embedding table."""
++    return (module.w8_q[ids].float() * module.w8_scale[ids, None]).to(torch.bfloat16)
++
++
++def embed(module: nn.Module, ids: torch.Tensor) -> torch.Tensor:
++    """The embedding rows `ids` of `module` (a `VocabParallelEmbedding`)."""
++    return embedding(module, ids) if is_quantized(module) else module(ids)
++
++
++# (BN, BK, num_warps, num_stages) of `w8_qkv`: 26 us for the q, k and v
++# projections of a loop layer on the RTX 3090 (three launches: 30 us).
++QKV_CONFIG = (32, 128, 4, 3)
++
++
++def w8_qkv(
++    x_q: torch.Tensor,
++    x_k: torch.Tensor,
++    x_v: torch.Tensor,
++    q: torch.Tensor,
++    scale: torch.Tensor,
++    k_start: int,
++    v_start: int,
++) -> torch.Tensor:
++    """One launch of three int8 linears on consecutive row ranges of `q`
++    `[N, K]` (`ll_gemm_sm120.qkv_bmm`): output columns `[0, k_start)` from
++    `x_q`, `[k_start, v_start)` from `x_k` and the rest from `x_v`, each
++    `[M, K]` with M <= MAX_M."""
++    m, k = x_q.shape
++    n = q.shape[0]
++    bn, bk, num_warps, num_stages = QKV_CONFIG
++    assert 0 < m <= MAX_M and q.stride(1) == 1
++    assert all(x.shape == (m, k) and x.stride(1) == 1 for x in (x_q, x_k, x_v))
++    assert 0 < k_start < v_start < n
++    out = torch.empty((m, n), dtype=x_q.dtype, device=x_q.device)
++    tiles = (
++        triton.cdiv(k_start, bn)
++        + triton.cdiv(v_start - k_start, bn)
++        + triton.cdiv(n - v_start, bn)
++    )
++    _w8_qkv_kernel[(tiles,)](
++        x_q,
++        x_k,
++        x_v,
++        q,
++        scale,
++        out,
++        m,
++        n,
++        k,
++        k_start,
++        v_start,
++        x_q.stride(0),
++        x_k.stride(0),
++        x_v.stride(0),
++        q.stride(0),
++        out.stride(0),
++        BN=bn,
++        BK=bk,
++        MP=_MP,
++        num_warps=num_warps,
++        num_stages=num_stages,
++    )
++    return out
++
++
++def use_w8_qkv(x_q: torch.Tensor, x_k: torch.Tensor, x_v: torch.Tensor) -> bool:
++    """Whether `w8_qkv` serves BF16 `x_q`, `x_k`, `x_v` `[M, K]`."""
++    return (
++        x_q.ndim == 2
++        and 0 < x_q.shape[0] <= MAX_M
++        and x_q.shape == x_k.shape == x_v.shape
++        and x_q.stride(1) == x_k.stride(1) == x_v.stride(1) == 1
++    )

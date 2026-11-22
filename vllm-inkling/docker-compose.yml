@@ -4,7 +4,7 @@
 # with both.
 services:
   vllm-inkling:
-    # The vLLM nightly with inkling-sm86.patch, see README.md.
+    # The vLLM nightly with the patches of README.md.
     # Built by ../.github/workflows/deploy-docker-vllm-inkling.yml. Locally: docker build -t <the image> .
     image: ghcr.io/agenttix/agx-ai/vllm-inkling:latest
     container_name: vllm-inkling
@@ -27,9 +27,12 @@ services:
       # Download first: hf download thinkingmachines/Inkling-2-Mini
       - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
       - vllm-cache:/root/.cache/vllm
-      # Select the configuration here
+      # Select the configuration here (README.md): 98304 tokens; 57344 with the DSpark drafter (code edits 2.8 times as
+      # fast); 131072 or 262144 with experts in RAM (generation 25 % or 63 % slower)
       - ./config-inkling-2-mini.yaml:/etc/vllm/config.yaml:ro
       # - ./config-inkling-2-mini-dspark.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-inkling-2-mini-131k.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-inkling-2-mini-262k.yaml:/etc/vllm/config.yaml:ro
     deploy:
       resources:
         reservations:

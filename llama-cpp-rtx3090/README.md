@@ -36,8 +36,8 @@ context, 106 t/s in chat), but vLLM is 2.7 times as fast for it on this GPU and 
 [`preset-inkling-2-mini.ini`](preset-inkling-2-mini.ini) (`UD-Q4_K_XL`, Unsloth's DSpark drafter, vision encoder on
 the CPU, 118784 tokens of context, 51 t/s in chat, 46 t/s at 36.5k and 31 t/s at 100k, code edits 80 t/s, prompts
 495-240 t/s): its image is upstream's b12627 with the drafter of an open pull request
-([`../llama-cpp-inkling`](../llama-cpp-inkling)). vLLM ([`../vllm-inkling`](../vllm-inkling)) is 1.8-3.7 times as
-fast for it, but fits 16384-49152 tokens of context.
+([`../llama-cpp-inkling`](../llama-cpp-inkling)). vLLM ([`../vllm-inkling`](../vllm-inkling)) is 2.5 times as fast
+for it with 98304 tokens of context and fits up to 262144 with experts in RAM.
 
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
 (`no-mmproj-offload = 1`) for the Gemma 4 31B models. Each preset has the context size for the other choice as a
@@ -714,9 +714,10 @@ with its buffers, so the preset has 118784 tokens of context instead of 131072. 
 | Peak VRAM of llama-server | 21360 MiB |
 
 Prompt processing is slow for a model of this size, as every token passes 48 layers and the small ubatch reads the
-experts more often. **vLLM** ([`../vllm-inkling`](../vllm-inkling), with a patch for sm_86) generates 1.8 times as
-fast (94 t/s in chat, 295 t/s in code edits with its drafter) and processes prompts ~9 times as fast, but fits only
-49152 tokens of context (16384 with its drafter), with BF16 weights outside the experts and a BF16 KV cache.
+experts more often. **vLLM** ([`../vllm-inkling`](../vllm-inkling), with patches for sm_86 and int8 attention and LM
+head weights) generates 2.5 times as fast with 98304 tokens of context (129 t/s in chat; 336 t/s in code edits with its
+drafter and 57344 tokens) and processes prompts 6-9 times as fast; with experts in RAM, it fits 131072 tokens at 96
+t/s or 262144 tokens at 48 t/s (33 t/s after 259k tokens, prompts ~900-1100 t/s), with a BF16 KV cache.
 
 ## Commands
 

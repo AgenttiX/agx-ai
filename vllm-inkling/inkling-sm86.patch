@@ -141,3 +141,39 @@ diff -ruN a/models/inkling2/quant_config.py b/models/inkling2/quant_config.py
  
      @staticmethod
      def get_config_filenames() -> list[str]:
+diff -ruN a/models/inkling2/nvidia/ops/ll_gemm_sm120.py b/models/inkling2/nvidia/ops/ll_gemm_sm120.py
+--- a/models/inkling2/nvidia/ops/ll_gemm_sm120.py	2026-11-22 15:24:51.507740256 +0200
++++ b/models/inkling2/nvidia/ops/ll_gemm_sm120.py	2026-11-22 15:24:51.512980961 +0200
+@@ -172,6 +172,16 @@
+ 
+ 
+ @functools.cache
++def _supported_device() -> bool:
++    """SM12x, and (agx-ai) the GPUs below SM90 such as sm_86, which have the
++    same mma.sync tensor cores and no faster low-M path: on the RTX 3090,
++    these kernels read the weights at ~790-840 GB/s, cuBLAS at 620-800."""
++    return current_platform.is_device_capability_family(
++        120
++    ) or not current_platform.has_device_capability(90)
++
++
++@functools.cache
+ def _config(nb: int, n: int, k: int) -> _Config:
+     """Split K into about one wave of programs when that gives at least 3
+     splits, preferring 16-column tiles; otherwise one 32-column tile over all
+@@ -252,7 +262,7 @@
+         and x_q.shape == x_k.shape == x_v.shape
+         and x_q.dtype == x_k.dtype == x_v.dtype == w.dtype == torch.bfloat16
+         and x_q.stride(1) == x_k.stride(1) == x_v.stride(1) == w.stride(1) == 1
+-        and current_platform.is_device_capability_family(120)
++        and _supported_device()
+     )
+ 
+ 
+@@ -358,5 +368,5 @@
+                 and bias.stride(0) == 1
+             )
+         )
+-        and current_platform.is_device_capability_family(120)
++        and _supported_device()
+     )

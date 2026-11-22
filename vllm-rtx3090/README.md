@@ -58,10 +58,11 @@ left 0.8-1.0 GiB free:
   on the CPU. With 262144 tokens of context, both keep some experts in RAM, and vLLM is still faster: chat 132 vs 114
   t/s, 125 vs 66 t/s at 200k tokens, edits 212 vs 184 t/s, prompts 1.3-1.7 times as fast. See
   [Phai-A1-35B-1M](#phai-a1-35b-1m).
-- **Inkling 2 Mini: vLLM is faster, llama.cpp fits more context.** vLLM needs its own image
-  ([`../vllm-inkling`](../vllm-inkling), the nightly with a patch for sm_86) and generates 1.8-3.7 times as fast (chat
-  94-116 vs 51 t/s, edits 295 vs 80 t/s with the drafters), but fits 16384-49152 tokens of context instead of 118784.
-  See [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
+- **Inkling 2 Mini: vLLM is faster.** vLLM needs its own image ([`../vllm-inkling`](../vllm-inkling), the nightly with
+  patches for sm_86 and int8 attention and LM head weights) and generates 2.5 times as fast with 98304 tokens of context
+  (chat 129 vs 51 t/s; with the drafters, edits 336 vs 80 t/s with 57344 tokens), 1.9 times as fast with 131072 tokens
+  (experts of 2 layers in RAM), and about as fast with 262144 tokens (48 t/s, experts of 9 layers in RAM), while
+  llama.cpp fits 118784 tokens. See [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
 The rest of this file has the measurements behind the settings. They were made on 2026-10-12 with the tools in
 [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md), on test servers ([`../agx_ai/benchmark/vllm/test_server.py`](../agx_ai/benchmark/vllm/test_server.py),

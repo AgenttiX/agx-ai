@@ -102,7 +102,8 @@ model_list:
       max_input_tokens: 112640
 
   # ../llama-cpp-rtx3090/docker-compose-inkling.yml (preset-inkling-2-mini.ini). ../vllm-inkling serves the same model
-  # name on the same port, faster but with 49152 tokens of context (16384 with its drafter) and no videos.
+  # name on the same port, faster, with 98304 tokens of context (57344 with its drafter, 131072 or 262144 with experts
+  # in RAM) and no videos.
   - model_name: agx-z2e/thinkingmachines/Inkling-2-Mini
     litellm_params:
       model: openai/thinkingmachines/Inkling-2-Mini
