@@ -43,6 +43,8 @@ services:
       # Select the LLM model here
       - ./config-gemma-4-26b-a4b-qat.yaml:/etc/vllm/config.yaml:ro
       # - ./config-qwen3.8-27b.yaml:/etc/vllm/config.yaml:ro
+      # Phai-A1-35B-1M (slower than ../llama-cpp-radeon-vii). Build the checkpoint first, see ../vllm-rtx3090/README.md.
+      # - ./config-phai-a1-35b-1m-262k.yaml:/etc/vllm/config.yaml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

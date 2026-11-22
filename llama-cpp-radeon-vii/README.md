@@ -649,9 +649,10 @@ the full-context prompt and the chat with 112640):
 | Image 1280x960, prompt processing | 10.3 s (vision encoder on the CPU) |
 | Peak VRAM | 16212 MiB of 16368 (ctx 112640) |
 
-vLLM was not tried for this model on the Radeon VII: its 4-bit weights take 18.1 GiB
-([`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m)), and vLLM can only stream weights that do not fit
-from RAM over PCIe 3.0 in every step (`cpu-offload-gb`), whereas llama.cpp computes the experts in RAM on the CPU.
+vLLM runs this model on the Radeon VII only with 7.2 GiB of its 4-bit experts read from RAM over PCIe 3.0 (UVA), and
+is clearly slower than llama.cpp, which computes the experts in RAM on the CPU: chat 36 vs 50 t/s with 262144 tokens
+of context, prompts 2.8-3.6 times as slow (see
+[`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#phai-a1-35b-1m-2026-11-22)).
 Inkling 2 Mini: see [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
 ### 262144 tokens of context (2026-11-22)

@@ -1,0 +1,48 @@
+# vllm serve --config for Phai-A1-35B-1M on the Radeon VII with 262144 tokens of context. Benchmarks: README.md.
+# Slower than ../llama-cpp-radeon-vii/preset-phai-a1-35b-1m-262k.ini (chat 36 vs 50 t/s, prompts ~300 vs ~840 t/s),
+# which is the recommended way to run this model on this GPU.
+# The checkpoint of ../vllm-rtx3090/config-phai-a1-35b-1m.yaml (built locally, see ../vllm-rtx3090/README.md): int4
+# experts, int8 dense layers, int4 embedding, 18.1 GiB, which does not fit in the 16 GB, so 7.2 GiB of the routed
+# experts are in pinned RAM.
+model: /models/Phai-A1-35B-1M-W4A16-mtp
+served-model-name: PhaiModelLab/Phai-A1-35B-1M
+# gfx906 has no native bf16.
+dtype: float16
+# Images and videos with the vision tower on the CPU (QWEN38_VISION_DEVICE in docker-compose.yml, cpu_vision_qwen.py;
+# cpu-vision.patch builds it for the MoE model too), which takes no VRAM. As in config-qwen3.8-27b.yaml.
+limit-mm-per-prompt: {"image": 64, "video": 1}
+skip-mm-profiling: true
+mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 4194304}}
+media-io-kwargs: {"video": {"max_frames": 64}}
+max-model-len: 262144
+# 308404 tokens (the scheduler needs some extra blocks for the recurrent states).
+kv-cache-memory-bytes: 3300000000
+# int8 with a scale per token and head needs the Triton attention (see config-qwen3.8-27b.yaml).
+kv-cache-dtype: int8_per_token_head
+attention-backend: TRITON_ATTN
+# The recurrent state of the 30 Gated DeltaNet layers in FP16 instead of FP32.
+mamba-ssm-cache-dtype: float16
+# Routed experts in pinned RAM, read by the GPU over PCIe 3.0 (UVA). The model then takes 10.9 GiB of VRAM.
+offload-backend: uva
+cpu-offload-gb: 7
+cpu-offload-params: [experts]
+# One request at a time, like parallel = 1 of the llama.cpp preset.
+max-num-seqs: 1
+# The prefill chunk.
+max-num-batched-tokens: 2048
+# CUDA graphs only for single-token decoding.
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1]}
+enable-prefix-caching: true
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as for Qwen3.6.
+
+# No MTP: with MTP 2 and prefix caching, the first request crashed the GPU (a hardware exception in an index_put
+# kernel after the Mamba state copy of prefix caching). Without prefix caching, MTP 2 ran, but chats were slower
+# (27.9 vs 36.3 t/s; every verification step reads more experts over PCIe), and only code edits were faster (41.9 vs
+# 35.4 t/s):
+# speculative-config: {"method": "mtp", "num_speculative_tokens": 2}
+# compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3]}
+# kv-cache-memory-bytes: 3300000000  (274577 tokens with the MTP layer)
+# enable-prefix-caching: false

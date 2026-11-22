@@ -93,9 +93,9 @@ diff -ruN a/model_executor/models/gemma4_mm.py b/model_executor/models/gemma4_mm
          free, total = torch.accelerator.get_memory_info()
          max_batch_size = min(
 diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
---- a/model_executor/models/qwen3_5.py	2026-10-09 00:59:06.000000000 +0300
-+++ b/model_executor/models/qwen3_5.py	2026-10-29 00:35:38.304776293 +0200
-@@ -103,6 +103,10 @@
+--- a/model_executor/models/qwen3_5.py
++++ b/model_executor/models/qwen3_5.py
+@@ -103,6 +103,29 @@
  logger = init_logger(__name__)
  
  
@@ -103,10 +103,29 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 +from .qwen3_vl_cpu_vision import CpuVisionTower, cpu_vision_enabled
 +
 +
++def _build_visual(
++    model: nn.Module, vllm_config: VllmConfig, quant_config, prefix: str
++) -> nn.Module:
++    """agx-ai: the vision tower of Qwen3.5/3.6/3.8 (dense and MoE) on the CPU with QWEN38_VISION_DEVICE=cpu.
++
++    It then takes no VRAM, and its inputs stay on the CPU too (gpu_model_runner.py).
++    """
++    config = vllm_config.model_config.hf_config
++    if cpu_vision_enabled():
++        model.mm_encoder_inputs_on_cpu = True
++        return CpuVisionTower(config.vision_config, out_dtype=vllm_config.model_config.dtype)
++    return Qwen3_VisionTransformer(
++        config.vision_config,
++        norm_eps=getattr(config, "rms_norm_eps", 1e-6),
++        quant_config=quant_config,
++        prefix=maybe_prefix(prefix, "visual"),
++    )
++
++
  class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
      def get_hf_config(self):
          return self.ctx.get_hf_config(Qwen3_5Config)
-@@ -513,12 +517,19 @@
+@@ -513,12 +536,7 @@
          self.multiscale_dim = self.visual_dim * self.deepstack_num_level
  
          with self._mark_tower_model(vllm_config, {"image", "video"}):
@@ -116,22 +135,24 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 -                quant_config=quant_config,
 -                prefix=maybe_prefix(prefix, "visual"),
 -            )
-+            if cpu_vision_enabled():
-+                # agx-ai: no VRAM for the vision tower; its inputs stay on the CPU too (gpu_model_runner.py).
-+                self.visual = CpuVisionTower(
-+                    config.vision_config, out_dtype=vllm_config.model_config.dtype
-+                )
-+                self.mm_encoder_inputs_on_cpu = True
-+            else:
-+                self.visual = Qwen3_VisionTransformer(
-+                    config.vision_config,
-+                    norm_eps=getattr(config, "rms_norm_eps", 1e-6),
-+                    quant_config=quant_config,
-+                    prefix=maybe_prefix(prefix, "visual"),
-+                )
++            self.visual = _build_visual(self, vllm_config, quant_config, prefix)
  
          with self._mark_language_model(vllm_config):
              self.language_model = Qwen3_5ForCausalLM(
+@@ -732,12 +750,7 @@
+         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+ 
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.visual = Qwen3_VisionTransformer(
+-                config.vision_config,
+-                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-                quant_config=quant_config,
+-                prefix=maybe_prefix(prefix, "visual"),
+-            )
++            self.visual = _build_visual(self, vllm_config, quant_config, prefix)
+ 
+         with self._mark_language_model(vllm_config):
+             self.language_model = Qwen3_5MoeForCausalLM(
 diff -ruN a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
 --- a/v1/worker/gpu_model_runner.py	2026-10-09 00:59:06.000000000 +0300
 +++ b/v1/worker/gpu_model_runner.py	2026-10-29 00:35:38.307550849 +0200

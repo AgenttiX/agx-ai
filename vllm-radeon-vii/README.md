@@ -6,15 +6,16 @@ GPU at a time. The image is [`aiinfos/vllm-gfx906-mobydick`](https://github.com/
 (vLLM v0.30.0 with ROCm 7.14 and custom gfx906 kernels) with a few fixes ([`Dockerfile`](Dockerfile),
 [`vllm-gfx906.patch`](vllm-gfx906.patch)), built by
 [`../.github/workflows/deploy-docker-vllm-radeon-vii.yml`](../.github/workflows/deploy-docker-vllm-radeon-vii.yml).
-The model is selected in [`docker-compose.yml`](docker-compose.yml). There are two configurations, both with the
-language model entirely on the GPU, an int8 KV cache, prefix caching and 8 GiB of CPU KV offloading (2026-10-14), and
-images and videos with the vision tower on the CPU, which takes no VRAM and no context
-([images and videos](#images-and-videos-2026-10-29)):
+The model is selected in [`docker-compose.yml`](docker-compose.yml). There are three configurations, all with an int8 KV
+cache, prefix caching, and images and videos with the vision tower on the CPU, which takes no VRAM and no context
+([images and videos](#images-and-videos-2026-10-29)); the first two with the language model entirely on the GPU and
+8 GiB of CPU KV offloading (2026-10-14):
 
 | Configuration | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) (default) | Gemma 4 26B-A4B QAT, int4 bit-exact with Google's Q4_0 (built locally, see below) | 47104 | 16280 MiB of 16368 | 11.2 GiB (8 GiB of it the KV offloading) | 110 t/s, chat 106 t/s; 69/58/45 t/s at 6.4k/16k/32k tokens of context | 804/532/342 t/s at 6.4k/16k/32k, 263 t/s for 45.6k | [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) is better for this model, also for images and videos; an image ~9 s, a video 6 frames |
 | [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) | Qwen3.8-27B GPTQ int4 with int4 embedding and lm_head | 33792 | 16285 MiB of 16368 | 11.0 GiB (8 GiB of it the KV offloading) | 44 t/s, chat 43 t/s; 37/30/25 t/s at 6.4k/16k/28k | 240/179/136 t/s at 6.4k/16k/28k, 125 t/s for 32.3k | faster than llama.cpp up to ~28k tokens of context, which fits more context; an image ~30 s (llama.cpp: ~14 s), a video ~2000 tokens |
+| [`config-phai-a1-35b-1m-262k.yaml`](config-phai-a1-35b-1m-262k.yaml) | [Phai-A1-35B-1M](#phai-a1-35b-1m-2026-11-22) W4A16 (built locally), 7.2 GiB of the experts in RAM, no MTP | 262144 | 15281 MiB | ~20 GiB (7.2 GiB experts) | chat 36 t/s; 35/32/28 t/s at 6.4k/16k/36.5k | 298/265/212 t/s at 6.4k/16k/36.5k; a 260k prompt did not finish in an hour | [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) is better: 50 t/s, 300 t/s for 260k |
 
 **Compared with the llama.cpp presets on this GPU:**
 
@@ -401,6 +402,37 @@ Gemma 4 checkpoints would need changes to vLLM's model code. Not tried in the im
 
 DiffusionGemma runs on this GPU with the llama.cpp of a draft pull request, with the experts of 10 layers in RAM, at
 17 t/s in chat: see [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md#diffusiongemma-2026-11-20).
+
+
+## Phai-A1-35B-1M (2026-11-22)
+
+[`config-phai-a1-35b-1m-262k.yaml`](config-phai-a1-35b-1m-262k.yaml) runs the W4A16 checkpoint of
+[`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m) (int4 experts, int8 dense layers, int4 embedding,
+18.1 GiB) with 262144 tokens of context: 7.2 GiB of the routed experts are in pinned RAM, which the GPU reads over
+PCIe 3.0 (UVA, `offload-backend: uva`), and the model takes 10.9 GiB of VRAM. Images and videos run with the vision
+tower on the CPU: `cpu-vision.patch` now builds it for the MoE model too (`_build_visual` in `qwen3_5.py`, as in
+`../vllm/vllm.patch`). Results (`bench_http.py`, without MTP):
+
+| Test | Result |
+|---|---|
+| Chat, 6 requests | 36.3 t/s |
+| Depth 6.4k / 16k / 36.5k | 34.5 / 32.2 / 28.0 t/s; prompt 298 / 265 / 212 t/s |
+| Edit after 2.3k tokens | 35.4 t/s, prompt 310 t/s |
+| Full-context prompt (260644 tokens) | did not finish: no progress after the first ~13k tokens in an hour (GPU at 100 %) |
+| Image 1280x960 (991 tokens) | 29 s (the 640x360 test image: 3.1 s, correct) |
+| Video, 20 s 640x360 (2028 tokens) | 24 s, correct |
+| Peak VRAM | 15281 MiB |
+
+- **MTP crashed the GPU with prefix caching**: with 2 drafts, the first request ended in a hardware exception in an
+  `index_put` kernel after the Mamba state copy of prefix caching (`precopy_mamba_align_fused_kernel`). Without
+  prefix caching, MTP 2 ran, but chats were slower (27.9 vs 36.3 t/s: each verification step reads more experts
+  over PCIe), only code edits faster (41.9 vs 35.4 t/s).
+- Prompt processing is slow, as the MoE kernels read the experts in RAM over PCIe 3.0 for every tile.
+
+**llama.cpp is clearly better** for this model on this GPU
+([`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii/README.md#262144-tokens-of-context-2026-11-22), the same context
+with the experts of 22 layers computed by the CPU): chat 50 vs 36 t/s, 51 vs 28 t/s at 36.5k tokens, prompts 2.8-3.6
+times as fast, and the full 260k-token prompt in 14.5 min.
 
 ## Other findings
 
