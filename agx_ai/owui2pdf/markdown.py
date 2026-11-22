@@ -261,19 +261,31 @@ def bookmark_preview(body: str, limit: int = 60) -> str:
     return preview[:limit] + ("…" if len(preview) > limit else "")
 
 
+def model_name(model: object, show_host: bool = True) -> str:
+    """Return the model name, optionally without the host part.
+
+    If ``show_host`` is false and the name has more than one '/', the part
+    before the first '/' is removed.
+    """
+    name = str(model)
+    if not show_host and name.count("/") > 1:
+        name = name.split("/", 1)[1]
+    return name
+
+
 def message_markdown(msg: dict, opts: argparse.Namespace, media_dir: Path, img_counter: list[int],
                      registry: SourceRegistry | None) -> str:
     """Render a single chat message as Markdown with a role header."""
     role = (msg.get("role") or "assistant").lower()
     label, bg, fg = ROLE_STYLES.get(role, ROLE_STYLES["assistant"])
-    if role == "user":
+    if role == "user" and opts.show_user:
         user = msg.get("user") if isinstance(msg.get("user"), dict) else {}
         if user.get("name"):
             label = f"User ({user['name']})"
 
     meta_bits = []
     if role != "user" and msg.get("model"):
-        meta_bits.append(str(msg["model"]))
+        meta_bits.append(model_name(msg["model"], opts.show_host))
     ts = fmt_timestamp(msg.get("timestamp"), datetime_format(opts.show_dates, opts.show_times))
     if ts:
         meta_bits.append(ts)
@@ -344,7 +356,7 @@ def build_markdown(chat_item: dict, opts: argparse.Namespace, media_dir: Path) -
 
     ``opts`` needs the attributes ``show_usage``, ``show_sources``,
     ``include_reasoning``, ``include_notes``, ``user_paragraphs``,
-    ``show_dates`` and ``show_times`` (the parsed command line arguments work).
+    ``show_user``, ``show_host``, ``show_dates`` and ``show_times`` (the parsed command line arguments work).
     """
     chat = chat_body(chat_item)
     models = chat.get("models") or []
@@ -353,7 +365,7 @@ def build_markdown(chat_item: dict, opts: argparse.Namespace, media_dir: Path) -
     meta = {
         "title": chat_title(chat_item),
         "date": fmt_timestamp(created, datetime_format(opts.show_dates, opts.show_times)),
-        "subtitle": ", ".join(str(m) for m in models),
+        "subtitle": ", ".join(model_name(m, opts.show_host) for m in models),
         "keywords": [str(t) for t in tags if isinstance(t, (str, int))],
     }
 

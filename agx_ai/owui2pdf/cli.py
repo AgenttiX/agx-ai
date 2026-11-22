@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "of referenced notes; the API key is read from --notes-token or the "
                         "OWUI_API_KEY environment variable")
     p.add_argument("--notes-token", metavar="KEY", help="API key for --notes-url")
+    p.add_argument("--no-user", dest="show_user", action="store_false",
+                   help="omit the user name in the headers of user messages")
+    p.add_argument("--no-host", dest="show_host", action="store_false",
+                   help="omit the host part of model names: remove the part before the first "
+                        "'/' if the name has more than one '/' (e.g. host/org/model -> org/model)")
     p.add_argument("--no-usage", dest="show_usage", action="store_false",
                    help="omit token usage in message headers")
     date_time_options(p, "chat")

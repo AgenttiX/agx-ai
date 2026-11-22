@@ -285,6 +285,22 @@ def test_bookmark_preview() -> None:
     assert markdown.bookmark_preview("word " * 30, limit=10) == "word word …"
 
 
+def test_model_name() -> None:
+    assert markdown.model_name("host/org/model") == "host/org/model"
+    assert markdown.model_name("host/org/model", show_host=False) == "org/model"
+    assert markdown.model_name("a/b/c/d", show_host=False) == "b/c/d"
+    assert markdown.model_name("org/model", show_host=False) == "org/model"
+    assert markdown.model_name("model", show_host=False) == "model"
+
+
+def test_message_markdown_no_host(tmp_path: Path) -> None:
+    msg = {"role": "assistant", "model": "host/org/model", "content": "x"}
+    assert "host/org/model" in markdown.message_markdown(msg, options(), tmp_path, [0], None)
+    out = markdown.message_markdown(msg, options(show_host=False), tmp_path, [0], None)
+    assert "org/model" in out
+    assert "host/" not in out
+
+
 def test_message_markdown(tmp_path: Path) -> None:
     msg = {"role": "user", "user": {"name": "Mika"}, "content": "Hi_there", "timestamp": 1_700_000_000,
            "error": {"content": "failed"}}
@@ -300,6 +316,9 @@ def test_message_markdown(tmp_path: Path) -> None:
     assert f"{{User (Mika)}}{{{time}}}" in out
     out = markdown.message_markdown(msg, options(show_dates=False, show_times=False), tmp_path, [0], None)
     assert r"\owuiheader{owuiUserBg}{owuiUserFg}{User (Mika)}{}" in out
+    out = markdown.message_markdown(msg, options(show_user=False), tmp_path, [0], None)
+    assert r"\owuiheader{owuiUserBg}{owuiUserFg}{User}{" in out
+    assert "Mika" not in out
     empty = markdown.message_markdown({"role": "assistant", "model": "m"}, options(), tmp_path, [0], None)
     assert "*(empty message)*" in empty
     assert "{owuiAssistantBg}" in empty
