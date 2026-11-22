@@ -95,6 +95,20 @@ greedy output of a story prompt is the same for its first ~30 tokens. The DSpark
 embedding: 73 % of its drafts are accepted in code edits (BF16: 80 %), and edits are still faster (336 vs 295 t/s).
 FP8 weights would be as small, but the RTX 3090 has no FP8 conversion instructions (Triton's `fp8e4nv` needs SM89).
 
+Long-context retrieval (`../agx_ai/benchmark/quality_http.py --tests retrieval --answer-prefill`, 176 questions at 8k,
+32k, 60k and 75k tokens of context; the prefill skips Inkling's thinking, which `enable_thinking` does not turn off):
+
+| Run | Single lookups | Two-step lookups | Correct | Same answers as BF16 | Mean KLD of the answer tokens |
+|---|---|---|---|---|---|
+| BF16 weights, prefill chunk 512 (reference) | 128/128 | 35/48 | 163/176 | | |
+| BF16 weights, prefill chunk 256 (noise floor) | 128/128 | 32/48 | 160/176 | 171/176 | 0.017 |
+| int8 weights (`config-inkling-2-mini.yaml`) | 128/128 | 33/48 | 161/176 | 168/176 | 0.025 |
+
+The int8 weights are within the noise of a lossless change. The
+differences are all in the two-step lookups (service -> database -> region, with the two facts far apart): 7-8 of 12
+at 60k and 75k tokens. Other models in the same test: Qwen3.8-Flash-Next 169, Qwen3.8-27B 165-166,
+Terminal-RSI-27B 166, Phai-A1-35B-1M 152-156 (`../benchmark/results/agx-z2e-kubuntu-quality.jsonl`).
+
 ## Experts in RAM (2026-11-22)
 
 With `inkling2_cpu_expert_layers`, the routed experts of the given layers (their Humming weights and block scales)
@@ -155,9 +169,9 @@ model, and the weights (18.3 GiB) do not fit in its 16 GB. llama.cpp runs the mo
 ## Results (2026-11-22)
 
 `bench_http.py`, one request at a time, with the image of the patches above; the long prompts are source files of this
-repository (the depth test of `bench_http.py` cannot run: its prompt builder tokenizes more text than vLLM's
-`/tokenize` accepts, twice `max-model-len`). Generation after a long prompt is measured with the prompt in the prefix
-cache.
+repository. Generation after a long prompt is measured with the prompt in the prefix cache. The depth test of
+`bench_http.py` runs since its prompt builder tokenizes only the prefix it needs (vLLM's `/tokenize` takes at most
+twice `max-model-len` tokens).
 
 | Test | default (98304) | DSpark (57344) | 131072, 2 layers in RAM | 262144, 9 layers in RAM |
 |---|---|---|---|---|
@@ -166,6 +180,7 @@ cache.
 | Edit after 2.8k tokens | 120.2 t/s, prompt 4249 t/s | 335.8 t/s, prompt 4248 t/s, acceptance 73 % | 91.1 t/s, prompt 2722 t/s | 47.3 t/s, prompt 1111 t/s |
 | Long prompt | 95157 tokens: 30.5 s (3125 t/s) | 52588 tokens: 14.5 s (3618 t/s) | 126506 tokens: 61.7 s (2049 t/s) | 258544 tokens: 292 s (885 t/s) |
 | Generation after it | 86.0 t/s | | 64.5 t/s | 32.7 t/s |
+| Depth 6.4k / 36.5k / 90k (generation; prompt) | 121.1 / 101.9 / 84.7 t/s; 4438 / 3861 / 2964 t/s | | | |
 | Image 1280x960 (794 tokens), 16 CPU threads | 4.1 s | | | |
 | Peak VRAM of vLLM | 21726 MiB | 21728 MiB | 21706 MiB | 21506 MiB |
 

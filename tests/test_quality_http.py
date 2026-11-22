@@ -55,6 +55,20 @@ def test_build_haystack(fake_vllm: FakeServer) -> None:
     assert haystack.count("# Infrastructure note:") == 2
 
 
+@pytest.mark.parametrize("prefill", [False, True])
+def test_chat_prefill(fake_vllm: FakeServer, prefill: bool) -> None:
+    server = bench_http.connect(fake_vllm.url, None, 5)
+    quality_http.chat(server, CHAT_MODEL, "Question?", 8, thinking=False, cache=True, prefill=prefill)
+    payload = [p for _, path, p in fake_vllm.requests if path == "/v1/chat/completions"][-1]
+    if prefill:
+        assert payload["messages"][-1] == {"role": "assistant", "content": ""}
+        assert payload["continue_final_message"] is True
+        assert payload["add_generation_prompt"] is False
+    else:
+        assert [m["role"] for m in payload["messages"]] == ["user"]
+        assert "continue_final_message" not in payload
+
+
 def _answer(question: str, answer: str, tokens: list[tuple[str, dict[str, float]]]) -> dict[str, object]:
     return {"kind": "lookup", "question": question, "expected": "1", "answer": answer, "correct": answer == "1",
             "tokens": [{"t": t, "top": top} for t, top in tokens]}

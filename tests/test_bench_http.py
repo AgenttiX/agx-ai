@@ -140,6 +140,23 @@ def test_build_code_context(fake_vllm: FakeServer) -> None:
         bench_http.build_code_context(server, CHAT_MODEL, 10**9)
 
 
+def test_head_tokens_tokenizes_only_a_prefix(fake_vllm: FakeServer) -> None:
+    server = bench_http.connect(fake_vllm.url, None, 5)
+    text = "word " * 100_000
+    calls: list[int] = []
+    tokenize = server.tokenize
+
+    def counting(model: str, content: str) -> list[int]:
+        calls.append(len(content))
+        return tokenize(model, content)
+
+    server.tokenize = counting  # type: ignore[method-assign]
+    head = bench_http.head_tokens(server, CHAT_MODEL, text, 300)
+    assert head == server.detokenize(CHAT_MODEL, tokenize(CHAT_MODEL, text)[:300])
+    # vLLM rejects texts of more than twice max-model-len tokens, so the whole text must not be sent.
+    assert max(calls) < len(text) // 10
+
+
 def test_vllm_stream(fake_vllm: FakeServer) -> None:
     server = bench_http.connect(fake_vllm.url, None, 5)
     assert isinstance(server, bench_http.VllmServer)

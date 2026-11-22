@@ -62,6 +62,7 @@ from agx_ai.benchmark.bench_http import (
     VllmServer,
     build_code_context,
     connect,
+    head_tokens,
     host_name,
     pick_models,
     read_env_key,
@@ -79,10 +80,7 @@ def build_code(server: Server, model: str, n_tokens: int) -> str:
     files = [f for pkg in ("asyncio", "email", "http", "logging", "json", "concurrent", "importlib", "xml")
              for f in sorted((stdlib / pkg).rglob("*.py"))]
     text = "".join(f"\n### {f.relative_to(stdlib)}\n" + f.read_text(encoding="utf-8") for f in files)
-    tokens = server.tokenize(model, text)
-    if len(tokens) < n_tokens:
-        raise SystemExit(f"Could not build a {n_tokens}-token code context (got {len(tokens)})")
-    return server.detokenize(model, tokens[:n_tokens])
+    return head_tokens(server, model, text, n_tokens, "code context")
 
 
 def make_needles(rng: random.Random, n_lookup: int, n_pairs: int
@@ -128,14 +126,25 @@ def build_haystack(server: Server, model: str, depth: int, rng: random.Random, n
 
 
 def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bool | None, cache: bool,
-         logprobs: int = 0) -> dict[str, Any]:
-    """Send one greedy chat request; returns the content, reasoning, timings and optionally token probabilities."""
-    payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": content}],
+         logprobs: int = 0, prefill: bool = False) -> dict[str, Any]:
+    """Send one greedy chat request; returns the content, reasoning, timings and optionally token probabilities.
+
+    With ``prefill``, the request ends with an empty assistant message that the model continues, so that it answers
+    at once. This skips the thinking of models that think whatever ``enable_thinking`` says (Inkling 2 only takes a
+    ``reasoning_effort``, and still thinks at 0). llama-server continues a final assistant message by itself; vLLM
+    needs ``continue_final_message``.
+    """
+    messages: list[dict[str, str]] = [{"role": "user", "content": content}]
+    if prefill:
+        messages.append({"role": "assistant", "content": ""})
+    payload: dict[str, Any] = {"model": model, "messages": messages,
                                "max_tokens": max_tokens, "temperature": 0.0, "seed": 42, "cache_prompt": cache}
     if isinstance(server, VllmServer):
         del payload["cache_prompt"]
         if not cache:  # vLLM has no cache_prompt; a unique salt keeps the request from hitting the prefix cache
             payload["cache_salt"] = os.urandom(8).hex()
+        if prefill:
+            payload |= {"continue_final_message": True, "add_generation_prompt": False}
     if thinking is not None:
         payload["chat_template_kwargs"] = {"enable_thinking": thinking}
     if logprobs:
@@ -160,7 +169,7 @@ def chat(server: Server, model: str, content: str, max_tokens: int, thinking: bo
 
 
 def test_retrieval(server: Server, model: str, depths: list[int], seed: int, n_lookup: int, n_pairs: int,
-                   logprobs: int) -> list[dict[str, Any]]:
+                   logprobs: int, prefill: bool = False) -> list[dict[str, Any]]:
     """Run the needle retrieval test at each depth; returns the answers and the correct counts per depth."""
     out = []
     for depth in depths:
@@ -171,7 +180,7 @@ def test_retrieval(server: Server, model: str, depths: list[int], seed: int, n_l
         t0 = time.perf_counter()
         for q in questions:
             r = chat(server, model, haystack + "\n\n" + q["question"], 24, thinking=False, cache=True,
-                     logprobs=logprobs)
+                     logprobs=logprobs, prefill=prefill)
             answer = r["content"].strip()
             answers.append({**q, "answer": answer, "correct": q["expected"] in re.findall(r"[A-Za-z0-9-]+", answer),
                             "prompt_tokens": r["timings"].get("prompt_n", 0) + r["timings"].get("cache_n", 0),
@@ -323,6 +332,9 @@ def main() -> int:
                              "(default %(default)s)")
     parser.add_argument("--agreement-n-predict", type=int, default=512,
                         help="tokens per agreement output (default %(default)s)")
+    parser.add_argument("--answer-prefill", action="store_true",
+                        help="start each retrieval answer with an empty assistant message, for models that think "
+                             "although thinking is disabled (Inkling 2)")
     parser.add_argument("--logprobs", type=int, default=20,
                         help="top log-probabilities recorded per retrieval answer token, 0 = none "
                              "(default %(default)s)")
@@ -371,10 +383,11 @@ def main() -> int:
         "model_path": props.get("model_path"),
         "server_args": server_args(models, model),
         "seed": args.seed,
+        **({"answer_prefill": True} if args.answer_prefill else {}),
     }
     if "retrieval" in args.tests:
         result["retrieval"] = test_retrieval(
-            server, model, args.depth, args.seed, args.lookups, args.pairs, args.logprobs,
+            server, model, args.depth, args.seed, args.lookups, args.pairs, args.logprobs, args.answer_prefill,
         )
     if "agreement" in args.tests:
         result["agreement"] = test_agreement(server, model, args.agreement_depth, args.agreement_n_predict)

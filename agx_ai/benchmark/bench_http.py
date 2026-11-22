@@ -424,16 +424,39 @@ def build_prompt(server: Server, model: str, n_tokens: int, salt: str = "") -> t
     return prompt, len(server.tokenize(model, prompt))
 
 
+def head_tokens(server: Server, model: str, text: str, n_tokens: int, what: str = "text") -> str:
+    """The first n_tokens tokens of the text, detokenized.
+
+    Only a prefix of the text that is a little longer than needed is tokenized, as vLLM's ``/tokenize`` rejects texts
+    of more than twice ``max-model-len`` tokens. Tokens far from the cut are the same as those of the whole text.
+
+    :param server: the server whose tokenizer is used
+    :param model: the model name
+    :param text: the text to cut
+    :param n_tokens: the number of tokens to keep
+    :param what: what the text is, for the error message
+    :return: the first n_tokens tokens of the text
+    :raises SystemExit: if the text has fewer tokens
+    """
+    chars = n_tokens * 5
+    while True:
+        tokens = server.tokenize(model, text[:chars])
+        # A margin of 64 tokens keeps the cut of the prefix away from the kept tokens.
+        if len(tokens) >= n_tokens + 64 or chars >= len(text):
+            break
+        chars *= 2
+    if len(tokens) < n_tokens:
+        raise SystemExit(f"Could not build a {n_tokens}-token {what} (got {len(tokens)})")
+    return server.detokenize(model, tokens[:n_tokens])
+
+
 def build_code_context(server: Server, model: str, n_tokens: int, rotate: int = 0) -> str:
     """About n_tokens tokens of real Python source (the asyncio and email packages of the client's Python)."""
     stdlib = Path(sysconfig.get_paths()["stdlib"])
     files = sorted((stdlib / "asyncio").glob("*.py")) + sorted((stdlib / "email").glob("*.py"))
     files = files[rotate:] + files[:rotate]
     text = "".join(f"\n### {f}\n" + f.read_text(encoding="utf-8") for f in files)
-    tokens = server.tokenize(model, text)
-    if len(tokens) < n_tokens:
-        raise SystemExit(f"Could not build a {n_tokens}-token code context (got {len(tokens)})")
-    return server.detokenize(model, tokens[:n_tokens])
+    return head_tokens(server, model, text, n_tokens, "code context")
 
 
 # ---------------------------------------------------------------------------

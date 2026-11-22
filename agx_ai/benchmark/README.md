@@ -230,6 +230,10 @@ uv run -m agx_ai.benchmark.quality_http --url http://localhost:9933 --env-file l
     --label "V q8_0" --reference "f16 KV"
 ```
 
+`--answer-prefill` ends each retrieval question with an empty assistant message that the model continues, for models
+that think although thinking is disabled: Inkling 2 takes only a `reasoning_effort` and still thinks at 0, so its
+24-token answers would be cut off in the thinking.
+
 Each run goes to two files: `benchmark/results/full/<hostname>-quality.jsonl` has everything, including the questions, the
 generated outputs and the top token probabilities of every answer token (several MB per run). It is not in Git
 (`.gitignore`), and `--reference` reads the reference run from it, so comparisons need the full file of the same
