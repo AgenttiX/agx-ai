@@ -5,8 +5,12 @@
 # Gated DeltaNet and shared-expert projections and lm_head, int4 embedding (group size 128). 18.1 GiB on the GPU.
 model: /models/Phai-A1-35B-1M-W4A16-mtp
 served-model-name: PhaiModelLab/Phai-A1-35B-1M
-# Do not load the vision tower (0.9 GiB), which would cost ~65k tokens of context.
-language-model-only: true
+# Images and videos with the vision tower on the CPU (QWEN38_VISION_DEVICE=cpu in docker-compose.yml), which takes no
+# VRAM (on the GPU, it would cost ~65k tokens of context). As in config-phai-a1-35b-1m-262k.yaml.
+limit-mm-per-prompt: {"image": 64, "video": 1}
+mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 12582912}}
+media-io-kwargs: {"video": {"max_frames": 64}}
+skip-mm-profiling: true
 # The KV cache below holds 107730 tokens (the scheduler needs some extra blocks for the recurrent states). Peak
 # 21150 MiB with a 96804-token prompt. llama.cpp fits 151552 tokens of context on this GPU, but it is slower.
 max-model-len: 98304

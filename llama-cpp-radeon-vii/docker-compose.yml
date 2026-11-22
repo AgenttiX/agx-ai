@@ -38,6 +38,7 @@ services:
       # - ./preset-qwen3.8-27b.ini:/etc/llama.cpp/preset.ini:ro
       # Phai-A1-35B-1M. Build the GGUF first, see ../llama-cpp-rtx3090/README.md.
       # - ./preset-phai-a1-35b-1m.ini:/etc/llama.cpp/preset.ini:ro
+      # - ./preset-phai-a1-35b-1m-262k.ini:/etc/llama.cpp/preset.ini:ro
     restart: unless-stopped
     # security_opt:
     #   - seccomp:unconfined

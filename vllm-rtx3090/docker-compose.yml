@@ -31,6 +31,11 @@ services:
       # Less fragmentation of PyTorch's allocator, which leaves more memory for the KV cache. The CPU KV offloading
       # works with it thanks to ../vllm/vllm.patch.
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      # Phai-A1-35B-1M: the vision tower on the CPU (FP32, no VRAM; ../vllm/vllm.patch) with 16 threads, and vLLM's
+      # Qwen3-VL video loader, which decodes only the sampled frames. The text-only configurations ignore them.
+      QWEN38_VISION_DEVICE: cpu
+      QWEN38_VISION_THREADS: "16"
+      VLLM_VIDEO_LOADER_BACKEND: qwen3_vl
       # Keep the Triton and Inductor caches, so that a restart is faster.
       TRITON_CACHE_DIR: /root/.cache/vllm/triton
       TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
@@ -50,6 +55,8 @@ services:
       # - ./config-diffusiongemma-26b-a4b.yaml:/etc/vllm/config.yaml:ro
       # Phai-A1-35B-1M. Build the checkpoint first, see README.md.
       # - ./config-phai-a1-35b-1m.yaml:/etc/vllm/config.yaml:ro
+      # The same with 262144 tokens of context and 1.7 GiB of the experts in RAM (slower)
+      # - ./config-phai-a1-35b-1m-262k.yaml:/etc/vllm/config.yaml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

@@ -24,6 +24,7 @@ full-context prompts), so that ≥1 GiB of the 24 GiB stays free with the deskto
 | [`preset-qwen3.8-flash-next.ini`](preset-qwen3.8-flash-next.ini) | Qwen3.8-Flash-Next GSQ-RCO `IQ3_S` (better than [Unsloth Dynamic 3.1](#unsloth-dynamic-31) `UD-Q3_K_XL`), experts of 42 layers on the CPU, no MTP | q8_0 | 262144 | 31 t/s, 28 t/s at 36k, 23 t/s at 100k | 790 t/s at 16-100k, 940 t/s at 260k |
 | [`preset-terminal-rsi-27b.ini`](preset-terminal-rsi-27b.ini) | [Terminal-RSI-27B](#terminal-rsi-27b) bartowski `Q4_K_M`, vision encoder on the CPU, MTP 4 | q8_0 | 98304 | 63 t/s, 58 t/s at 60k, 45 t/s at 96k; edits 76-88 t/s | 1310 t/s at 6.4k, 910 t/s at 96k |
 | [`preset-phai-a1-35b-1m.ini`](preset-phai-a1-35b-1m.ini) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) `IQ4_XS` built locally with a grafted MTP head, vision encoder on the CPU, MTP 3 | q8_0 | 151552 | 184 t/s, 156 t/s at 36.5k, 111 t/s at 100k; edits 219-263 t/s | 5210 t/s at 6.4k, 2740 t/s at 150k |
+| [`preset-phai-a1-35b-1m-262k.ini`](preset-phai-a1-35b-1m-262k.ini) | [Phai-A1-35B-1M](#262144-tokens-of-context-2026-11-22) with 262144 tokens: the same GGUF, experts of 6 layers on the CPU, MTP 3 | q8_0 | 262144 | 114 t/s, 111 t/s at 36.5k, 81 t/s at 100k, 66 t/s at 200k; edits 184 t/s | 3270 t/s at 6.4k, 1650 t/s at 260k |
 
 [DiffusionGemma](#diffusiongemma) 26B-A4B, Google's block-diffusion model, is not in upstream llama.cpp. It runs with
 the server of a draft pull request from
@@ -603,6 +604,53 @@ as the router lists the Hugging Face cache, where only the imatrix of that repos
 215-227 vs 184 t/s, 228 vs 156 t/s at 36.5k tokens of context, 186 t/s at 94k vs 111 t/s at 100k, code edits 341-360
 vs 219-263 t/s and prompt processing 1.4-1.7 times as fast. llama.cpp fits 1.5 times the context (151552 vs 98304)
 and keeps the vision encoder.
+
+### 262144 tokens of context (2026-11-22)
+
+[`preset-phai-a1-35b-1m-262k.ini`](preset-phai-a1-35b-1m-262k.ini) fits 262144 tokens (the context of the base model
+Qwen3.6-35B-A3B) by keeping the experts of 6 of the 40 layers in RAM, computed by the CPU (`n-cpu-moe = 6`, ~2.4 GiB of
+RAM, `load-mode = none`). Each layer of experts frees ~400 MiB of VRAM, ~19k tokens of q8_0 context.
+
+`llama bench` (q8_0, ub 1024, tg64 / pp2048; mmap):
+
+| `n-cpu-moe` | depth 0 | depth 65536 |
+|---|---|---|
+| 0 | 155 / 5990 t/s | 91 / 2907 t/s |
+| 6 | 120 / 3064 t/s | 76 / 2025 t/s |
+| 8 | 113 / 2637 t/s | 79 / 1807 t/s |
+| 12 | 98 / 2045 t/s | 69 / 1459 t/s |
+
+- **Generation** costs ~0.3 ms per token for each layer of experts on the CPU (Threadripper 3970X, DDR4-2666 in 4
+  channels), more than estimated from the Radeon VII, because the RTX 3090 itself is 2.5 times as fast.
+- **Prompt processing** copies the experts in RAM to the GPU for every ubatch, so larger ubatches help (pp4096 with
+  `n-cpu-moe = 6`, pinned RAM: ub 1024 3827, ub 2048 4939, ub 4096 5908 t/s; with mmap, 1024 is 21 % slower). But
+  ubatch 2048 needs 3 more layers on the CPU for the same context, and 4096 another 5 (`n-cpu-moe = 11` with ub 4096
+  did not even fit the MTP context's buffers).
+- **Threads** for the experts on the CPU (chat / depth 36.5k / edit, t/s): 8: 113 / 107 / 178, 12: 114 / 108 / 180,
+  16: 118 / 111 / 184, 32 (the default): 106 / 100 / 169.
+- **MTP drafts** (32 threads; chat / depth 36.5k / edit, t/s): none: 105 / 81 / 109, 1: 115 / 99 / 129, 2: 111 / 96 /
+  152, 3: 106 / 100 / 169. The verification of several tokens reads more experts from RAM, so MTP gains less in chats
+  than with everything on the GPU, but 3 drafts are still best for code edits.
+
+| Variant at 262144 tokens (16 threads, MTP 3) | Chat | Depth 6.4k / 36.5k | Edit | Prompt 6.4k / 36.5k / 260k | Peak VRAM |
+|---|---|---|---|---|---|
+| **`n-cpu-moe = 6`, ub 1024 (preset)** | 118 t/s | 119 / 111 t/s | 184 t/s | 3282 / 3092 / 1510 t/s | 21272 MiB |
+| `n-cpu-moe = 9`, ub 2048 | 108 t/s | 108 / 107 t/s | 164 t/s | 3741 / 3667 / 1735 t/s | 21252 MiB |
+| `n-cpu-moe = 14`, ub 4096 | | | | 1810 t/s at 260k | 21764 MiB (too much) |
+
+Results of the preset (`--tests generation prompt chat depth edit image`):
+
+| Test | 262144 tokens, `n-cpu-moe = 6` | 151552 tokens, all on the GPU |
+|---|---|---|
+| Chat, 6 requests | 114.3 t/s | 184.5 t/s |
+| Depth 6.4k / 16k / 36.5k / 60k / 100k / 200k | 116.2 / 117.4 / 110.7 / 110.0 / 80.6 / 65.6 t/s; prompt 3268 / 3339 / 3094 / 2814 / 2419 / 1775 t/s | 182.9 / - / 155.8 / - / 111.3 / - t/s; prompt 5208 / 5158 / 4565 / 3954 / 3221 / - t/s |
+| Edit after 2.3k tokens | 184.0 t/s | 263.4 t/s |
+| Full-context prompt | 1653 t/s (260644 tokens, 2.6 min) | 2736 t/s (150052 tokens) |
+| Image 1280x960 | 8.5 s (vision encoder on the CPU, 16 threads) | 5.3 s |
+| Peak VRAM of llama-server | 21272 MiB | 21612 MiB |
+
+The 262k preset is 35-40 % slower up to ~60k tokens of context and 30 % slower in code edits; use it only when the
+extra context is needed.
 
 ## Inkling 2 Mini
 

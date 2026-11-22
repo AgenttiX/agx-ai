@@ -28,7 +28,8 @@ left 0.8-1.0 GiB free:
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
 | [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 32.4 t/s | 33 / 33 / 32 t/s, 52 t/s in code edits | 1750 t/s at 6.4k, 2050 t/s at 260k |
 | [`config-diffusiongemma-26b-a4b.yaml`](config-diffusiongemma-26b-a4b.yaml) | [DiffusionGemma](#diffusiongemma) 26B-A4B AWQ int4 (block diffusion), no MTP | int8 | 98304 | 281 t/s end to end | 194 / 148 t/s, 80 t/s at 64k (after the first 256-token block) | 2120 t/s at 6.4k, 1650 t/s at 64k |
-| [`config-phai-a1-35b-1m.yaml`](config-phai-a1-35b-1m.yaml) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) int4 experts + int8 dense layers, round-to-nearest, built locally; grafted MTP head, MTP 3 | int8 | 98304 | 215-227 t/s | 226-231 / 228 t/s (36.5k), 186 t/s at 94k; edits 341-360 t/s | 8730 t/s at 6.4k, 4580 t/s at 97k |
+| [`config-phai-a1-35b-1m.yaml`](config-phai-a1-35b-1m.yaml) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) int4 experts + int8 dense layers, round-to-nearest, built locally; grafted MTP head, MTP 3, vision tower on the CPU | int8 | 98304 | 215-227 t/s | 226-231 / 228 t/s (36.5k), 186 t/s at 94k; edits 341-360 t/s | 8730 t/s at 6.4k, 4580 t/s at 97k |
+| [`config-phai-a1-35b-1m-262k.yaml`](config-phai-a1-35b-1m-262k.yaml) | The same with [1.7 GiB of the experts in RAM](#262144-tokens-of-context-2026-11-22) | int8 | 262144 | 132 t/s | 136 / 142 t/s (36.5k), 133 t/s at 100k, 125 t/s at 200k; edits 212 t/s | 5590 t/s at 6.4k, 2060 t/s at 260k |
 
 **Compared with llama.cpp on this GPU** ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#results-of-the-current-presets)):
 
@@ -53,8 +54,10 @@ left 0.8-1.0 GiB free:
   [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#qwen38-flash-next).
 - **Phai-A1-35B-1M: vLLM is faster, llama.cpp fits more context.** vLLM generates 17-23 % faster in chats (215-227
   vs 184 t/s), 46 % faster at 36.5k tokens of context (228 vs 156 t/s) and 37-56 % faster in code edits, and processes
-  prompts 1.4-1.7 times as fast. llama.cpp fits 1.5 times the context (151552 vs 98304) and keeps the vision encoder.
-  See [Phai-A1-35B-1M](#phai-a1-35b-1m).
+  prompts 1.4-1.7 times as fast. llama.cpp fits 1.5 times the context (151552 vs 98304). Both run the vision encoder
+  on the CPU. With 262144 tokens of context, both keep some experts in RAM, and vLLM is still faster: chat 132 vs 114
+  t/s, 125 vs 66 t/s at 200k tokens, edits 212 vs 184 t/s, prompts 1.3-1.7 times as fast. See
+  [Phai-A1-35B-1M](#phai-a1-35b-1m).
 - **Inkling 2 Mini: not possible with vLLM on this GPU**, see
   [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
@@ -555,6 +558,47 @@ Results (`bench_http.py`, 2 drafts unless noted; MTP 3 is the configuration):
 
 MTP 3 is 17 % faster in code edits and as fast otherwise (the chat results vary by ±5 % between runs), so the
 configuration uses 3, with CUDA graphs for up to 16 tokens (4 sequences of 4 tokens).
+
+### Images and videos (2026-11-22)
+
+Both configurations take images and videos with the vision tower on the CPU (`QWEN38_VISION_DEVICE=cpu`, FP32, 16
+threads), which takes no VRAM. `../vllm/vllm.patch` builds the CPU tower of Qwen3.8-Flash-Next for Qwen3.5/3.6/3.8 too
+(`qwen3_5.py`). With vision, the 98304-token configuration is as fast as without (chat 216 t/s, edit 362 t/s,
+96804-token prompt 4593 t/s), peak 21110 MiB. A 1280x960 image (991 tokens) takes 7.6-8.5 s until the first token,
+a 20-s 640x360 video (a red square moving to the right, "ALPHA" and then "OMEGA"; 4608 tokens) 32-33 s; both answers
+were correct (greedy, without thinking).
+
+### 262144 tokens of context (2026-11-22)
+
+[`config-phai-a1-35b-1m-262k.yaml`](config-phai-a1-35b-1m-262k.yaml) keeps part of the routed experts in pinned RAM,
+which the GPU reads over PCIe 4.0 for every step (UVA, `offload-backend: uva`, `cpu-offload-params: [experts]`), so
+that a 3.5 GB KV cache fits (287011 tokens; 262144 plus the margin of the recurrent states). The repacked experts are
+offloaded again after loading only with the fix in `../vllm/vllm.patch` (without it, they all stayed on the GPU and
+the KV cache did not fit). The experts in RAM are read for every verification step of MTP, so the speed depends on
+how much is in RAM (chat / depth 6.4k / depth 36.5k / edit, t/s):
+
+| Experts in RAM | KV cache | Chat | Depth 6.4k | Depth 36.5k | Edit | Peak VRAM |
+|---|---|---|---|---|---|---|
+| 2.7 GiB, MTP 3 | 4.0 GB (327k tokens) | 109.2 | 119.0 | 118.3 | 177.4 | 20850 MiB |
+| 2.0 GiB, MTP 3 | 3.5 GB | 128.1 | 129.9 | 139.0 | 196.0 | 20870 MiB |
+| 2.0 GiB, MTP 2 | 3.5 GB | 127.4 | 134.6 | 129.6 | 177.8 | 20808 MiB |
+| **1.7 GiB, MTP 3** | 3.5 GB | 131.6 | 136.0 | 141.7 | 211.7 | 21290 MiB |
+
+1.7 GiB leaves the peak at that of the other configurations of this GPU. Results of the configuration:
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 178.3 t/s, acceptance 69 % |
+| Chat, 6 requests | 131.6 t/s (116-167), acceptance 46 % |
+| Depth 6.4k / 16k / 36.5k / 60k / 100k / 200k | 136.0 / 130.2 / 141.7 / 122.8 / 133.0 / 124.7 t/s; prompt 5586 / 5050 / 4436 / 3946 / 3288 / 2306 t/s |
+| Edit after 2.3k tokens | 211.7 t/s, acceptance 99 % |
+| Full-context prompt (260644 tokens) | 2065 t/s (2.1 min) |
+| Image 1280x960 | 8.5 s |
+| Peak VRAM of vLLM | 21290 MiB |
+
+Compared with the 98304-token configuration, chats are 40 % slower and code edits 41 % slower; compared with
+llama.cpp's 262k preset ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#262144-tokens-of-context-2026-11-22)),
+vLLM is faster at every context length.
 
 ## Commands
 

@@ -176,9 +176,38 @@ diff -ruN a/model_executor/model_loader/utils.py b/model_executor/model_loader/u
  
  logger = init_logger(__name__)
  
-@@ -254,9 +257,11 @@
-             if name in uva_offloaded_parameters and not getattr(
-                 p, "_vllm_is_uva_offloaded", False
+@@ -223,7 +226,12 @@
+         return
+ 
+     cpu_params: set[str] = set()
+-    uva_offloaded_parameters: list[str] = []
++    # The data pointers of the UVA-offloaded parameters: replace_parameter keeps the
++    # parameter object (and its _vllm_is_uva_offloaded marker) and rebinds its data
++    # to a new device tensor when the shape changes (e.g. the Marlin repack of
++    # compressed-tensors MoE weights), so the marker alone cannot tell whether the
++    # data is still in host memory.
++    uva_offloaded_parameters: dict[str, int] = {}
+ 
+     # Store which parameters are on CPU and move them to the GPU
+     for name, p in module.named_parameters():
+@@ -231,7 +239,7 @@
+             cpu_params.add(name)
+             p.data = p.data.to(target_device)
+         if getattr(p, "_vllm_is_uva_offloaded", False):
+-            uva_offloaded_parameters.append(name)
++            uva_offloaded_parameters[name] = p.data_ptr()
+         # Parameters already on target device are not touched
+ 
+     try:
+@@ -251,12 +259,15 @@
+ 
+             # parameter is UVA offloaded, but was replaced with a new device tensor
+             # re-offload it to CPU using UVA
+-            if name in uva_offloaded_parameters and not getattr(
+-                p, "_vllm_is_uva_offloaded", False
++            if name in uva_offloaded_parameters and (
++                not getattr(p, "_vllm_is_uva_offloaded", False)
++                or p.data_ptr() != uva_offloaded_parameters[name]
              ):
 -                cpu_data = torch.empty_like(
 -                    p.data, device="cpu", pin_memory=use_pin_memory
@@ -210,7 +239,36 @@ diff -ruN a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5
 diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -248,9 +248,12 @@
+@@ -108,6 +108,28 @@
+ logger = init_logger(__name__)
+ 
+ 
++def _build_visual(model, config, quant_config, prefix: str):
++    """agx-ai patch: the vision tower on the CPU with QWEN38_VISION_DEVICE=cpu (Qwen3.5/3.6/3.8, dense and MoE).
++
++    It then takes no VRAM, its inputs stay on the CPU too (encoder_runner.py), and so does the pixel normalization
++    (mm_device_do_normalize). See models/qwen4_exp/nvidia/cpu_vision.py.
++    """
++    from vllm.models.qwen4_exp.nvidia.cpu_vision import CpuVisionTower, cpu_vision_enabled
++
++    if cpu_vision_enabled():
++        with torch.device("cpu"):
++            input_norm = build_mm_input_norm(model.model_config)
++        model.mm_encoder_inputs_on_cpu = True
++        return CpuVisionTower(config.vision_config, input_norm)
++    return Qwen3_VisionTransformer(
++        config.vision_config,
++        norm_eps=getattr(config, "rms_norm_eps", 1e-6),
++        quant_config=quant_config,
++        input_norm=build_mm_input_norm(model.model_config),
++        prefix=maybe_prefix(prefix, "visual"),
++    )
++
++
+ class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
+     def get_hf_config(self):
+         return self.ctx.get_hf_config(Qwen3_5Config)
+@@ -248,9 +270,12 @@
  
          self.vocab_size = config.vocab_size
  
@@ -223,6 +281,36 @@ diff -ruN a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
          )
  
          def get_layer(prefix: str):
+@@ -511,13 +536,7 @@
+         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+ 
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.visual = Qwen3_VisionTransformer(
+-                config.vision_config,
+-                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-                quant_config=quant_config,
+-                input_norm=build_mm_input_norm(self.model_config),
+-                prefix=maybe_prefix(prefix, "visual"),
+-            )
++            self.visual = _build_visual(self, config, quant_config, prefix)
+ 
+         with self._mark_language_model(vllm_config):
+             self.language_model = Qwen3_5ForCausalLM(
+@@ -734,13 +753,7 @@
+         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+ 
+         with self._mark_tower_model(vllm_config, {"image", "video"}):
+-            self.visual = Qwen3_VisionTransformer(
+-                config.vision_config,
+-                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-                quant_config=quant_config,
+-                input_norm=build_mm_input_norm(self.model_config),
+-                prefix=maybe_prefix(prefix, "visual"),
+-            )
++            self.visual = _build_visual(self, config, quant_config, prefix)
+ 
+         with self._mark_language_model(vllm_config):
+             self.language_model = Qwen3_5MoeForCausalLM(
 diff -ruN a/model_executor/offloader/uva.py b/model_executor/offloader/uva.py
 --- a/model_executor/offloader/uva.py
 +++ b/model_executor/offloader/uva.py

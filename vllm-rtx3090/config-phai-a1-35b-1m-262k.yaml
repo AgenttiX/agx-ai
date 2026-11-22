@@ -1,0 +1,50 @@
+# vllm serve --config for Phai-A1-35B-1M on the RTX 3090 of agx-z2e with 262144 tokens of context. Benchmarks:
+# README.md. The same checkpoint as config-phai-a1-35b-1m.yaml (98304 tokens), but with 1.7 GiB of the experts in RAM,
+# which the GPU reads over PCIe (UVA), so that a 3.5 GB KV cache fits. Half as fast in code edits as with all experts
+# on the GPU, but faster than llama.cpp with the same context (../llama-cpp-rtx3090/preset-phai-a1-35b-1m-262k.ini).
+model: /models/Phai-A1-35B-1M-W4A16-mtp
+served-model-name: PhaiModelLab/Phai-A1-35B-1M
+# Images and videos with the vision tower on the CPU (QWEN38_VISION_DEVICE=cpu in docker-compose.yml), which takes no
+# VRAM. Up to 64 images per request, as agent sessions collect screenshots, and 1 video. No encoder profiling, which
+# would take minutes on the CPU. Images scaled down to 1 megapixel (~1000 tokens), videos to 64 frames and 12.6
+# megapixels over all frames (a 20-s 640x360 video: 4608 tokens, 32 s on the CPU).
+limit-mm-per-prompt: {"image": 64, "video": 1}
+mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 12582912}}
+media-io-kwargs: {"video": {"max_frames": 64}}
+skip-mm-profiling: true
+# The KV cache below holds 287011 tokens (the scheduler needs some extra blocks for the recurrent states). Peak
+# 21290 MiB with a 260644-token prompt.
+max-model-len: 262144
+# Set explicitly instead of gpu-memory-utilization, whose profiling leaves less for the KV cache. vLLM still checks at
+# startup that gpu-memory-utilization of the GPU memory is free, so it is set below what the desktop leaves free.
+kv-cache-memory-bytes: 3500000000
+gpu-memory-utilization: 0.8
+# Routed experts in pinned RAM, read by the GPU over PCIe 4.0 for every step (UVA; the GPU reads only the experts that
+# the tokens of the step select). The re-offloading of the repacked experts needs ../vllm/vllm.patch. 2.7 GiB in RAM
+# (KV for 327k tokens) gave 109 t/s in chats and 177 t/s in code edits, 2.0 GiB 128 and 196 t/s, 1.7 GiB 132 and
+# 212 t/s; 1.7 GiB leaves the peak at that of the other configurations.
+offload-backend: uva
+cpu-offload-gb: 1.7
+cpu-offload-params: [experts]
+# int8 with a scale per token and head, read by the pth-flash-attn kernel of ../vllm (see config-qwen3.8-27b.yaml).
+kv-cache-dtype: int8_per_token_head
+attention-backend: CUSTOM
+# The recurrent state of the 30 Gated DeltaNet layers in FP16 instead of FP32 (as for Qwen3.8-27B).
+mamba-ssm-cache-dtype: float16
+# The prefill chunk.
+max-num-batched-tokens: 2048
+# Full CUDA graphs for decoding, for up to 4 sequences with 4 tokens each (MTP 3).
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 4, 8, 12, 16]}
+# Every sequence needs its own recurrent state for the 30 Gated DeltaNet layers.
+max-num-seqs: 4
+# MTP with the grafted head of Qwen3.6-35B-A3B. With the experts in RAM, 3 drafts are as fast as 2 in chats and 10 %
+# faster in code edits (196 vs 178 t/s with 2.0 GiB in RAM).
+speculative-config: {"method": "mtp", "num_speculative_tokens": 3, "attention_backend": "CUSTOM"}
+enable-prefix-caching: true
+# Prefix cache blocks evicted from the GPU are kept in 16 GiB of pinned RAM (see config-qwen3.8-27b.yaml).
+kv-offloading-size: 16
+kv-offloading-backend: native
+reasoning-parser: qwen3
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+# Sampling: generation_config.json of the model (temperature 1.0, top-k 20, top-p 0.95), as for Qwen3.6.

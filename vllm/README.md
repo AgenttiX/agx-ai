@@ -60,6 +60,11 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
       and back: with UVA, each copy was new GPU memory (1.2 GiB per layer for Qwen3.8-Flash-Next). The w13 and w2
       weights are now transposed and repacked one after the other, and the repack reads the offloaded weights
       directly.
+    - Weights whose post-processing gives them a new shape (e.g. the Marlin repack of compressed-tensors W4A16 experts,
+      added on 2026-11-22 for Phai-A1-35B-1M) are offloaded again: since v0.33.0, `replace_parameter` keeps the
+      parameter object and its UVA marker and only rebinds its data to the new GPU tensor, so the re-offloading
+      (`model_executor/model_loader/utils.py`) now also compares the data pointer. Without it, the 2.7 GiB of experts
+      in RAM were back on the GPU after loading (18.14 instead of 15.44 GiB).
     - The UVA lookup of the pinned n-gram table copies FP8 rows as `uint8`, as Triton has no FP8 e4m3 type before
       sm_89 (`type fp8e4nv not supported in this architecture`). **Upstream since v0.33.0** (the lookup kernel copies
       raw bytes), so the patch no longer has it.
@@ -83,6 +88,8 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
     Since v0.33.0, the processor sends raw uint8 pixels and the vision tower normalizes them (`mm_device_do_normalize`,
     on by default for Qwen3-VL-based models), so the model also builds the normalization (`build_mm_input_norm`) with
     CPU buffers and the CPU tower applies it before transformers' model.
+    The same tower is used by Qwen3.5/3.6/3.8 (`model_executor/models/qwen3_5.py`, dense and MoE, e.g.
+    Phai-A1-35B-1M in [`../vllm-rtx3090`](../vllm-rtx3090)) with `QWEN38_VISION_DEVICE=cpu`, added on 2026-11-22.
   - **Upstream since v0.33.0, no longer in the patch** (`_maybe_dequant` in `qsa.py` decodes the e4m3 bytes):
     FP8 KV cache for Qwen3.8-Flash-Next (Qwen4Exp) below sm_89, added on 2026-10-13 for [`../vllm-rtx3070`](../vllm-rtx3070)
     (`models/qwen4_exp/nvidia/ops/qsa.py`): the sparse attention kernel reads the e4m3 cache through Triton's FP8 type,

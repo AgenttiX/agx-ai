@@ -98,7 +98,7 @@ model_list:
       litellm_credential_name: agx-z2e-llama-cpp-rocm
     model_info:
       <<: *llama-cpp
-      # ../llama-cpp-radeon-vii/preset-phai-a1-35b-1m.ini
+      # ../llama-cpp-radeon-vii/preset-phai-a1-35b-1m.ini (preset-phai-a1-35b-1m-262k.ini: 262144)
       max_input_tokens: 112640
 
   # vLLM
@@ -123,15 +123,17 @@ model_list:
       supports_vision: true
       supports_video_input: true
 
-  # ../vllm-rtx3090/config-phai-a1-35b-1m.yaml: text only (language-model-only, 98304 tokens of context).
-  # ../llama-cpp-rtx3090/preset-phai-a1-35b-1m.ini serves the same model name on the same port with 151552 tokens of
-  # context and images.
+  # ../vllm-rtx3090/config-phai-a1-35b-1m.yaml: 98304 tokens of context, images and videos with the vision tower on
+  # the CPU (config-phai-a1-35b-1m-262k.yaml: 262144 tokens). ../llama-cpp-rtx3090/preset-phai-a1-35b-1m.ini serves
+  # the same model name on the same port with 151552 tokens of context and images (the -262k preset: 262144).
   - model_name: agx-z2e/PhaiModelLab/Phai-A1-35B-1M
     litellm_params:
       model: hosted_vllm/PhaiModelLab/Phai-A1-35B-1M
       litellm_credential_name: agx-z2e-llama-cpp
     model_info:
       <<: *vllm-qwen
+      supports_vision: true
+      supports_video_input: true
 
   # ../vllm-rtx-a4000: text only, both with HyperQwen and with vllm-llm (language-model-only).
   - model_name: big-machine/Qwen/Qwen3.8-27B

@@ -2,7 +2,7 @@
 
 llama-server for the Radeon VII (gfx906, 16 GB HBM2) on agx-z2e. The image is
 `mixa3607/llama.cpp-gfx906:b12230-rocm-10.1` (see [`docker-compose.yml`](docker-compose.yml), where the model is
-selected). There are three presets, one model at a time, with MTP speculative decoding and q8_0 K and V caches, the
+selected). There are four presets, one model at a time, with MTP speculative decoding and q8_0 K and V caches, the
 first two entirely on the GPU:
 
 | Preset | Model | Context | Chat generation | Prompt processing |
@@ -10,6 +10,7 @@ first two entirely on the GPU:
 | [`preset-gemma-4-26b-a4b-qat.ini`](preset-gemma-4-26b-a4b-qat.ini) (default) | Gemma 4 26B-A4B QAT `UD-Q4_K_XL` | 86016 | ~124 t/s, 61-80 t/s at 36-83k tokens of context | ~1190 t/s at 16k, ~740 t/s at 83k |
 | [`preset-qwen3.8-27b.ini`](preset-qwen3.8-27b.ini) | Qwen3.8-27B `UD-IQ4_XS` (Unsloth Dynamic 3.1) | 43008 | ~31 t/s, 24-26 t/s at 30-40k tokens of context | ~250 t/s at 16k, ~220 t/s at 41k |
 | [`preset-phai-a1-35b-1m.ini`](preset-phai-a1-35b-1m.ini) | [Phai-A1-35B-1M](#phai-a1-35b-1m-2026-11-21) (Qwen3.6-35B-A3B fine-tune) `IQ4_XS` built locally with a grafted MTP head, experts of 12 layers on the CPU | 112640 | ~64 t/s, 60 t/s at 36k, 48 t/s at 100k; edits 76-85 t/s; slows down when the CPU is busy | ~830 t/s at 16k, ~520 t/s at 100k |
+| [`preset-phai-a1-35b-1m-262k.ini`](preset-phai-a1-35b-1m-262k.ini) | The same, [experts of 22 layers on the CPU](#262144-tokens-of-context-2026-11-22) | 262144 | ~50 t/s, 51 t/s at 36k, 42 t/s at 100k, 34 t/s at 200k; edits 68 t/s | ~880 t/s at 16k, ~540 t/s at 100k, 300 t/s at 260k |
 
 All use the whole 16 GB (peak ~16210-16290 MiB of 16368 in the benchmarks). See
 [the update to b12230 and Dynamic 3.1](#image-update-to-b12230-and-qwen38-27b-dynamic-31-2026-11-12) for the
@@ -652,6 +653,39 @@ vLLM was not tried for this model on the Radeon VII: its 4-bit weights take 18.1
 ([`../vllm-rtx3090`](../vllm-rtx3090/README.md#phai-a1-35b-1m)), and vLLM can only stream weights that do not fit
 from RAM over PCIe 3.0 in every step (`cpu-offload-gb`), whereas llama.cpp computes the experts in RAM on the CPU.
 Inkling 2 Mini: see [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
+
+### 262144 tokens of context (2026-11-22)
+
+[`preset-phai-a1-35b-1m-262k.ini`](preset-phai-a1-35b-1m-262k.ini) keeps the experts of 22 instead of 12 layers in
+RAM (~8.6 GiB of RAM). Each layer frees ~400 MiB of VRAM, i.e. ~19k tokens of q8_0 context. With 20 layers and
+ubatch 1024, the 260k-token prompt did not finish within the benchmark's timeout (> 15 min), since prompt processing
+copies the experts in RAM to the GPU over PCIe 3.0 for every ubatch; 22 layers with ubatch 2048 fit (peak 16144-16201
+MiB of 16368) and process the full context at 300 t/s (14.5 min). Variants (chat / depth 6.4k / depth 36.5k / edit,
+t/s):
+
+| Variant | Chat | Depth 6.4k | Depth 36.5k | Edit |
+|---|---|---|---|---|
+| **16 threads, MTP 2** | 49.0 | 53.4 | 48.0 | 67.2 |
+| 8 threads | 45.2 | 45.6 | 48.3 | 64.2 |
+| 32 threads (the default) | 50.6 | 50.0 | 51.2 | 67.8 |
+| MTP 1 | 49.5 | 47.9 | 36.7 | 56.0 |
+| MTP 3 (+62 MiB of VRAM) | 48.2 | 50.8 | 50.8 | 73.1 |
+
+32 threads are within the noise of 16, so the preset uses 16 to leave half of the CPU free. MTP 3 would edit 9 %
+faster, but its 62 MiB more would leave too little margin at the full context. Results of the preset:
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 54.2 t/s, draft acceptance 61 % |
+| Chat, 6 requests | 49.8 t/s (40.5-57.7), draft acceptance 59 % |
+| Depth 6.4k / 16k / 36.5k / 60k / 100k / 200k | 53.3 / 50.3 / 50.9 / 47.2 / 42.1 / 33.6 t/s; prompt 838 / 884 / 767 / 659 / 535 / 362 t/s |
+| Edit after 2.3k tokens | 67.6 t/s, acceptance 99.6 % |
+| Full-context prompt (260644 tokens) | 302 t/s |
+| Image 1280x960, prompt processing | 10.5 s (vision encoder on the CPU) |
+| Peak VRAM | 16201 MiB of 16368 |
+
+Compared with the 112640-token preset, chats are ~22 % slower, generation at 100k tokens 12 % slower and prompt
+processing about as fast at 16k and 100k tokens. Use the 262k preset only when the longer context is needed.
 
 ## Commands
 
