@@ -6,9 +6,14 @@
 # GPU without the vision tower.
 model: thinkingmachines/Inkling-2-Mini
 served-model-name: thinkingmachines/Inkling-2-Mini
-# Do not load the vision tower (0.6 GiB, ~19k tokens of context): the model creates it only with an image limit > 0.
-# The vision encoder runs on the CPU only in llama.cpp (../llama-cpp-rtx3090/preset-inkling-2-mini.ini).
-language-model-only: true
+# Images with the vision encoder on the CPU (INKLING2_VISION_DEVICE=cpu in docker-compose.yml,
+# inkling-cpu-vision.patch), which takes no VRAM (on the GPU: 0.6 GiB, ~19k tokens of context). Up to 64 images per
+# request, as agent sessions collect screenshots, scaled down to 1 megapixel (a 1280x960 image: 794 tokens, 4 s). No
+# encoder profiling. vLLM's Inkling 2 model takes no videos; llama.cpp does
+# (../llama-cpp-rtx3090/preset-inkling-2-mini.ini).
+limit-mm-per-prompt: {"image": 64}
+mm-processor-kwargs: {"max_pixels": 1048576}
+skip-mm-profiling: true
 # Peak 21675 MiB with a 43071-token prompt.
 max-model-len: 49152
 # 50224 tokens: ~32 KiB per token for the 8 full-attention caches (layers 5, 11 and 17 x 3 passes, 23; BF16), plus a

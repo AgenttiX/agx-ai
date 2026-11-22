@@ -14,6 +14,9 @@ services:
     environment:
       HF_HUB_OFFLINE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      # The vision encoder on the CPU (fp32, no VRAM; inkling-cpu-vision.patch) with 16 threads.
+      INKLING2_VISION_DEVICE: cpu
+      INKLING2_VISION_THREADS: "16"
       # Keep the Triton and Inductor caches, so that a restart is faster.
       TRITON_CACHE_DIR: /root/.cache/vllm/triton
       TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor

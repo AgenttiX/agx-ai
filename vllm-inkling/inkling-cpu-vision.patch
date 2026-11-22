@@ -1,0 +1,272 @@
+diff -ruN a/models/inkling2/nvidia/model.py b/models/inkling2/nvidia/model.py
+--- a/models/inkling2/nvidia/model.py
++++ b/models/inkling2/nvidia/model.py
+@@ -75,7 +75,16 @@
+ from .ops.norm import rms_norm
+ from .ops.seq_parallel import SeqParallel
+ from .sconv import ATTN_STREAM, MLP_STREAM, Inkling2ShortConv, conv_metadata
+-from .vision import Inkling2VisionEncoder, VisionMetadata
++from .vision import Inkling2VisionEncoder, VisionMetadata, cpu_vision_enabled
++
++
++def _build_visual(vision_config, text_hidden_size: int) -> Inkling2VisionEncoder:
++    """agx-ai: the vision encoder, on the CPU with INKLING2_VISION_DEVICE=cpu
++    (see vision.py), where it takes no VRAM."""
++    if cpu_vision_enabled():
++        with torch.device("cpu"):
++            return Inkling2VisionEncoder(vision_config, text_hidden_size)
++    return Inkling2VisionEncoder(vision_config, text_hidden_size)
+ 
+ 
+ class Inkling2LogitsProcessor(LogitsProcessor):
+@@ -560,7 +569,7 @@
+         self.config = config
+         self.text_config = text_config = config.text_config
+         self.visual = (
+-            Inkling2VisionEncoder(config.vision_config, text_config.hidden_size)
++            _build_visual(config.vision_config, text_config.hidden_size)
+             if config.vision_config is not None
+             and vllm_config.model_config.multimodal_config is not None
+             and vllm_config.model_config.multimodal_config.get_limit_per_prompt("image")
+diff -ruN a/models/inkling2/nvidia/ops/vision.py b/models/inkling2/nvidia/ops/vision.py
+--- a/models/inkling2/nvidia/ops/vision.py
++++ b/models/inkling2/nvidia/ops/vision.py
+@@ -103,6 +103,8 @@
+     """
+     _, side, _, channels = pixels.shape
+     assert channels == 3 and pixels.is_contiguous()
++    if not pixels.is_cuda:
++        return _cpu_gather_patches(pixels, offsets, patch_size, mean, clip_std, std)
+     features = patch_size * patch_size * 3
+     out = pixels.new_empty((offsets.numel(), features))
+     _gather_patches_kernel[(offsets.numel(),)](
+@@ -207,6 +209,17 @@
+     """
+     num_rows, dim = meta.shape[0], patch_embeds.shape[1]
+     assert ln_pre.eps == ln_1.eps
++    if not patch_embeds.is_cuda:
++        return _cpu_embed_tokens(
++            patch_embeds,
++            patch_rows,
++            position_grid,
++            meta,
++            class_embedding,
++            cls_position_embedding,
++            ln_pre,
++            ln_1,
++        )
+     hidden = patch_embeds.new_empty((num_rows, dim))
+     normed = torch.empty_like(hidden)
+     _embed_kernel[(num_rows,)](
+@@ -278,6 +291,9 @@
+ 
+ def apply_rotary_qk_(qkv: torch.Tensor, meta: torch.Tensor, num_heads: int) -> None:
+     """In-place interleaved 2D RoPE on the q and k thirds of `qkv [T, 3D]`."""
++    if not qkv.is_cuda:
++        _cpu_apply_rotary_qk_(qkv, meta, num_heads)
++        return
+     num_tokens, width = qkv.shape
+     head_dim = width // (3 * num_heads)
+     block_heads = min(4, triton.next_power_of_2(num_heads))
+@@ -330,6 +346,8 @@
+     """`hidden += update * gamma` in place; returns `norm(hidden)`."""
+     num_rows, dim = hidden.shape
+     assert hidden.is_contiguous() and update.is_contiguous()
++    if not hidden.is_cuda:
++        return _cpu_scaled_residual_norm_(hidden, update, gamma, norm)
+     normed = None if norm is None else torch.empty_like(hidden)
+     _scaled_residual_norm_kernel[(num_rows,)](
+         hidden,
+@@ -345,3 +363,113 @@
+         num_warps=4,
+     )
+     return normed
++
++
++# agx-ai: PyTorch versions of the kernels above for the vision encoder on the CPU
++# (INKLING2_VISION_DEVICE=cpu, see `vision.cpu_vision_enabled`), in fp32 with the
++# same bf16 rounding points. Triton kernels run only on the GPU.
++
++
++def _bf16_round(x: torch.Tensor) -> torch.Tensor:
++    return x.to(torch.bfloat16).to(torch.float32)
++
++
++def _cpu_layer_norm(x: torch.Tensor, norm: torch.nn.LayerNorm) -> torch.Tensor:
++    return torch.nn.functional.layer_norm(
++        x, x.shape[-1:], norm.weight.float(), norm.bias.float(), norm.eps
++    )
++
++
++def _cpu_gather_patches(
++    pixels: torch.Tensor,
++    offsets: torch.Tensor,
++    patch_size: int,
++    mean: tuple[float, float, float],
++    clip_std: tuple[float, float, float],
++    std: tuple[float, float, float],
++) -> torch.Tensor:
++    side = pixels.shape[1]
++    features = torch.arange(patch_size * patch_size * 3)
++    within = (features // (patch_size * 3)) * (side * 3) + features % (patch_size * 3)
++    index = offsets.to(torch.int64)[:, None] + within[None, :]
++    values = pixels.reshape(-1).to(torch.float32)[index]
++    channel = features % 3
++    mean_t = torch.tensor(mean, dtype=torch.float32)[channel]
++    clip_std_t = torch.tensor(clip_std, dtype=torch.float32)[channel]
++    std_t = torch.tensor(std, dtype=torch.float32)[channel]
++    values = _bf16_round((values / 255.0 - mean_t) / clip_std_t)
++    return 2.0 * (values * std_t + mean_t) - 1.0
++
++
++def _cpu_source_coords(
++    index: torch.Tensor, target: torch.Tensor, source: int
++) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
++    coord = (source * (index + 0.5)) / target - 0.5
++    coord = coord.clamp(0.0, source - 1.0)
++    src0 = coord.floor().to(torch.int64)
++    src1 = (src0 + 1).clamp(max=source - 1)
++    w1 = coord - src0.to(torch.float32)
++    return src0, src1, 1.0 - w1, w1
++
++
++def _cpu_embed_tokens(
++    patch_embeds: torch.Tensor,
++    patch_rows: torch.Tensor,
++    position_grid: torch.Tensor,
++    meta: torch.Tensor,
++    class_embedding: torch.Tensor,
++    cls_position_embedding: torch.Tensor,
++    ln_pre: torch.nn.LayerNorm,
++    ln_1: torch.nn.LayerNorm,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    meta = meta.to(torch.int64)
++    grid_h, grid_w, dim = position_grid.shape
++    grid = position_grid.reshape(-1, dim).to(torch.float32)
++    is_cls = meta[:, 0] < 0
++    y, x = meta[:, 0].clamp(min=0).float(), meta[:, 1].clamp(min=0).float()
++    height, width = meta[:, 2].float(), meta[:, 3].float()
++    y0, y1, wy0, wy1 = _cpu_source_coords(y, height, grid_h)
++    x0, x1, wx0, wx1 = _cpu_source_coords(x, width, grid_w)
++    top = grid[y0 * grid_w + x0] * wx0[:, None] + grid[y0 * grid_w + x1] * wx1[:, None]
++    bottom = (
++        grid[y1 * grid_w + x0] * wx0[:, None] + grid[y1 * grid_w + x1] * wx1[:, None]
++    )
++    position = _bf16_round(top * wy0[:, None] + bottom * wy1[:, None])
++    rows = patch_rows.to(torch.int64).clamp(min=0)
++    hidden = patch_embeds.to(torch.float32)[rows] + position
++    cls = class_embedding.float() + cls_position_embedding.float()
++    hidden = torch.where(is_cls[:, None], cls[None, :], hidden)
++    hidden = _bf16_round(_cpu_layer_norm(_bf16_round(hidden), ln_pre))
++    return hidden, _cpu_layer_norm(hidden, ln_1)
++
++
++def _cpu_apply_rotary_qk_(qkv: torch.Tensor, meta: torch.Tensor, num_heads: int) -> None:
++    num_tokens, width = qkv.shape
++    dim = width // 3
++    head_dim = dim // num_heads
++    quarter = head_dim // 4
++    inv_freq = _rope_inv_freq(head_dim, qkv.device)
++    # The first half of the pairs rotate by x + 1, the rest by y + 1 (CLS: 0).
++    pos_x = (meta[:, 1].to(torch.float32) + 1.0)[:, None]
++    pos_y = (meta[:, 0].to(torch.float32) + 1.0)[:, None]
++    angle = torch.cat([pos_x * inv_freq, pos_y * inv_freq], dim=1)[:, None, :]
++    cos, sin = angle.cos(), angle.sin()
++    assert angle.shape[-1] == 2 * quarter
++    for start in (0, dim):
++        part = qkv[:, start : start + dim].view(num_tokens, num_heads, head_dim // 2, 2)
++        even, odd = part[..., 0].float(), part[..., 1].float()
++        new_even = even * cos - odd * sin
++        new_odd = odd * cos + even * sin
++        part[..., 0] = new_even.to(qkv.dtype)
++        part[..., 1] = new_odd.to(qkv.dtype)
++
++
++def _cpu_scaled_residual_norm_(
++    hidden: torch.Tensor,
++    update: torch.Tensor,
++    gamma: torch.Tensor,
++    norm: torch.nn.LayerNorm | None,
++) -> torch.Tensor | None:
++    new = _bf16_round(hidden.float() + _bf16_round(update.float() * gamma.float()))
++    hidden.copy_(new)
++    return None if norm is None else _cpu_layer_norm(new, norm)
+diff -ruN a/models/inkling2/nvidia/vision.py b/models/inkling2/nvidia/vision.py
+--- a/models/inkling2/nvidia/vision.py
++++ b/models/inkling2/nvidia/vision.py
+@@ -7,6 +7,7 @@
+ `q_proj`/`k_proj`/`v_proj` load into one fused `qkv_proj`.
+ """
+ 
++import os
+ from collections import Counter
+ from collections.abc import Iterable, Mapping
+ from typing import Any, NamedTuple
+@@ -34,6 +35,18 @@
+ _PROCESSOR_CLIP_STD = (0.26862954, 0.2613026, 0.2757771)
+ 
+ 
++# agx-ai: the vision encoder on the CPU (fp32, PyTorch versions of the Triton ops
++# in ops/vision.py), so that it takes no VRAM: INKLING2_VISION_DEVICE=cpu, with
++# INKLING2_VISION_THREADS threads (default: PyTorch's).
++VISION_DEVICE_ENV = "INKLING2_VISION_DEVICE"
++VISION_THREADS_ENV = "INKLING2_VISION_THREADS"
++
++
++def cpu_vision_enabled() -> bool:
++    """Whether the vision encoder runs on the CPU."""
++    return os.environ.get(VISION_DEVICE_ENV, "gpu").strip().lower() == "cpu"
++
++
+ class _SM120Linear(nn.Linear):
+     def forward(self, x: torch.Tensor) -> torch.Tensor:
+         # Keep the accumulation order independent of encoder graph padding.
+@@ -75,6 +88,18 @@
+         qkv = self.qkv_proj(hidden)
+         apply_rotary_qk_(qkv, metadata.meta, self.num_heads)
+         q, k, v = qkv.view(-1, 3, self.num_heads, self.head_dim).unbind(1)
++        if not qkv.is_cuda:
++            # agx-ai: on the CPU, scaled dot-product attention per image.
++            out = torch.empty_like(q)
++            bounds = metadata.cu_seqlens.tolist()
++            for start, end in zip(bounds[:-1], bounds[1:]):
++                out[start:end] = F.scaled_dot_product_attention(
++                    q[start:end].transpose(0, 1),
++                    k[start:end].transpose(0, 1),
++                    v[start:end].transpose(0, 1),
++                    scale=self.head_dim**-0.5,
++                ).transpose(0, 1)
++            return self.out_proj(out.reshape(hidden.shape))
+         kwargs = dict(
+             cu_seqlens_q=metadata.cu_seqlens,
+             cu_seqlens_k=metadata.cu_seqlens,
+@@ -253,6 +278,21 @@
+         assert all(t == 1 for t, _, _ in grid)
+         assert sum(h * w for _, h, w in grid) == pixels.shape[0]
+ 
++        if self.proj_out.weight.device.type == "cpu":
++            # agx-ai: the encoder is on the CPU; its output goes back to the
++            # device of the inputs (the GPU) in bf16, as on the GPU.
++            device = pixels.device
++            pixels = pixels.cpu()
++            threads = int(os.environ.get(VISION_THREADS_ENV, "0"))
++            previous = torch.get_num_threads()
++            if threads:
++                torch.set_num_threads(threads)
++            try:
++                with torch.inference_mode():
++                    out = self.encode(pixels, self.metadata(grid, pixels.device))
++            finally:
++                torch.set_num_threads(previous)
++            return out.to(device=device, dtype=torch.bfloat16)
+         return self.encode(pixels, self.metadata(grid, pixels.device))
+ 
+     def encode(self, pixels: torch.Tensor, metadata: VisionMetadata) -> torch.Tensor:
+@@ -307,4 +347,7 @@
+                     raise ValueError(f"Unexpected vision checkpoint tensor: {name}")
+                 default_weight_loader(params[name], weight)
+                 loaded.add(name)
++        if self.proj_out.weight.device.type == "cpu":
++            # agx-ai: fp32 on the CPU, which has no fast bf16 matrix units.
++            self.float()
+         return loaded | {name for name, count in qkv_shards.items() if count == 3}
