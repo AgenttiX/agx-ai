@@ -144,6 +144,29 @@ def test_message_text() -> None:
     assert chat.message_text({"content": 5}) == "5"
 
 
+def test_message_text_output_fallback() -> None:
+    # Responses API output: the reasoning item is ignored, the message item carries the text.
+    out = [{"type": "reasoning", "content": [{"type": "output_text", "text": "hidden thinking"}]},
+           {"type": "message", "role": "assistant",
+            "content": [{"type": "output_text", "text": "final answer"}]}]
+    assert chat.message_text({"content": "", "output": out}) == "final answer"
+    assert chat.message_text({"content": None, "output": out}) == "final answer"
+    assert chat.message_text({"output": out}) == "final answer"
+    # A non-empty content wins, and the output text is not mixed in.
+    assert chat.message_text({"content": "visible", "output": out}) == "visible"
+    assert chat.message_text({"content": "  ", "output": out}) == "final answer"
+    # A message whose content is empty and has no output stays empty.
+    assert chat.message_text({"content": ""}) == ""
+    assert chat.output_text({"output": [{"type": "message", "content": "plain string"}]}) == "plain string"
+    two = [{"type": "message", "content": "a"},
+           {"type": "message", "content": [{"type": "output_text", "text": "b"}]}]
+    assert chat.output_text({"output": two}) == "a\n\nb"
+    reasoning_only = [{"type": "reasoning", "content": [{"type": "output_text", "text": "x"}]}]
+    assert chat.output_text({"output": reasoning_only}) == ""
+    assert chat.output_text({"output": "junk"}) == ""
+    assert chat.output_text({}) == ""
+
+
 def test_attachments_markdown() -> None:
     files = [
         {"type": "image", "url": "data:image/png;base64,AAAA", "name": "pic.png"},
@@ -280,6 +303,13 @@ def test_message_markdown(tmp_path: Path) -> None:
     empty = markdown.message_markdown({"role": "assistant", "model": "m"}, options(), tmp_path, [0], None)
     assert "*(empty message)*" in empty
     assert "{owuiAssistantBg}" in empty
+    # Responses API: empty content, text in the output array
+    out = {"role": "assistant", "model": "m", "content": "",
+           "output": [{"type": "message", "role": "assistant",
+                       "content": [{"type": "output_text", "text": "restored text"}]}]}
+    restored = markdown.message_markdown(out, options(), tmp_path, [0], None)
+    assert "restored text" in restored
+    assert "*(empty message)*" not in restored
 
 
 def test_build_markdown_example(tmp_path: Path) -> None:

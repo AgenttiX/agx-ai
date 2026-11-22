@@ -75,12 +75,47 @@ def ordered_messages(chat: dict) -> list[dict]:
     return chain
 
 
+def output_text(msg: dict) -> str:
+    """The final message of the OpenAI Responses API ``output`` array, if any.
+
+    Some Open WebUI versions store assistant responses produced through the
+    Responses API in ``output`` (e.g. ``[{"type": "message", "content":
+    [{"type": "output_text", "text": ...}]}]``) and leave ``content`` empty.
+    Other item types (reasoning, tool calls) are ignored.
+    """
+    output = msg.get("output")
+    if not isinstance(output, list):
+        return ""
+    parts = []
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "output_text":
+                    parts.append(part.get("text") or "")
+                elif part.get("type") == "image" and part.get("image_url"):
+                    url = part["image_url"]
+                    url = url.get("url", "") if isinstance(url, dict) else url
+                    parts.append(f"![image]({url})")
+    return "\n\n".join(p for p in parts if p)
+
+
 def message_text(msg: dict) -> str:
-    """Message content as Markdown (handles OpenAI-style content parts)."""
+    """Message content as Markdown (handles OpenAI-style content parts).
+
+    Falls back to the Responses API ``output`` array when ``content`` is
+    empty (see :func:`output_text`).
+    """
     content = msg.get("content")
     if isinstance(content, str):
-        return content
-    if isinstance(content, list):
+        text = content
+    elif isinstance(content, list):
         parts = []
         for part in content:
             if isinstance(part, dict):
@@ -91,8 +126,12 @@ def message_text(msg: dict) -> str:
                     parts.append(f"![image]({url})")
             elif isinstance(part, str):
                 parts.append(part)
-        return "\n\n".join(parts)
-    return "" if content is None else str(content)
+        text = "\n\n".join(parts)
+    elif content is None:
+        text = ""
+    else:
+        text = str(content)
+    return text if text.strip() else output_text(msg)
 
 
 def attachments_markdown(msg: dict) -> str:

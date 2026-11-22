@@ -35,6 +35,9 @@ JSON files that are not chat exports are reported and skipped.
    keep them), tool calls are summarised, `\( … \)` / `\[ … \]` math is turned
    into `$ … $` / `$$ … $$`, base64 images are extracted, attachments are listed,
    and unclosed code fences are closed.
+   When Open WebUI stored a response in the OpenAI Responses API format
+   (empty `content`, the text in the `output` array), the text is recovered
+   from `output`.
    Source markers such as `[1]` become biblatex citations; every referenced
    note, file or web page gets one numbered entry in a *References* section
    at the end (biber backend, numeric style, ordered by first citation).
@@ -73,7 +76,7 @@ JSON files that are not chat exports are reported and skipped.
 | --- | --- |
 | `__main__.py` | Entry point of `python -m agx_ai.owui2pdf` |
 | `cli.py` | Argument parsing, output file naming |
-| `chat.py` | Reading the export, walking the conversation branch, attachments, sources, usage |
+| `chat.py` | Reading the export, walking the conversation branch, messages (incl. Responses API `output`), attachments, sources, usage |
 | `markdown.py` | Normalising message content and assembling the Markdown document |
 | `sources.py` | Registry of referenced notes/files/web pages: citations, `.bib` generation, appendix |
 | `notes.py` | Loading full note texts from files or the Open WebUI API |
