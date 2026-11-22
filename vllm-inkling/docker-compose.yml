@@ -1,0 +1,45 @@
+# vLLM with Inkling 2 Mini on the RTX 3090 of agx-z2e. See README.md for the configurations and results.
+# The same port as ../llama-cpp-rtx3090 and ../vllm-rtx3090 (9931): only one of them fits on the GPU at a time.
+# The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that clients work
+# with both.
+services:
+  vllm-inkling:
+    # The vLLM nightly with inkling-sm86.patch, see README.md.
+    # Built by ../.github/workflows/deploy-docker-vllm-inkling.yml. Locally: docker build -t <the image> .
+    image: ghcr.io/agenttix/agx-ai/vllm-inkling:latest
+    container_name: vllm-inkling
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      # Keep the Triton and Inductor caches, so that a restart is faster.
+      TRITON_CACHE_DIR: /root/.cache/vllm/triton
+      TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
+    ipc: host
+    ports:
+      - "9931:8000"
+    volumes:
+      # Download first: hf download thinkingmachines/Inkling-2-Mini
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - vllm-cache:/root/.cache/vllm
+      # Select the configuration here
+      - ./config-inkling-2-mini.yaml:/etc/vllm/config.yaml:ro
+      # - ./config-inkling-2-mini-dspark.yaml:/etc/vllm/config.yaml:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: all
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  vllm-cache:

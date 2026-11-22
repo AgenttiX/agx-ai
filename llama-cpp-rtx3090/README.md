@@ -32,6 +32,13 @@ the server of a draft pull request from
 context, 106 t/s in chat), but vLLM is 2.7 times as fast for it on this GPU and fits 6 times the context
 ([`../vllm-rtx3090`](../vllm-rtx3090/README.md#diffusiongemma)).
 
+[Inkling 2 Mini](#inkling-2-mini) runs from [`docker-compose-inkling.yml`](docker-compose-inkling.yml) with
+[`preset-inkling-2-mini.ini`](preset-inkling-2-mini.ini) (`UD-Q4_K_XL`, Unsloth's DSpark drafter, vision encoder on
+the CPU, 118784 tokens of context, 51 t/s in chat, 46 t/s at 36.5k and 31 t/s at 100k, code edits 80 t/s, prompts
+495-240 t/s): its image is upstream's b12627 with the drafter of an open pull request
+([`../llama-cpp-inkling`](../llama-cpp-inkling)). vLLM ([`../vllm-inkling`](../vllm-inkling)) is 1.8-3.7 times as
+fast for it, but fits 16384-49152 tokens of context.
+
 The vision encoder (mmproj) is on the GPU for the Qwen models and Gemma 4 26B-A4B and on the CPU
 (`no-mmproj-offload = 1`) for the Gemma 4 31B models. Each preset has the context size for the other choice as a
 comment; see [Vision encoder on the CPU](#vision-encoder-on-the-cpu-no-mmproj-offload).
@@ -655,26 +662,61 @@ extra context is needed.
 ## Inkling 2 Mini
 
 [thinkingmachines/Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) (2026-11-20) is a 26B MoE (128
-experts, 8 active) whose middle 12 of 24 layers run three times per token with shared weights. Its feasibility on this
-computer, checked on 2026-11-21 (no configurations yet):
+experts, 8 active) whose middle 12 of 24 layers run three times per token with shared weights, with a DSpark block
+drafter. Added on 2026-11-22 with [`preset-inkling-2-mini.ini`](preset-inkling-2-mini.ini) and
+[`docker-compose-inkling.yml`](docker-compose-inkling.yml).
 
-- **llama.cpp: feasible on both GPUs, but not yet in a release.** The model is in upstream llama.cpp since
-  [ggml-org/llama.cpp#32694](https://github.com/ggml-org/llama.cpp/pull/32694), but its NVFP4-derived GGUFs give
-  gibberish without [#32704](https://github.com/ggml-org/llama.cpp/pull/32704) (merged on 2026-11-21 after b12608, the
-  latest release then). The configurations should wait for the next release images (`server-cuda13`, `full-vulkan`)
-  and a newer gfx906 image instead of a custom build. Its own DSpark block drafter (0.4 GB, `--spec-type draft-dspark`)
-  is in the open [#32218](https://github.com/ggml-org/llama.cpp/pull/32218) and in Unsloth's fork. Memory estimate:
-  Unsloth's `UD-Q4_K_XL` (16.4 GiB, use the files of `Mainline_Support/` with upstream llama.cpp) and the 0.6 GiB
-  vision encoder; each pass through the loop has its own KV cache, so the 4 global-attention layers (2 of them in
-  the loop) store 8 layers of KV, 32 KiB per token with f16 (17 KiB with q8_0), plus a fixed ~160 MiB for the
-  1024-token windows of the 40 local-attention passes. That leaves room for ~100-150k tokens of context on the RTX
-  3090. On the Radeon VII, `UD-IQ3_XXS` (10.9 GiB) fits entirely; with a 4-bit quant, the experts of the layers
-  outside the loop (0-5, 18-23) should go to the CPU with `override-tensor`, since those of the loop are used three
-  times per token.
-- **vLLM: not feasible on either GPU.** Its support ([vllm-project/vllm#69028](https://github.com/vllm-project/vllm/pull/69028),
-  open) has kernels only for Hopper, Blackwell and DGX Spark (`get_min_capability` 90: TRT-LLM-gen expert GEMMs and
-  NVFP4 operations), and the checkpoint is NVFP4/MXFP8. The RTX 3090 (sm_86) and the Radeon VII (gfx906) would need
-  a port of the model's kernels.
+**Image.** Upstream llama.cpp runs the model since b12611 (b12627 is the first release image), but its NVFP4-derived
+GGUFs give gibberish before [#32704](https://github.com/ggml-org/llama.cpp/pull/32704), and the DSpark drafter is in
+the open [#32218](https://github.com/ggml-org/llama.cpp/pull/32218). The image of
+[`../llama-cpp-inkling`](../llama-cpp-inkling) is b12627 with that pull request. The GGUF is Unsloth's `UD-Q4_K_XL`
+(16.4 GiB, the file of `Mainline_Support/`, as the top-level files need Unsloth's fork), the drafter Unsloth's
+`dspark-Inkling-2-Mini-Q8_0.gguf` (0.4 GB) and the vision encoder ggml-org's `mmproj-Inkling-2-Mini-BF16.gguf`
+(0.6 GB), linked into `local-gguf/Inkling-2-Mini/`.
+
+**Memory.** Each pass through the loop has its own KV cache, so the 4 global-attention layers (2 of them in the loop)
+store 8 layers of KV, 17 KiB per token with q8_0. The relative-position bias of those layers is passed to the
+attention as a `[heads x context x ubatch]` F32 tensor (`kq_b` in `src/models/inkling2.cpp`), ~210 bytes per token of
+context and of the ubatch: 6.6 GiB at 32768 tokens with the default ubatch of 1024, 25 GiB at 131072. So the preset
+uses ubatch 64 (1.7 GiB at 131072). Prompt processing at 15k tokens by ubatch (all on the GPU, 16384 tokens of
+context):
+
+| ubatch | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|
+| Prompt processing | 493 t/s | 572 t/s | 696 t/s | 759 t/s |
+| Context that fits | ~131k | ~98k | ~61k | ~35k |
+
+The small ubatch costs 35 % of the prompt speed against 512, but fits 3.7 times the context. Without the drafter,
+131072 tokens fit (peak 20536 MiB of llama-server; chat 48.0 t/s, 40.0 / 32.5 t/s at 36.5k / 100k, edits 46.0 t/s,
+130k-token prompt 212 t/s).
+
+**DSpark drafter** (65536 tokens of context, chat / depth 6.4k / depth 36.5k / edit, t/s):
+
+| Drafts | Chat | Depth 6.4k | Depth 36.5k | Edit | Acceptance (chat / edit) |
+|---|---|---|---|---|---|
+| none (131072 tokens) | 48.0 | 44.9 | 40.0 | 46.0 | |
+| **3** | 53.6 | 49.1 | 47.1 | 78.7 | 37 / 87 % |
+| 5 | 43.1 | 49.3 | 44.4 | 88.3 | 23 / 81 % |
+| 7 | 36.7 | 44.6 | 32.9 | 87.7 | 17 / 74 % |
+
+3 drafts are 12 % faster in chats, 18 % at 36.5k tokens of context and 71 % in code edits. The drafter takes ~1 GiB
+with its buffers, so the preset has 118784 tokens of context instead of 131072. Results of the preset:
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 57.1 t/s, acceptance 41 % |
+| Chat, 6 requests | 51.3 t/s (40.1-64.0), acceptance 37 % |
+| Depth 6.4k / 36.5k / 100k | 49.1 / 46.4 / 30.8 t/s; prompt 495 / 365 / 240 t/s |
+| Edit after 2.8k tokens | 79.7 t/s, acceptance 87 % |
+| Full-context prompt (117284 tokens) | 219 t/s (8.9 min) |
+| Image 1280x960 (794 tokens), vision encoder on the CPU | 3.8 s |
+| Video, 20 s 640x360 (11679 tokens, a red square moving to the right, "ALPHA" and then "OMEGA") | 64 s, correct |
+| Peak VRAM of llama-server | 21360 MiB |
+
+Prompt processing is slow for a model of this size, as every token passes 48 layers and the small ubatch reads the
+experts more often. **vLLM** ([`../vllm-inkling`](../vllm-inkling), with a patch for sm_86) generates 1.8 times as
+fast (94 t/s in chat, 295 t/s in code edits with its drafter) and processes prompts ~9 times as fast, but fits only
+49152 tokens of context (16384 with its drafter), with BF16 weights outside the experts and a BF16 KV cache.
 
 ## Commands
 
@@ -710,4 +752,15 @@ docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint python3 $
 docker run --rm --user 1000:1000 -v ~/.cache:$HOME/.cache --entrypoint /app/llama-quantize $IMAGE --allow-requantize \
     --imatrix $(readlink -f ~/.cache/huggingface/hub/models--mradermacher--Phai-A1-35B-1M-i1-GGUF/snapshots/*/Phai-A1-35B-1M.imatrix.gguf) \
     $D/Phai-A1-35B-1M-MTP-Q8_0.gguf $D/Phai-A1-35B-1M-MTP-IQ4_XS.gguf IQ4_XS 64
+# Inkling 2 Mini: Unsloth's GGUFs for upstream llama.cpp (Mainline_Support/; the Radeon VII uses UD-IQ3_XXS), its
+# DSpark drafter and ggml-org's vision encoder, linked with the names of the presets
+hf download unsloth/Inkling-2-Mini-GGUF --include "Mainline_Support/*UD-Q4_K_XL*" "Mainline_Support/*UD-IQ3_XXS*" \
+    dspark-Inkling-2-Mini-Q8_0.gguf
+hf download ggml-org/Inkling-2-Mini-GGUF mmproj-Inkling-2-Mini-BF16.gguf
+cd ~/.cache/huggingface/hub && mkdir -p local-gguf/Inkling-2-Mini && cd local-gguf/Inkling-2-Mini
+for q in UD-Q4_K_XL UD-IQ3_XXS; do
+    ln -sf ../../$(cd ../.. && ls -d models--unsloth--Inkling-2-Mini-GGUF/snapshots/*/Mainline_Support/Inkling-2-Mini-$q.gguf_file | tail -1) Inkling-2-Mini-$q.gguf
+done
+ln -sf ../../$(cd ../.. && ls -d models--unsloth--Inkling-2-Mini-GGUF/snapshots/*/dspark-Inkling-2-Mini-Q8_0.gguf | tail -1) dspark-Q8_0.gguf
+ln -sf ../../$(cd ../.. && ls -d models--ggml-org--Inkling-2-Mini-GGUF/snapshots/*/mmproj-Inkling-2-Mini-BF16.gguf | tail -1) mmproj-BF16.gguf
 ```

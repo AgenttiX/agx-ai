@@ -19,6 +19,11 @@ context: an image takes ~8 s with Gemma and ~14 s with Qwen, a 20-s video ~80-90
 [images and videos](#images-and-videos-2026-10-29). They are faster and fit more context than with
 [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#images-and-videos-2026-10-29).
 
+[Inkling 2 Mini](#inkling-2-mini-2026-11-22) runs from [`docker-compose-inkling.yml`](docker-compose-inkling.yml)
+with [`preset-inkling-2-mini.ini`](preset-inkling-2-mini.ini) (`UD-IQ3_XXS` with Unsloth's DSpark drafter, 90112 tokens
+of context, 22-29 t/s in chat, 19 t/s at 90k, code edits 41 t/s, prompts 211-136 t/s, images and videos): its image is
+llama.cpp b12627 with the drafter of an open pull request, built for gfx906 ([`../llama-cpp-inkling`](../llama-cpp-inkling)).
+
 [DiffusionGemma](#diffusiongemma-2026-11-20) 26B-A4B, Google's block-diffusion model, runs with the server of a
 draft llama.cpp pull request from [`docker-compose-diffusiongemma.yml`](docker-compose-diffusiongemma.yml) (`Q4_K_M`,
 experts of 10 layers in RAM, q8_0 KV cache, 16384 tokens of context), but at only 17 t/s in chat, 7 times slower than
@@ -653,7 +658,6 @@ vLLM runs this model on the Radeon VII only with 7.2 GiB of its 4-bit experts re
 is clearly slower than llama.cpp, which computes the experts in RAM on the CPU: chat 36 vs 50 t/s with 262144 tokens
 of context, prompts 2.8-3.6 times as slow (see
 [`../vllm-radeon-vii`](../vllm-radeon-vii/README.md#phai-a1-35b-1m-2026-11-22)).
-Inkling 2 Mini: see [`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini).
 
 ### 262144 tokens of context (2026-11-22)
 
@@ -687,6 +691,54 @@ faster, but its 62 MiB more would leave too little margin at the full context. R
 
 Compared with the 112640-token preset, chats are ~22 % slower, generation at 100k tokens 12 % slower and prompt
 processing about as fast at 16k and 100k tokens. Use the 262k preset only when the longer context is needed.
+
+
+## Inkling 2 Mini (2026-11-22)
+
+[Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) (see
+[`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#inkling-2-mini)) runs from
+[`docker-compose-inkling.yml`](docker-compose-inkling.yml) with [`preset-inkling-2-mini.ini`](preset-inkling-2-mini.ini):
+Unsloth's `UD-IQ3_XXS` (10.9 GiB) entirely on the GPU, Unsloth's DSpark drafter, the vision encoder on the CPU and
+90112 tokens of context. The ROCm image of this directory (mixa3607's b12230) predates the model, so the image is
+llama.cpp b12627 with the DSpark drafter of an open pull request, built for gfx906 in mixa3607's ROCm image
+([`../llama-cpp-inkling/Dockerfile.gfx906`](../llama-cpp-inkling/Dockerfile.gfx906)). vLLM cannot run the model on
+this GPU ([`../vllm-inkling`](../vllm-inkling/README.md#radeon-vii)).
+
+Backend (32768 tokens of context, `bench_http.py`, chat / depth 6.4k, t/s; prompt processing at 6.4k):
+
+| Backend | ubatch | Chat | Depth 6.4k | Prompt |
+|---|---|---|---|---|
+| Vulkan (upstream `server-vulkan-b12627`) | 64 | 15.3 | 15.0 | 102 t/s |
+| Vulkan | 512 | 15.2 | 15.0 | 203 t/s |
+| **ROCm (b12627 built for gfx906)** | 64 | 26.1 | 24.9 | 216 t/s |
+| ROCm | 512 | 26.1 | 24.8 | 353 t/s |
+
+ROCm generates 1.7 times as fast as Vulkan. The ubatch is 64 for the context, as on the RTX 3090 (the
+relative-position bias grows with context x ubatch). DSpark drafter (ROCm, chat / depth 6.4k / edit, t/s):
+
+| Drafts | Chat | Depth 6.4k | Edit | VRAM |
+|---|---|---|---|---|
+| none | 26.1 | 24.9 | | 12407 MiB |
+| **2** | 29.3 | 32.1 | 41.4 | 13078 MiB |
+| 3 | 27.5 | 29.2 | 44.4 | 13044 MiB |
+
+Context: 131072 tokens crashed the server during a full-context prompt (16068 MiB already after loading), 98304
+peaked at 16358 MiB of 16368, too close; 90112 peaks at 15975 MiB (a 88612-token prompt at 138 t/s). Results with 98304 tokens of context (the speeds apply to the
+preset):
+
+| Test | Result |
+|---|---|
+| Generation, 256 tokens | 35.3 t/s, acceptance 62 % |
+| Chat, 6 requests | 22.5 t/s (17.1-34.2), acceptance 44 % |
+| Depth 6.4k / 36.5k / 90k | 27.8 / 26.5 / 18.8 t/s; prompt 211 / 177 / 136 t/s |
+| Edit after 2.8k tokens | 41.3 t/s, acceptance 93 % |
+| Full-context prompt (96804 tokens) | 133 t/s (12 min) |
+| Image 1280x960 (794 tokens), vision encoder on the CPU | 5.9 s |
+| Video, 20 s 640x360 (11679 tokens), 90112-token preset | 109 s, correct |
+
+`UD-IQ3_XXS` is a 3-bit quant of a model whose loop reuses its middle layers three times; a 4-bit quant would need
+the experts of some layers in RAM, which the loop would read three times per token. On the RTX 3090, the model runs
+2.3 times as fast with `UD-Q4_K_XL` and more context.
 
 ## Commands
 

@@ -1,0 +1,32 @@
+# vllm serve --config for Inkling 2 Mini on the RTX 3090 (sm_86, 24 GB) of agx-z2e, with the image of ./Dockerfile
+# (the vLLM nightly with inkling-sm86.patch). Benchmarks: README.md. Without the DSpark drafter, for the most context;
+# config-inkling-2-mini-dspark.yaml is faster (code edits 3.3 times as fast) with a third of the context.
+# Checkpoint (thinkingmachines/Inkling-2-Mini, 19.5 GB): 24 layers, of which layers 6-17 run 3 times (48 layer visits),
+# 128 routed experts (top 8) in NVFP4 (layers 0-19) and MXFP8 (layers 20-23), everything else BF16. 18.3 GiB on the
+# GPU without the vision tower.
+model: thinkingmachines/Inkling-2-Mini
+served-model-name: thinkingmachines/Inkling-2-Mini
+# Do not load the vision tower (0.6 GiB, ~19k tokens of context): the model creates it only with an image limit > 0.
+# The vision encoder runs on the CPU only in llama.cpp (../llama-cpp-rtx3090/preset-inkling-2-mini.ini).
+language-model-only: true
+# Peak 21675 MiB with a 43071-token prompt.
+max-model-len: 49152
+# 50224 tokens: ~32 KiB per token for the 8 full-attention caches (layers 5, 11 and 17 x 3 passes, 23; BF16), plus a
+# fixed part for the 40 sliding-window caches (window 1024) and the short-conv states, which grows with the prefill
+# chunk. Set explicitly instead of gpu-memory-utilization, which vLLM still checks against the free memory at startup.
+kv-cache-memory-bytes: 2850000000
+gpu-memory-utilization: 0.8
+# Inkling 2 supports only BF16 KV caches below SM12x (auto = bf16): its FP8 KV cache reads E4M3 with
+# cvt.rn.f16x2.e4m3x2 and writes it with Triton's fp8e4nv type, both SM89+.
+kv-cache-dtype: auto
+# The prefill chunk. Each sliding-window and short-conv cache reserves its window plus a chunk per sequence: with 2048,
+# 8192 tokens of context needed 4.06 GiB of KV cache, with 512 1.4 GiB. Prompt processing is still ~3700-4500 t/s.
+max-num-batched-tokens: 512
+# One request at a time, as for llama.cpp (parallel = 1).
+max-num-seqs: 1
+enable-prefix-caching: true
+# tokenizer-mode inkling (the native chat renderer; there is no Jinja chat template) is selected automatically.
+reasoning-parser: inkling
+enable-auto-tool-choice: true
+tool-call-parser: inkling
+# Sampling: generation_config.json of the model (temperature 1.0).

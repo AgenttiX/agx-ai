@@ -1,0 +1,47 @@
+# llama.cpp server for gfx906 (Radeon VII, MI50, MI60) with ROCm and the DSpark block drafter of Inkling 2 Mini, see
+# README.md. The same source as Dockerfile (b12627 with dspark.patch), built with HIP in mixa3607's ROCm image for
+# gfx906 (https://github.com/mixa3607/ML-gfx906), the ROCm version of ../llama-cpp-radeon-vii, whose llama.cpp image
+# (b12230) predates Inkling 2 Mini. Upstream's Vulkan image runs the model on this GPU too, but generates 3 times as
+# slowly.
+# Built by ../.github/workflows/deploy-docker-llama-cpp-inkling.yml.
+# Locally: docker build -f Dockerfile.gfx906 -t ghcr.io/agenttix/agx-ai/llama-cpp-inkling-gfx906:latest .
+ARG ROCM_IMAGE=docker.io/mixa3607/rocm-gfx906:10.1-complete
+
+FROM ${ROCM_IMAGE} AS build
+
+ARG LLAMA_CPP_TAG=b12627
+ARG LLAMA_CPP_COMMIT=225a5345bbb0e0c70859af5441ba922beb666fcf
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential cmake curl ca-certificates libssl-dev patch \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN curl -fsSL "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/${LLAMA_CPP_COMMIT}" | tar xz --strip-components=1
+COPY dspark.patch /tmp/
+RUN patch -p1 < /tmp/dspark.patch
+
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    cmake -B build -DGGML_NATIVE=OFF -DGGML_HIP=ON -DGPU_TARGETS=gfx906 -DLLAMA_BUILD_TESTS=OFF \
+        -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
+        -DLLAMA_BUILD_NUMBER="${LLAMA_CPP_TAG#b}" -DLLAMA_BUILD_COMMIT="${LLAMA_CPP_COMMIT}" \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j"$(nproc)" --target llama-server \
+    && mkdir -p /app \
+    && cp build/bin/llama-server /app/ \
+    && find build -name "*.so*" -exec cp -P {} /app/ \;
+
+FROM ${ROCM_IMAGE}
+
+# ffmpeg decodes videos (video_url parts), as in upstream's images.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 curl ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app /app
+ENV LD_LIBRARY_PATH=/app
+ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_PORT=8080
+WORKDIR /app
+HEALTHCHECK CMD [ "curl", "-f", "http://localhost:8080/health" ]
+ENTRYPOINT [ "/app/llama-server" ]

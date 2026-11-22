@@ -1,0 +1,143 @@
+diff -ruN a/models/inkling2/nvidia/ops/conv_mix.py b/models/inkling2/nvidia/ops/conv_mix.py
+--- a/models/inkling2/nvidia/ops/conv_mix.py	2026-11-22 03:21:55.597342445 +0200
++++ b/models/inkling2/nvidia/ops/conv_mix.py	2026-11-22 03:22:22.080991113 +0200
+@@ -5,8 +5,7 @@
+ 
+ import torch
+ 
+-from vllm.platforms import current_platform
+-
++from . import use_portable_fallbacks
+ from .attn_res import attn_res
+ from .sconv import short_conv
+ from .seq_parallel import SeqParallel
+@@ -89,9 +88,10 @@
+     )
+     if sp is None:
+         assert halo == 0 and positions.shape[0] == num_tokens and x.dim() == 2
+-        if current_platform.is_device_capability_family(120):
+-            # Native conv/mix kernels require Hopper or SM10x. Keep the
+-            # loop executor's cache writes and residual rounding on SM12x.
++        if use_portable_fallbacks():
++            # Native conv/mix kernels require Hopper or SM10x (the wheel has
++            # no sm_8x/SM12x images). Keep the loop executor's cache writes
++            # and residual rounding on SM12x and pre-Hopper GPUs.
+             short_conv(
+                 x,
+                 conv_weight,
+diff -ruN a/models/inkling2/nvidia/ops/__init__.py b/models/inkling2/nvidia/ops/__init__.py
+--- a/models/inkling2/nvidia/ops/__init__.py	2026-11-22 03:21:55.562065771 +0200
++++ b/models/inkling2/nvidia/ops/__init__.py	2026-11-22 03:22:11.340912948 +0200
+@@ -11,3 +11,55 @@
+     from vllm.platforms import current_platform
+ 
+     return current_platform.is_device_capability_family(100)
++
++
++@functools.cache
++def use_portable_fallbacks() -> bool:
++    """Whether to take the SM12x fallbacks that do not need Hopper features
++    (no TMA, wgmma or Inkling2 CUDA kernels, ~100 KB of shared memory per
++    block): SM12x and pre-Hopper GPUs such as sm_86. The routed experts
++    stay on the Hopper (Humming) path below SM90, as the SM12x experts use
++    native FP4 MMA."""
++    from vllm.platforms import current_platform
++
++    return current_platform.is_device_capability_family(
++        120
++    ) or not current_platform.has_device_capability(90)
++
++
++def _disable_pdl_before_sm90() -> None:
++    """Programmatic dependent launch (`launch_pdl`, `gdc_wait`,
++    `gdc_launch_dependents`) needs SM90: the `griddepcontrol` PTX does not
++    exist for sm_8x. Below SM90, the Triton GDC calls compile to nothing and
++    launches drop the PDL attribute, so that kernels are ordered by the
++    stream as usual. Only applied in processes that import Inkling2 on such
++    a GPU, where these calls could not compile anyway."""
++    from vllm.platforms import current_platform
++
++    if not current_platform.is_cuda() or current_platform.has_device_capability(90):
++        return
++    from triton.backends.nvidia import compiler
++    from triton.language import core
++    from triton.language.extra import cuda as tl_cuda
++
++    if getattr(tl_cuda, "_inkling2_no_pdl", False):
++        return
++
++    @core.extern
++    def _no_gdc(_semantic=None):
++        return None
++
++    tl_cuda.gdc_wait = _no_gdc
++    tl_cuda.gdc_launch_dependents = _no_gdc
++    parse_options = compiler.CUDABackend.parse_options
++
++    def _parse_options_without_pdl(self, opts):
++        opts = dict(opts)
++        opts["launch_pdl"] = False
++        return parse_options(self, opts)
++
++    compiler.CUDABackend.parse_options = _parse_options_without_pdl
++    tl_cuda._inkling2_no_pdl = True
++
++
++_disable_pdl_before_sm90()
+diff -ruN a/models/inkling2/nvidia/ops/linear.py b/models/inkling2/nvidia/ops/linear.py
+--- a/models/inkling2/nvidia/ops/linear.py
++++ b/models/inkling2/nvidia/ops/linear.py
+@@ -9,7 +9,7 @@
+ from vllm.triton_utils import tl, triton
+ from vllm.utils.flashinfer import is_flashinfer_autotuning
+ 
+-from . import use_sm100_kernels
++from . import use_portable_fallbacks, use_sm100_kernels
+ from .ll_gemm_sm120 import sm12x_bf16_ll_gemm, use_sm12x_bf16_ll_gemm
+ 
+ # Up to this many rows, FlashInfer's CuTe DSL low-M kernels run near HBM
+@@ -213,8 +213,9 @@
+     assert x.is_contiguous() and weight.is_contiguous()
+     tokens, hidden = x.shape
+     n = weight.shape[0]
+-    sm120 = current_platform.is_device_capability_family(120)
+-    if tokens >= TMA_MIN_TOKENS:
++    # sm_86 too: SM12x's shared memory per block (~99 KiB), and no TMA below SM90.
++    sm120 = use_portable_fallbacks()
++    if tokens >= TMA_MIN_TOKENS and current_platform.has_device_capability(90):
+         from triton.tools.tensor_descriptor import TensorDescriptor
+ 
+         out = torch.empty((1, tokens, n), dtype=out_dtype, device=x.device)
+diff -ruN a/models/inkling2/nvidia/vision.py b/models/inkling2/nvidia/vision.py
+--- a/models/inkling2/nvidia/vision.py	2026-11-22 03:21:55.612300392 +0200
++++ b/models/inkling2/nvidia/vision.py	2026-11-22 03:22:22.081058972 +0200
+@@ -91,7 +91,13 @@
+         else:
+             from vllm.vllm_flash_attn import flash_attn_varlen_func
+ 
+-            version = 2 if current_platform.is_device_capability_family(120) else 3
++            # vllm_flash_attn has no FA3 for SM12x or below SM90 (sm_8x): FA2.
++            version = (
++                2
++                if current_platform.is_device_capability_family(120)
++                or not current_platform.has_device_capability(90)
++                else 3
++            )
+             out = flash_attn_varlen_func(q, k, v, fa_version=version, **kwargs)
+         return self.out_proj(out.view(hidden.shape))
+ 
+diff -ruN a/models/inkling2/quant_config.py b/models/inkling2/quant_config.py
+--- a/models/inkling2/quant_config.py	2026-11-22 03:21:55.545801406 +0200
++++ b/models/inkling2/quant_config.py	2026-11-22 03:22:11.340671679 +0200
+@@ -43,7 +43,10 @@
+ 
+     @classmethod
+     def get_min_capability(cls) -> int:
+-        return 90
++        # Ampere (sm_80/86/89) runs the portable paths: Humming weight-only
++        # experts with bf16 activations, Triton attention, short conv and
++        # AttnRes (see `ops.use_portable_fallbacks`).
++        return 80
+ 
+     @staticmethod
+     def get_config_filenames() -> list[str]:

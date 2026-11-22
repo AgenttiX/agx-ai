@@ -1,0 +1,33 @@
+# Inkling 2 Mini with llama.cpp on the Radeon VII, on the same port as docker-compose.yml (9932): only one of them fits
+# on the GPU at a time. Its image is llama.cpp b12627 for gfx906 with the DSpark block drafter of an open pull request,
+# see ../llama-cpp-inkling/README.md. The router and the preset work as in docker-compose.yml.
+# docker compose stop (here), then: docker compose -f docker-compose-inkling.yml up -d
+# Benchmarks: README.md (Inkling 2 Mini).
+services:
+  llama-cpp-radeon-vii-inkling:
+    # Built by ../.github/workflows/deploy-docker-llama-cpp-inkling.yml.
+    # Locally: docker build -f Dockerfile.gfx906 -t <the image> ../llama-cpp-inkling
+    image: ghcr.io/agenttix/agx-ai/llama-cpp-inkling-gfx906:latest
+    container_name: llama-cpp-radeon-vii-inkling
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    restart: unless-stopped
+    ports:
+      # The image sets LLAMA_ARG_PORT=8080, which overrides the port of config.ini.
+      - "9932:8080"
+    volumes:
+      # Download first: hf download unsloth/Inkling-2-Mini-GGUF --include "Mainline_Support/*UD-IQ3_XXS*" "dspark-*Q8_0*",
+      # hf download ggml-org/Inkling-2-Mini-GGUF mmproj-Inkling-2-Mini-BF16.gguf, and link them into local-gguf, see README.md.
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ../llama-cpp/config.ini:/etc/llama.cpp/config.ini:ro
+      - ./preset-inkling-2-mini.ini:/etc/llama.cpp/preset.ini:ro
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    group_add:
+      - video
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
