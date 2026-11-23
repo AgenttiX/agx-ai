@@ -1,0 +1,16 @@
+# Count the expert requests in decode, for a ranking of the experts by their use (rvii_experts/rank_experts.py):
+# the runtime writes the counts (uint32 [48][512]) to rvii_experts/usage/collect.bin every 256 decode steps,
+# from zero at each start (so copy the file before a restart). Send the prompts of the topic, then e.g.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.usage.yml up -d
+#   cp rvii_experts/usage/collect.bin my-topic.bin
+#   python3 rvii_experts/rank_experts.py rvii_experts/rankings-my-topic.json \
+#     rvii_experts/usage/general.bin:0.3 my-topic.bin:0.7
+#
+# See rvii_experts/README.md (Choosing the experts).
+services:
+  vllm-flash-next:
+    environment:
+      QWEN38_EXPERT_USAGE: /usage/collect.bin
+    volumes:
+      - ./rvii_experts/usage:/usage

@@ -24,6 +24,9 @@ Files:
   zero points are 8 (the checkpoint stores them as `qzeros` = `0x77777777`, i.e. 7 + 1 in the GPTQ v1 format).
 - [`rvii_worker.hip`](rvii_worker.hip): the worker (HIP, gfx906).
 - [`bench_rvii.py`](bench_rvii.py): a test and benchmark client that plays the CPU side.
+- [`rank_experts.py`](rank_experts.py): builds a ranking from measured expert usage, e.g. for particular topics
+  (see [Choosing the experts](#choosing-the-experts)); [`usage/general.bin`](usage/general.bin) holds the counts
+  of `rankings-measured.json`.
 - [`Dockerfile`](Dockerfile), [`entrypoint.sh`](entrypoint.sh): the image `ghcr.io/agenttix/agx-ai/flash-next-rvii-experts`
   (built by [`../../.github/workflows/deploy-docker-flash-next-rvii-experts.yml`](../../.github/workflows/deploy-docker-flash-next-rvii-experts.yml)),
   based on the [vLLM gfx906 image](../../vllm-radeon-vii) for its ROCm and Python with numpy.
@@ -59,6 +62,38 @@ Test and benchmark (with the worker running):
 docker run --rm --ipc host -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro --entrypoint python \
   ghcr.io/agenttix/agx-ai/flash-next-rvii-experts:latest /opt/rvii/bench_rvii.py
 ```
+
+## Choosing the experts
+
+The ranking file decides the placement: for each layer, the experts in order of use. The runtime keeps ranks 0-23 on
+the RTX 3090 (`QWEN38_HOT_ONLY`), this worker ranks 24-158, and the CPU computes the rest. The placement is fixed while
+the containers run.
+
+[`rankings-measured.json`](rankings-measured.json) is [`usage/general.bin`](usage/general.bin) (4.9 M decode
+requests on chat, raw generation, 16k and 64k tokens of code and retrieval questions, 2026-11-23) ranked by
+[`rank_experts.py`](rank_experts.py), with the runtime's static ranking for ties. To favor a topic, collect its usage
+and mix it with the general counts (a ranking from one topic only would slow down the others):
+
+```sh
+cd ..  # vllm-rtx3090-flash-next
+docker compose -f docker-compose.yml -f docker-compose.usage.yml up -d
+# ... send prompts of the topic: a few hundred thousand generated tokens ...
+cp rvii_experts/usage/collect.bin rvii_experts/usage/my-topic.bin
+python3 rvii_experts/rank_experts.py rvii_experts/rankings-my-topic.json \
+  rvii_experts/usage/general.bin:0.3 rvii_experts/usage/my-topic.bin:0.7
+```
+
+Each collection is normalized per layer before weighting, so the weights decide the mix regardless of the collections'
+sizes. The script prints the share of each collection's requests that the RTX 3090, the Radeon VII and the CPU would
+compute with the new ranking and the static one (`--report` evaluates an existing ranking against usage files). For
+reference, the general collection: 24.8 / 49.8 / 25.4 % with `rankings-measured.json`, 11.8 / 40.8 / 47.3 % with the
+static ranking. To use the new ranking, mount it in `../docker-compose.yml` in place of `rankings-measured.json`, and
+in the `rvii-experts` service, mount it too and point `RVII_RANKINGS` to it; the entrypoint packs a new cache for it.
+
+Experts specialize by kind of token (code syntax, prose, language) as much as by subject, so broad domains separate
+better than subjects within them. In the measurements of [the runtime's README](../README.md#radeon-vii-experts-2026-11-23),
+the measured ranking gained 24-28 % in the code tests, of the same kind as part of the collection, and nothing in chats,
+which were in neither.
 
 ## How it works
 

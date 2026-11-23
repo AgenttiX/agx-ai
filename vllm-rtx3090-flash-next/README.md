@@ -103,6 +103,9 @@ configuration, so it now computes a share of the cold experts:
   A ranking measured on a first, smaller collection put 60.5 % of the second collection on the Radeon VII, so the
   counts carry over between these workloads. The CPU still computed ~1080 distinct experts per step, as the rarely
   used experts make up most of the distinct ones; the gain was in the code tests (see below).
+  [`rvii_experts/rank_experts.py`](rvii_experts/rank_experts.py) builds rankings from usage counts, e.g. weighted
+  toward a topic, and [`docker-compose.usage.yml`](docker-compose.usage.yml) collects them (see
+  [Choosing the experts](rvii_experts/README.md#choosing-the-experts)).
 
 Measured with `bench_http.py --tests chat depth edit --repeat 2 --depth 6400 32000 --edit-depth 0` (generation in
 t/s; experts per step from the decode statistics):
