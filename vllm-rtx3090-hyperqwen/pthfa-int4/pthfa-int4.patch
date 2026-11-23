@@ -1,0 +1,1236 @@
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/attn_args.h pthfa/csrc/pth_attn/attn_args.h
+--- a/csrc/pth_attn/attn_args.h
++++ b/csrc/pth_attn/attn_args.h
+@@ -141,6 +141,12 @@
+   // default (window 0, causal 1) is the causal attention above.
+   int32_t window;
+   int32_t causal;
++  // Cache format: 0 or 8 = int8_per_token_head (K/V rows of head_size bytes),
++  // 4 = vLLM's int4_per_token_head (rows of head_size / 2 bytes of packed
++  // nibbles, zero point in the 4 low mantissa bits of each scale; the caller
++  // rotates q and the output with vLLM's RHT). Appended last: zero-initialised
++  // callers keep the int8 behaviour.
++  int32_t kv_bits;
+ } PthAttnArgs;
+ 
+ typedef struct PthAttnCombineArgs {
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/attn_decode.cuh pthfa/csrc/pth_attn/attn_decode.cuh
+--- a/csrc/pth_attn/attn_decode.cuh
++++ b/csrc/pth_attn/attn_decode.cuh
+@@ -82,9 +82,10 @@
+ // Shared memory: Q (8 NT rows), two stages in the loader's layout, the P''
+ // buffer, the row-max and row-sum exchange ([row][warp] f32) and the per-row
+ // score factors.
+-template <int D, int NT, bool kCell>
++template <int D, int NT, bool kCell, bool kI4 = false>
+ struct DecSmem {
+-  using R = std::conditional_t<kCell, CellStageReader<D>, SepStageReader<D>>;
++  using R = std::conditional_t<kCell, CellStageReader<D, kI4>,
++                               SepStageReader<D, kI4>>;
+   static constexpr int kRows = kDecRowsPerNt * NT;
+   static constexpr int kQ = 0;
+   static constexpr int kQBytes = kRows * kF16Bytes * D;
+@@ -219,6 +220,113 @@
+   }
+ }
+ 
++
++// INT4 counterparts. dec_qk_i4: one K ldmatrix.x4 covers tokens tok0 + 0..15
++// (matrix bit 0) at two 16-B chunks (bit 1) = 64 d = four k16 steps
++// (smem_layout.cuh pi4). kb_lo / kb_hi: the zero-point subtrahends of tokens
++// tok0 + g and tok0 + g + 8 (the A rows of this lane).
++template <int D, int NT, class R>
++__device__ __forceinline__ void dec_qk_i4(float (&s)[NT][4], uint32_t q_smem,
++                                          uint32_t stage_smem, int tok0,
++                                          uint32_t kb_lo, uint32_t kb_hi,
++                                          int lane) {
++  #pragma unroll
++  for (int n = 0; n < NT; ++n) s[n][0] = s[n][1] = s[n][2] = s[n][3] = 0.f;
++  const int mi = lane >> 3, l8 = lane & 7;
++  #pragma unroll
++  for (int ks4 = 0; ks4 < D / (4 * kMmaK); ++ks4) {
++    uint32_t kr[4];
++    ldmatrix_x4(kr, stage_smem + R::k(tok0 + 8 * (mi & 1) + l8,
++                                      (2 * ks4 + (mi >> 1)) * kSmemChunkBytes));
++    // p[m]: matrix m = (token half m & 1, chunk m >> 1); pairs 2h, 2h + 1 are
++    // the (k 2q.., k 2q+8..) registers of k-step 2 (m >> 1) + h.
++    uint32_t p[4][4];
++  #pragma unroll
++    for (int m = 0; m < 4; ++m) {
++      cvt8_u4_f16x2(kr[m], (m & 1) ? kb_hi : kb_lo, p[m]);
++    }
++  #pragma unroll
++    for (int n = 0; n < NT; ++n) {
++      uint32_t qb[2][4];
++  #pragma unroll
++      for (int hq = 0; hq < 2; ++hq) {
++        ldmatrix_x4(qb[hq],
++                    q_smem + q_swz(8 * n + l8, 8 * (8 * ks4 + 4 * hq + mi), D));
++      }
++  #pragma unroll
++      for (int e = 0; e < 4; ++e) {
++        const int cc = e >> 1, h = e & 1;
++        const uint32_t a[4] = {p[2 * cc][2 * h], p[2 * cc + 1][2 * h],
++                               p[2 * cc][2 * h + 1], p[2 * cc + 1][2 * h + 1]};
++        const uint32_t b[2] = {qb[e >> 1][2 * (e & 1)],
++                               qb[e >> 1][2 * (e & 1) + 1]};
++        mma_m16n8k16_f16f32(s[n], a, b);
++      }
++    }
++  }
++}
++
++// dec_pv_i4: warp `warp` owns the 64-d groups D / 64 / 4 * warp ..; m-tile
++// 4 a + hm of group a has rows g <-> d = 64 ga + 8 g + 2 hm and g + 8 <-> + 1.
++template <int D, int NT, class R>
++__device__ __forceinline__ void dec_pv_i4(float (&o)[dec_mtiles(D)][NT][4],
++                                          uint32_t p_smem, const uint8_t* stage,
++                                          int warp, int lane) {
++  constexpr int kGroups = D / 64 / kWarps;  // 64-d groups per warp
++  static_assert(kGroups >= 1 && 4 * kGroups == dec_mtiles(D),
++                "four m-tiles per 64-d group");
++  const int g = lane >> 2, q = lane & 3;
++  const int mi = lane >> 3, l8 = lane & 7;
++  #pragma unroll
++  for (int j = 0; j < kLoadTileTokens / kMmaK; ++j) {
++    uint32_t bp[NT][2];
++  #pragma unroll
++    for (int np = 0; np < NT; np += 2) {
++      const int nm = np + (mi >> 1) < NT ? np + (mi >> 1) : NT - 1;
++      uint32_t r[4];
++      ldmatrix_x4(r,
++                  p_smem + (8 * nm + l8) * kDecPPitch + 32 * j + 16 * (mi & 1));
++      bp[np][0] = r[0];
++      bp[np][1] = r[1];
++      if (np + 1 < NT) {
++        bp[np + 1][0] = r[2];
++        bp[np + 1][1] = r[3];
++      }
++    }
++    // Zero points of the tokens 2q, 2q+1 (register 0) and 2q+8, 2q+9 (1).
++    uint32_t zp[4];
++  #pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      zp[i] = i4_zp(*reinterpret_cast<const float*>(
++          stage + R::vs(kMmaK * j + 2 * q + v_token_offset(i))));
++    }
++    const uint32_t bias0 = i4_bias2(zp[0], zp[1]);
++    const uint32_t bias1 = i4_bias2(zp[2], zp[3]);
++  #pragma unroll
++    for (int a = 0; a < kGroups; ++a) {
++      uint32_t w[4];
++  #pragma unroll
++      for (int i = 0; i < 4; ++i) {
++        const int tok = kMmaK * j + 2 * q + v_token_offset(i);
++        w[i] = *reinterpret_cast<const uint32_t*>(
++            stage + R::v(tok, 32 * (kGroups * warp + a) + 4 * g));
++      }
++      uint32_t b0[8], b1[8];  // d = 64 ga + 8 g + n_sub
++      i4_v_pair(w[0], w[1], bias0, b0);
++      i4_v_pair(w[2], w[3], bias1, b1);
++  #pragma unroll
++      for (int hm = 0; hm < 4; ++hm) {
++        const uint32_t am[4] = {b0[2 * hm], b0[2 * hm + 1], b1[2 * hm],
++                                b1[2 * hm + 1]};
++  #pragma unroll
++        for (int n = 0; n < NT; ++n) {
++          mma_m16n8k16_f16f32(o[4 * a + hm][n], am, bp[n]);
++        }
++      }
++    }
++  }
++}
++
+ // Stores 4 floats (4 contiguous d) at dst in `dtype`, round to nearest even
+ // for the 16-bit types (as store8).
+ __device__ __forceinline__ void store4(char* dst, int32_t dtype,
+@@ -254,9 +362,9 @@
+   return v + __shfl_xor_sync(0xffffffffu, v, 16);
+ }
+ 
+-template <int D, int NT, typename QT, bool kCell>
++template <int D, int NT, typename QT, bool kCell, bool kI4 = false>
+ __device__ __forceinline__ void attn_dec_body(const AttnParams& ap) {
+-  using Sm = DecSmem<D, NT, kCell>;
++  using Sm = DecSmem<D, NT, kCell, kI4>;
+   using R = typename Sm::R;
+   constexpr int kRows = Sm::kRows;
+   constexpr int kMt = dec_mtiles(D);
+@@ -286,7 +394,8 @@
+   }
+ 
+   float* row_factor = reinterpret_cast<float*>(smem + Sm::kRowFactor);
+-  stage_q<D, kRows, QT>(p, rt, kvh, smem + Sm::kQ, row_factor, warp, lane);
++  stage_q<D, kRows, QT, kI4>(p, rt, kvh, smem + Sm::kQ, row_factor, warp,
++                             lane);
+   consumer_sync<kAttnProducerWarps<D>>();
+ 
+   const uint32_t smem_base = smem_u32(smem);
+@@ -341,22 +450,33 @@
+     float vmax = fmaxf(
+         *reinterpret_cast<const float*>(stage_ptr + R::vs(lane)),
+         *reinterpret_cast<const float*>(stage_ptr + R::vs(lane + kWarpSize)));
++    if constexpr (kI4) vmax = i4_scale(vmax);
+   #pragma unroll
+     for (int off = kWarpSize / 2; off > 0; off /= 2) {
+       vmax = fmaxf(vmax, __shfl_xor_sync(0xffffffffu, vmax, off));
+     }
+     // This lane's token scales: tokens tok0 + g and tok0 + g + 8.
+-    const float ks_lo =
++    float ks_lo =
+         *reinterpret_cast<const float*>(stage_ptr + R::ks(tok0 + g));
+-    const float ks_hi =
++    float ks_hi =
+         *reinterpret_cast<const float*>(stage_ptr + R::ks(tok0 + g + 8));
+-    const float vs_lo =
++    float vs_lo =
+         *reinterpret_cast<const float*>(stage_ptr + R::vs(tok0 + g));
+-    const float vs_hi =
++    float vs_hi =
+         *reinterpret_cast<const float*>(stage_ptr + R::vs(tok0 + g + 8));
+ 
+     float s[NT][4];
+-    dec_qk<D, NT, R>(s, q_smem, stage, tok0, lane);
++    if constexpr (kI4) {
++      const uint32_t zl = i4_zp(ks_lo), zh = i4_zp(ks_hi);
++      dec_qk_i4<D, NT, R>(s, q_smem, stage, tok0, i4_bias2(zl, zl),
++                          i4_bias2(zh, zh), lane);
++      ks_lo = i4_scale(ks_lo);
++      ks_hi = i4_scale(ks_hi);
++      vs_lo = i4_scale(vs_lo);
++      vs_hi = i4_scale(vs_hi);
++    } else {
++      dec_qk<D, NT, R>(s, q_smem, stage, tok0, lane);
++    }
+   #pragma unroll
+     for (int n = 0; n < NT; ++n) {
+       // s = fp32(fp32(S ks) c_row) as the shipped kernel (EB sec. 3.1).
+@@ -448,7 +568,11 @@
+     }
+     consumer_sync<kAttnProducerWarps<D>>();  // barrier B
+ 
+-    dec_pv<D, NT, R>(o, p_smem, stage_ptr, warp, lane);
++    if constexpr (kI4) {
++      dec_pv_i4<D, NT, R>(o, p_smem, stage_ptr, warp, lane);
++    } else {
++      dec_pv<D, NT, R>(o, p_smem, stage_ptr, warp, lane);
++    }
+     // Release the stage for tile i + 2 (the producers wait for exactly these
+     // arrivals, so every arrival is matched).
+     if (i + kStages < te) named_bar_arrive(kBarEmpty0 + buf, kAttnThreadsWs);
+@@ -495,16 +619,33 @@
+         dtype = PTH_ATTN_F32;
+         elem = kAccElemBytes;
+       }
++      if constexpr (kI4) {
++        constexpr int kGroups4 = D / 64 / kWarps;
+   #pragma unroll
+-      for (int a = 0; a < kGroups; ++a) {
+-        // Output d = 32 ga + 4 g + {0, 1, 2, 3}: (m-tile 2a, c0/c1), (2a,
+-        // c2/c3), (2a + 1, c0/c1), (2a + 1, c2/c3) of column j.
+-        const float v4[4] = {(o[2 * a][n][j] * inv_l) * c_unit,
+-                             (o[2 * a][n][2 + j] * inv_l) * c_unit,
+-                             (o[2 * a + 1][n][j] * inv_l) * c_unit,
+-                             (o[2 * a + 1][n][2 + j] * inv_l) * c_unit};
+-        store4(dst_row + (kVGroupD * (kGroups * warp + a) + 4 * g) * elem,
+-               dtype, v4);
++        for (int a = 0; a < kGroups4; ++a) {
++          // Output d = 64 ga + 8 g + 2 hm + {0, 1}: m-tile 4 a + hm, c0/c1
++          // (row g) and c2/c3 (row g + 8) of column j.
++          float v8[8];
++  #pragma unroll
++          for (int hm = 0; hm < 4; ++hm) {
++            v8[2 * hm] = (o[4 * a + hm][n][j] * inv_l) * c_unit;
++            v8[2 * hm + 1] = (o[4 * a + hm][n][2 + j] * inv_l) * c_unit;
++          }
++          store8(dst_row + (64 * (kGroups4 * warp + a) + 8 * g) * elem, dtype,
++                 v8);
++        }
++      } else {
++  #pragma unroll
++        for (int a = 0; a < kGroups; ++a) {
++          // Output d = 32 ga + 4 g + {0, 1, 2, 3}: (m-tile 2a, c0/c1), (2a,
++          // c2/c3), (2a + 1, c0/c1), (2a + 1, c2/c3) of column j.
++          const float v4[4] = {(o[2 * a][n][j] * inv_l) * c_unit,
++                               (o[2 * a][n][2 + j] * inv_l) * c_unit,
++                               (o[2 * a + 1][n][j] * inv_l) * c_unit,
++                               (o[2 * a + 1][n][2 + j] * inv_l) * c_unit};
++          store4(dst_row + (kVGroupD * (kGroups * warp + a) + 4 * g) * elem,
++                 dtype, v4);
++        }
+       }
+       if (p.num_splits > 1 && warp == 0 && g == 0) {
+         const float lse = live ? m[n][j] + lg2_approx(l_tot) : -INFINITY;
+@@ -524,6 +665,12 @@
+ }
+ 
+ template <int D, int NT, typename QT, bool kCell>
++__global__ void __launch_bounds__(kAttnThreads<D>, ctas_per_sm(D))
++    attn_dec_i4_kernel(const __grid_constant__ AttnParams ap) {
++  attn_dec_body<D, NT, QT, kCell, true>(ap);
++}
++
++template <int D, int NT, typename QT, bool kCell>
+ cudaError_t launch_dec_one(const AttnLaunch& L, cudaStream_t stream) {
+   return launch_with_smem<attn_dec_kernel<D, NT, QT, kCell>,
+                           DecSmem<D, NT, kCell>::kBytes, kAttnThreads<D>>(
+@@ -533,6 +680,13 @@
+ template <int D, int NT>
+ cudaError_t launch_dec_nt(const AttnLaunch& L, cudaStream_t stream) {
+   const bool bf16 = L.q_dtype == PTH_ATTN_BF16;
++  if (L.i4) {
++    // int4: bf16 queries and the whole-cell loader only.
++    if (!bf16 || !L.cell) return cudaErrorInvalidValue;
++    return launch_with_smem<attn_dec_i4_kernel<D, NT, __nv_bfloat16, true>,
++                            DecSmem<D, NT, true, true>::kBytes,
++                            kAttnThreads<D>>(L.grid, stream, L.ap);
++  }
+   if (L.cell) {
+     return bf16 ? launch_dec_one<D, NT, __nv_bfloat16, true>(L, stream)
+                 : launch_dec_one<D, NT, __half, true>(L, stream);
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/attn_kernel.cuh pthfa/csrc/pth_attn/attn_kernel.cuh
+--- a/csrc/pth_attn/attn_kernel.cuh
++++ b/csrc/pth_attn/attn_kernel.cuh
+@@ -73,13 +73,24 @@
+ // room (D = 128: 2 x (50176 + 256 + 1024) > 102400), so they live in stage
+ // 1, which no copy touches before every thread has read its factors (the
+ // first loop barrier).
+-template <int D, int WM, int SUB, bool kCell>
++template <int D, int WM, int SUB, bool kCell, bool kI4 = false>
+ struct AttnSmem {
+   using TT = AttnGeometry<D, WM, SUB>;
+-  using R = std::conditional_t<kCell, CellStageReader<D>, SepStageReader<D>>;
++  using R = std::conditional_t<kCell, CellStageReader<D, kI4>,
++                               SepStageReader<D, kI4>>;
+   static constexpr int kQ = 0;
+   static constexpr int kQBytes = TT::Layout::kQBytes;
+-  static constexpr int kStageBytes = R::kBytes;
++  // WN merge area (below), which must fit in the stages; the int4 stages are
++  // half as large, so they are padded to it where needed (D = 128, WM = 1).
++  static constexpr int kParked = (TT::kWn - 1) * WM;
++  static constexpr int kMergeOFloats = D / kMmaN * 4 * kWarpSize;
++  static constexpr int kMergeBytes =
++      kParked * (kMergeOFloats + 2 * kMmaM + 1) * kAccElemBytes;
++  static constexpr int kMergeStage =
++      (kMergeBytes / kStages + kSmemLineBytes - 1) / kSmemLineBytes *
++      kSmemLineBytes;
++  static constexpr int kStageBytes =
++      R::kBytes > kMergeStage ? R::kBytes : kMergeStage;
+   PTH_HD static constexpr int stage_offset(int s) {
+     return kQBytes + s * kStageBytes;
+   }
+@@ -89,11 +100,7 @@
+   static constexpr int kBytes = kQBytes + kStages * kStageBytes +
+                                 (kOwnRowFactor ? TT::kRows * kScaleBytes : 0);
+   // WN merge area in the stages: per parked warp its O (D/8 x 4 x 32 floats),
+-  // then (m, l) per parked row, then one c per parked warp.
+-  static constexpr int kParked = (TT::kWn - 1) * WM;
+-  static constexpr int kMergeOFloats = D / kMmaN * 4 * kWarpSize;
+-  static constexpr int kMergeBytes =
+-      kParked * (kMergeOFloats + 2 * kMmaM + 1) * kAccElemBytes;
++  // then (m, l) per parked row, then one c per parked warp (defined above).
+   static_assert(kQBytes % kSmemLineBytes == 0 &&
+                     kStageBytes % kSmemLineBytes == 0,
+                 "regions must start on 128-B lines");
+@@ -146,7 +153,7 @@
+ 
+ // Stages the CTA's kRows rows of Q (rows past the tile's tokens are zero)
+ // and writes each row's score factor. Warp w stages rows w, w + 4, ...
+-template <int D, int kRows, typename QT>
++template <int D, int kRows, typename QT, bool kI4 = false>
+ __device__ __forceinline__ void stage_q(const KernelParams& p,
+                                         const RowTile& rt, int32_t kvh,
+                                         uint8_t* smem_q, float* row_factor,
+@@ -165,10 +172,22 @@
+     float amax = 0.f;
+   #pragma unroll
+     for (int i = 0; i < kPairsPerLane; ++i) {
+-      const int d = 2 * (lane + i * kWarpSize);
+-      v[i] = valid ? io_pair_to_float2<QT>(*reinterpret_cast<const uint32_t*>(
+-                         src + kF16Bytes * d))
+-                   : make_float2(0.f, 0.f);
++      if constexpr (kI4) {
++        // int4: the pair (d, d + 4), d & 4 == 0 (smem_layout.cuh pi4).
++        const int pidx = lane + i * kWarpSize;
++        const int d = 8 * (pidx >> 2) + (pidx & 3);
++        const uint32_t lo =
++            *reinterpret_cast<const uint16_t*>(src + kF16Bytes * d);
++        const uint32_t hi =
++            *reinterpret_cast<const uint16_t*>(src + kF16Bytes * (d + 4));
++        v[i] = valid ? io_pair_to_float2<QT>(lo | (hi << 16))
++                     : make_float2(0.f, 0.f);
++      } else {
++        const int d = 2 * (lane + i * kWarpSize);
++        v[i] = valid ? io_pair_to_float2<QT>(*reinterpret_cast<const uint32_t*>(
++                           src + kF16Bytes * d))
++                     : make_float2(0.f, 0.f);
++      }
+       amax = fmaxf(amax, fmaxf(fabsf(v[i].x), fabsf(v[i].y)));
+     }
+   #pragma unroll
+@@ -178,11 +197,18 @@
+     const int e = q_prescale_exponent(amax);
+   #pragma unroll
+     for (int i = 0; i < kPairsPerLane; ++i) {
+-      const int d = 2 * (lane + i * kWarpSize);
+-      // pi inside each 16-element chunk, then the Q swizzle;
+-      // d and d + 1 land in adjacent bytes, so the pair is one STS.32.
+-      *reinterpret_cast<uint32_t*>(smem_q + q_elem_offset(r, d, D)) =
+-          q_prescale_pack(v[i].x, v[i].y, e);
++      if constexpr (kI4) {
++        const int pidx = lane + i * kWarpSize;
++        const int d = 8 * (pidx >> 2) + (pidx & 3);
++        *reinterpret_cast<uint32_t*>(smem_q + q_elem_offset_i4(r, d, D)) =
++            q_prescale_pack(v[i].x, v[i].y, e);
++      } else {
++        const int d = 2 * (lane + i * kWarpSize);
++        // pi inside each 16-element chunk, then the Q swizzle;
++        // d and d + 1 land in adjacent bytes, so the pair is one STS.32.
++        *reinterpret_cast<uint32_t*>(smem_q + q_elem_offset(r, d, D)) =
++            q_prescale_pack(v[i].x, v[i].y, e);
++      }
+     }
+     if (lane == 0) row_factor[r] = p.score_scale_log2 * pow2_f32(e);
+   }
+@@ -266,6 +292,9 @@
+ // e is per token, hence uniform within an iteration: the shared store is one
+ // 16-B store when the destination t * kPitch + e is 16-B aligned (kPitch is a
+ // multiple of 16) and two 8-B stores otherwise.
++// D here is the row bytes of K (and V): the head size for int8, half of it
++// for int4. An int4 body (2D = 256 B at head size 256) is half a warp
++// instruction, so each iteration copies two tokens (lanes 0..15 and 16..31).
+ template <int D, class Sm>
+ __device__ __forceinline__ void produce_cells_regstaged(
+     const KernelParams& p, int32_t req, int32_t kvh, int32_t tb, int32_t te,
+@@ -274,10 +303,16 @@
+   constexpr int kBody = 2 * D;
+   constexpr int kChunk = 16;
+   constexpr int kEdge = Cs::kCellBytes - kBody;  // 8: the two f32 scales
+-  static_assert(kBody == kWarpSize * kChunk, "one body = one warp instruction");
++  constexpr int kTokPerIt = kWarpSize * kChunk / kBody;  // 1 (int8), 2 (int4)
++  constexpr int kLanesPerTok = kWarpSize / kTokPerIt;
++  constexpr int kIters = kLoaderTokensPerWarp / kTokPerIt;
++  static_assert(kTokPerIt * kBody == kWarpSize * kChunk,
++                "one body = one warp instruction or half of one");
+   static_assert(kEdge == 8, "edge is one 8-B load");
+   const StreamGeometry& kg = p.stream[kStreamK];
+-  uint4 body[kLoaderTokensPerWarp];
++  const int sub = kTokPerIt == 1 ? 0 : lane / kLanesPerTok;
++  const int cl = lane % kLanesPerTok;
++  uint4 body[kIters];
+   uint2 edge;
+   #pragma unroll 1
+   for (int32_t j = tb; j < te; ++j) {
+@@ -287,11 +322,12 @@
+     const int e_mine = static_cast<int>(
+         reinterpret_cast<uintptr_t>(kg.base + mine.k) & (kChunk - 1));
+   #pragma unroll
+-    for (int it = 0; it < kLoaderTokensPerWarp; ++it) {
+-      const int64_t cell = __shfl_sync(kFullWarpMask, mine.k, it);
+-      const int e = __shfl_sync(kFullWarpMask, e_mine, it);
+-      body[it] = it < valid
+-                     ? NoAllocLoad16::load(kg.base + cell + e + kChunk * lane)
++    for (int it = 0; it < kIters; ++it) {
++      const int tk = kTokPerIt * it + sub;
++      const int64_t cell = __shfl_sync(kFullWarpMask, mine.k, tk);
++      const int e = __shfl_sync(kFullWarpMask, e_mine, tk);
++      body[it] = tk < valid
++                     ? NoAllocLoad16::load(kg.base + cell + e + kChunk * cl)
+                      : make_uint4(0u, 0u, 0u, 0u);
+     }
+     const bool edge_lane = lane < kLoaderTokensPerWarp;
+@@ -303,10 +339,11 @@
+     if (j - tb >= kStages) named_bar_sync(kBarEmpty0 + sj, kAttnThreadsWs);
+     uint8_t* st = smem + Sm::stage_offset(sj);
+   #pragma unroll
+-    for (int it = 0; it < kLoaderTokensPerWarp; ++it) {
+-      const int e = __shfl_sync(kFullWarpMask, e_mine, it);
+-      uint8_t* dst = st + (kLoaderTokensPerWarp * pw + it) * Cs::kPitch + e +
+-                     kChunk * lane;
++    for (int it = 0; it < kIters; ++it) {
++      const int tk = kTokPerIt * it + sub;
++      const int e = __shfl_sync(kFullWarpMask, e_mine, tk);
++      uint8_t* dst = st + (kLoaderTokensPerWarp * pw + tk) * Cs::kPitch + e +
++                     kChunk * cl;
+       if (e == 0) {
+         *reinterpret_cast<uint4*>(dst) = body[it];
+       } else {
+@@ -339,13 +376,14 @@
+       resolve_lane<kLower>(p, rt.req, kvh, tile, kv_end, lw, lane, kv_begin);
+   const DeviceCopy copy{smem_base +
+                         static_cast<uint32_t>(Sm::stage_offset(stage))};
++  constexpr int KB = Sm::R::KB;  // row bytes: D (int8) or D / 2 (int4)
+   if constexpr (kCell) {
+-    issue_tile_cell_lane<D>(p, mine, ap.cell_width, tile, kv_end, lw, lane,
+-                            DeviceBcast{}, copy);
++    issue_tile_cell_lane<KB>(p, mine, ap.cell_width, tile, kv_end, lw, lane,
++                             DeviceBcast{}, copy);
+   } else {
+-    issue_tile_separate_lane<D, kLower>(p, mine, tile, kv_end, lw, lane,
+-                                        DeviceBcast{}, DeviceBcast{}, copy,
+-                                        kv_begin);
++    issue_tile_separate_lane<KB, kLower>(p, mine, tile, kv_end, lw, lane,
++                                         DeviceBcast{}, DeviceBcast{}, copy,
++                                         kv_begin);
+   }
+ }
+ 
+@@ -364,8 +402,8 @@
+     // The inline cell at 8-B alignment (every standard vLLM layout):
+     // register-staged loads that skip L1.
+     if (ap.cell_width == kGeomWidth8) {
+-      produce_cells_regstaged<D, Sm>(p, rt.req, kvh, tb, te, kv_end, smem, pw,
+-                                     lane);
++      produce_cells_regstaged<Sm::R::KB, Sm>(p, rt.req, kvh, tb, te, kv_end,
++                                             smem, pw, lane);
+       return;
+     }
+   }
+@@ -400,12 +438,13 @@
+ // compiles to the causal kernel exactly (every window branch is
+ // `if constexpr`); true exists only where it is instantiated
+ // (attn_fwd_window_kernel: D = 128, separate streams).
+-template <int D, int WM, int SUB, typename QT, bool kCell, bool kWindow = false>
++template <int D, int WM, int SUB, typename QT, bool kCell, bool kWindow = false,
++          bool kI4 = false>
+ __device__ __forceinline__ void attn_fwd_body(const AttnParams& ap) {
+   static_assert(!kWindow || (!kCell && kAttnProducerWarps<D> == 0),
+                 "windowed kernels: separate streams, no producer warps");
+   using TT = AttnGeometry<D, WM, SUB>;
+-  using Sm = AttnSmem<D, WM, SUB, kCell>;
++  using Sm = AttnSmem<D, WM, SUB, kCell, kI4>;
+   using R = typename Sm::R;
+   constexpr int kNt = SUB / kMmaN;
+   extern __shared__ __align__(128) uint8_t smem[];
+@@ -464,7 +503,8 @@
+   }
+ 
+   float* row_factor = reinterpret_cast<float*>(smem + Sm::kRowFactor);
+-  stage_q<D, WM * kMmaM, QT>(p, rt, kvh, smem + Sm::kQ, row_factor, warp, lane);
++  stage_q<D, WM * kMmaM, QT, kI4>(p, rt, kvh, smem + Sm::kQ, row_factor, warp,
++                                  lane);
+   consumer_sync<kProducers>();
+ 
+   const int g = frag_g(lane), q = frag_q(lane);
+@@ -516,12 +556,29 @@
+       const int t0 = warp_n * TT::kTokensPerWarp + sub * SUB;
+       const int32_t abs0 = i * kLoadTileTokens + t0;
+       float s[kNt][4];
+-      qk_subtile<D, SUB, R>(s, smem_base + Sm::kQ, stage, t0, warp_m * kMmaM,
+-                            lane);
++      if constexpr (kI4) {
++        // Zero point of the token of this lane's K column (t0 + 8 n + g).
++        uint32_t kbias[kNt];
++  #pragma unroll
++        for (int n = 0; n < kNt; ++n) {
++          const uint32_t zp = i4_zp(*reinterpret_cast<const float*>(
++              stage_ptr + R::ks(t0 + n * kMmaN + g)));
++          kbias[n] = i4_bias2(zp, zp);
++        }
++        qk_subtile_i4<D, SUB, R>(s, smem_base + Sm::kQ, stage, kbias, t0,
++                                 warp_m * kMmaM, lane);
++      } else {
++        qk_subtile<D, SUB, R>(s, smem_base + Sm::kQ, stage, t0, warp_m * kMmaM,
++                              lane);
++      }
+   #pragma unroll
+       for (int n = 0; n < kNt; ++n) {
+-        const float2 k2 =
++        float2 k2 =
+             load_scale_pair<R>(stage_ptr, false, t0 + n * kMmaN + 2 * q);
++        if constexpr (kI4) {
++          k2.x = i4_scale(k2.x);
++          k2.y = i4_scale(k2.y);
++        }
+   #pragma unroll
+         for (int h = 0; h < 2; ++h) {
+           s[n][2 * h] = (s[n][2 * h] * k2.x) * row_scale[h];
+@@ -536,8 +593,13 @@
+         apply_causal_mask<SUB>(s, abs0, limit, lane);
+       }
+       uint32_t pa[kNt][2];
+-      softmax_step<D, SUB, R>(st, s, stage_ptr, t0, pa, lane);
+-      pv_subtile<D, SUB, R>(st.o, pa, stage_ptr, t0, lane);
++      uint32_t vbias[kNt];
++      softmax_step<D, SUB, R>(st, s, stage_ptr, t0, pa, lane, vbias);
++      if constexpr (kI4) {
++        pv_subtile_i4<D, SUB, R>(st.o, pa, vbias, stage_ptr, t0, lane);
++      } else {
++        pv_subtile<D, SUB, R>(st.o, pa, stage_ptr, t0, lane);
++      }
+     }
+     if constexpr (kProducers > 0) {
+       // Release the stage for tile i + 2 (the producers wait for exactly
+@@ -649,15 +711,30 @@
+       dtype = PTH_ATTN_F32;
+       elem = kAccElemBytes;
+     }
++    if constexpr (kI4) {
+   #pragma unroll
+-    for (int grp = 0; grp < D / kVGroupD; ++grp) {
+-      float v[8];
++      for (int grp = 0; grp < D / 64; ++grp) {
+   #pragma unroll
+-      for (int b = 0; b < 4; ++b) {
+-        v[b] = (st.o[4 * grp + b][2 * h] * inv_l) * c_unit;
+-        v[4 + b] = (st.o[4 * grp + b][2 * h + 1] * inv_l) * c_unit;
++        for (int ci = 0; ci < 2; ++ci) {
++          float v[8];
++  #pragma unroll
++          for (int b = 0; b < 8; ++b) {
++            v[b] = (st.o[8 * grp + b][2 * h + ci] * inv_l) * c_unit;
++          }
++          store8(dst_row + i4_epilogue_d0(lane, grp, ci) * elem, dtype, v);
++        }
++      }
++    } else {
++  #pragma unroll
++      for (int grp = 0; grp < D / kVGroupD; ++grp) {
++        float v[8];
++  #pragma unroll
++        for (int b = 0; b < 4; ++b) {
++          v[b] = (st.o[4 * grp + b][2 * h] * inv_l) * c_unit;
++          v[4 + b] = (st.o[4 * grp + b][2 * h + 1] * inv_l) * c_unit;
++        }
++        store8(dst_row + epilogue_d0(lane, grp) * elem, dtype, v);
+       }
+-      store8(dst_row + epilogue_d0(lane, grp) * elem, dtype, v);
+     }
+     if (p.num_splits > 1 && q == 0) {
+       const float lse = live ? st.m[h] + lg2_approx(st.l[h]) : -INFINITY;
+@@ -676,6 +753,14 @@
+   attn_fwd_body<D, WM, SUB, QT, kCell>(ap);
+ }
+ 
++// The int4_per_token_head kernels: separate names, so the int8 kernels keep
++// their symbols and machine code.
++template <int D, int WM, int SUB, typename QT, bool kCell>
++__global__ void __launch_bounds__(kAttnThreads<D>, ctas_per_sm(D))
++    attn_fwd_i4_kernel(const __grid_constant__ AttnParams ap) {
++  attn_fwd_body<D, WM, SUB, QT, kCell, false, true>(ap);
++}
++
+ // The windowed kernels: a separate name, so the causal kernels above keep
+ // their symbols and their machine code is unchanged by this variant.
+ template <int D, int WM, int SUB, typename QT>
+@@ -683,6 +768,11 @@
+     attn_fwd_window_kernel(const __grid_constant__ AttnParams ap) {
+   attn_fwd_body<D, WM, SUB, QT, false, true>(ap);
+ }
++template <int D, int WM, int SUB, typename QT>
++__global__ void __launch_bounds__(kAttnThreads<D>, ctas_per_sm(D))
++    attn_fwd_window_i4_kernel(const __grid_constant__ AttnParams ap) {
++  attn_fwd_body<D, WM, SUB, QT, false, true, true>(ap);
++}
+ 
+ // ---------------------------------------------------------------------------
+ // Host side: one launch descriptor, and the per-D dispatchers defined in
+@@ -697,6 +787,7 @@
+   int32_t q_dtype;  // PTH_ATTN_F16 or PTH_ATTN_BF16
+   bool cell;        // whole-cell loader (ap.cell_width set) or separate streams
+   bool windowed;    // ap.window > 0 or !ap.causal: the windowed kernels
++  bool i4;          // int4_per_token_head cache (K/V rows of D / 2 bytes)
+ };
+ 
+ // The whole-cell loader exists where it fits next to the kernel's
+@@ -744,10 +835,46 @@
+                           kAttnThreads<D>>(L.grid, stream, L.ap);
+ }
+ 
++template <int D, int WM, typename QT, bool kCell>
++cudaError_t launch_attn_i4_one(const AttnLaunch& L, cudaStream_t stream) {
++  constexpr int kSub = default_sub<D, WM>();
++  return launch_with_smem<attn_fwd_i4_kernel<D, WM, kSub, QT, kCell>,
++                          AttnSmem<D, WM, kSub, kCell, true>::kBytes,
++                          kAttnThreads<D>>(L.grid, stream, L.ap);
++}
++
++template <int D, int WM, typename QT>
++cudaError_t launch_attn_window_i4_one(const AttnLaunch& L,
++                                      cudaStream_t stream) {
++  constexpr int kSub = default_sub<D, WM>();
++  return launch_with_smem<attn_fwd_window_i4_kernel<D, WM, kSub, QT>,
++                          AttnSmem<D, WM, kSub, false, true>::kBytes,
++                          kAttnThreads<D>>(L.grid, stream, L.ap);
++}
++
++// int4: bf16 queries only (the model dtype of the target), D = 256 with the
++// whole-cell loader, D = 128 with separate streams (causal and windowed).
++template <int D, int WM>
++cudaError_t launch_attn_i4_wm(const AttnLaunch& L, cudaStream_t stream) {
++  if (L.q_dtype != PTH_ATTN_BF16) return cudaErrorInvalidValue;
++  if constexpr (D == 256) {
++    if (!L.cell || L.windowed) return cudaErrorInvalidValue;
++    return launch_attn_i4_one<D, WM, __nv_bfloat16, true>(L, stream);
++  } else if constexpr (D == 128) {
++    if (L.cell) return cudaErrorInvalidValue;
++    if (L.windowed) {
++      return launch_attn_window_i4_one<D, WM, __nv_bfloat16>(L, stream);
++    }
++    return launch_attn_i4_one<D, WM, __nv_bfloat16, false>(L, stream);
++  }
++  return cudaErrorInvalidValue;
++}
++
+ // Picks the q dtype and the loader (or the windowed kernel) of one (D, WM)
+ // instantiation.
+ template <int D, int WM>
+ cudaError_t launch_attn_wm(const AttnLaunch& L, cudaStream_t stream) {
++  if (L.i4) return launch_attn_i4_wm<D, WM>(L, stream);
+   const bool bf16 = L.q_dtype == PTH_ATTN_BF16;
+   if (L.windowed) {
+     if constexpr (kAttnHasWindow<D>) {
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/attn_launch.cu pthfa/csrc/pth_attn/attn_launch.cu
+--- a/csrc/pth_attn/attn_launch.cu
++++ b/csrc/pth_attn/attn_launch.cu
+@@ -96,6 +96,14 @@
+                        a.query_start_loc,
+                    "q, the four cache streams, block_table, seq_lens and "
+                    "query_start_loc must be non-NULL");
++  PTH_ATTN_REQUIRE(a.kv_bits == 0 || a.kv_bits == 8 || a.kv_bits == 4,
++                   "kv_bits must be 0/8 (int8) or 4 (int4)");
++  const bool i4 = a.kv_bits == 4;
++  PTH_ATTN_REQUIRE(!i4 || a.head_size == 128 || a.head_size == 256,
++                   "the int4 cache needs head size 128 or 256");
++  PTH_ATTN_REQUIRE(!i4 || a.q_dtype == PTH_ATTN_BF16,
++                   "the int4 cache needs bfloat16 q");
++  const int32_t row_bytes = i4 ? a.head_size / 2 : a.head_size;
+   const int32_t group = a.num_q_heads / a.num_kv_heads;
+   const int32_t wm = pth_attn::attn_wm_for_rows(a.bq * group);
+   PTH_ATTN_REQUIRE(wm != 0, "bq * G = " + std::to_string(a.bq * group) +
+@@ -138,8 +146,8 @@
+   k.s_wsl_split = a.ws_lse_stride_split;
+   k.s_wsl_token = a.ws_lse_stride_token;
+   k.s_wsl_head = a.ws_lse_stride_head;
+-  k.stream[pth_attn::kStreamK] = stream_from(a.k_cache, a.head_size, a);
+-  k.stream[pth_attn::kStreamV] = stream_from(a.v_cache, a.head_size, a);
++  k.stream[pth_attn::kStreamK] = stream_from(a.k_cache, row_bytes, a);
++  k.stream[pth_attn::kStreamV] = stream_from(a.v_cache, row_bytes, a);
+   k.stream[pth_attn::kStreamKScale] =
+       stream_from(a.k_scale, static_cast<int32_t>(sizeof(float)), a);
+   k.stream[pth_attn::kStreamVScale] =
+@@ -172,7 +180,12 @@
+   // Whole-cell loader: only where it is instantiated (D = 256) and the four
+   // views are one inline cell (loader.cuh cell_layout_width > 0).
+   const int32_t cell_width =
+-      a.head_size == 256 ? pth_attn::cell_layout_width<256>(k) : 0;
++      a.head_size != 256 ? 0
++      : i4               ? pth_attn::cell_layout_width<128>(k)
++                         : pth_attn::cell_layout_width<256>(k);
++  PTH_ATTN_REQUIRE(!i4 || a.head_size != 256 || cell_width > 0,
++                   "the int4 cache at head size 256 needs vLLM's inline cell "
++                   "layout");
+   PTH_ATTN_REQUIRE(
+       loader != pth_attn::kLoaderCell || cell_width > 0,
+       "options.loader = cell needs D = 256 and the inline cell layout");
+@@ -183,6 +196,7 @@
+   L->ap.window = a.window;
+   L->ap.causal = a.causal;
+   L->windowed = windowed;
++  L->i4 = i4;
+   L->wm = wm;
+   L->rows = a.bq * group;
+   L->q_dtype = a.q_dtype;
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/int4.cuh pthfa/csrc/pth_attn/int4.cuh
+--- a/csrc/pth_attn/int4.cuh
++++ b/csrc/pth_attn/int4.cuh
+@@ -0,0 +1,61 @@
++// SPDX-License-Identifier: Apache-2.0
++//
++// int4.cuh: register conversion of vLLM's int4_per_token_head KV cache
++// (two unsigned 4-bit values per byte, d even in the low nibble; one fp32
++// scale per (token, head) whose 4 low mantissa bits hold the zero point zp)
++// into the fp16 MMA fragments of the pth kernels. Dequantised value:
++// (u - zp) * scale. (u - zp) is computed exactly in fp16 by the magic-number
++// trick: fp16 bits 0x6400 | u = 1024 + u, minus 1024 + zp.
++
++#pragma once
++
++#include <cstdint>
++
++#include "ptx.cuh"
++
++namespace pth_attn {
++
++constexpr uint32_t kI4NibbleMask = 0x000F000Fu;
++constexpr uint32_t kI4Magic = 0x64006400u;  // fp16 1024 in both halves
++constexpr uint32_t kI4ZpMask = 0xFu;
++// V token pairing: (t.b0, t.b1, t1.b0, t1.b1) and (t.b2, t.b3, t1.b2, t1.b3).
++constexpr uint32_t kI4VSelLo = 0x5410u;
++constexpr uint32_t kI4VSelHi = 0x7632u;
++static_assert(prmt_selector_is_copy_only(kI4VSelLo) &&
++                  prmt_selector_is_copy_only(kI4VSelHi),
++              "selectors must copy bytes");
++
++// The zero point of a raw scale word and the scale with it cleared.
++PTH_HD uint32_t i4_zp(float raw) { return f32_as_u32(raw) & kI4ZpMask; }
++PTH_HD float i4_scale(float raw) {
++  return u32_as_f32(f32_as_u32(raw) & ~kI4ZpMask);
++}
++// Subtrahend half2 (1024 + zp_lo, 1024 + zp_hi).
++PTH_HD uint32_t i4_bias2(uint32_t zp_lo, uint32_t zp_hi) {
++  return kI4Magic | zp_lo | (zp_hi << 16);
++}
++
++// 8 nibbles (n_i at bits 4i) -> 4 half2: out[i] = (n_i - zp_lo, n_{i+4} -
++// zp_hi) with bias = i4_bias2(zp_lo, zp_hi). Exact.
++PTH_HD void cvt8_u4_f16x2(uint32_t w, uint32_t bias, uint32_t (&out)[4]) {
++#pragma unroll
++  for (int i = 0; i < 4; ++i) {
++    out[i] = sub_f16x2(((w >> (4 * i)) & kI4NibbleMask) | kI4Magic, bias);
++  }
++}
++
++// V: words of tokens t and t + 1 (8 d each, d0 + 0..7) -> out[i] = half2
++// (V[t][d0 + i] - zp_t, V[t+1][d0 + i] - zp_t1) for i = 0..7, a B (or A)
++// register holding a token pair at one d.
++PTH_HD void i4_v_pair(uint32_t w_t, uint32_t w_t1, uint32_t bias,
++                      uint32_t (&out)[8]) {
++  const uint32_t lo = prmt(w_t, w_t1, kI4VSelLo);
++  const uint32_t hi = prmt(w_t, w_t1, kI4VSelHi);
++#pragma unroll
++  for (int i = 0; i < 4; ++i) {
++    out[i] = sub_f16x2(((lo >> (4 * i)) & kI4NibbleMask) | kI4Magic, bias);
++    out[4 + i] = sub_f16x2(((hi >> (4 * i)) & kI4NibbleMask) | kI4Magic, bias);
++  }
++}
++
++}  // namespace pth_attn
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/launch.cu pthfa/csrc/pth_attn/launch.cu
+--- a/csrc/pth_attn/launch.cu
++++ b/csrc/pth_attn/launch.cu
+@@ -89,6 +89,8 @@
+       return "float32";
+     case ScalarType::Char:
+       return "int8";
++    case ScalarType::Byte:
++      return "uint8";
+     case ScalarType::Int:
+       return "int32";
+     case ScalarType::Long:
+@@ -192,19 +194,29 @@
+   check_size(out, 2, head_size, "out", "D");
+   check_inner_stride_one(out, "out");
+ 
+-  // Caches: int8 views [NB, BS, Hkv, D] with arbitrary outer strides.
++  // Caches: int8 views [NB, BS, Hkv, D], or uint8 views [NB, BS, Hkv, D/2]
++  // of vLLM's int4_per_token_head cache (packed nibbles), with arbitrary
++  // outer strides.
+   check_dim(k_cache, 4, "k_cache");
+   check_dim(v_cache, 4, "v_cache");
+-  check_dtype(k_cache, ScalarType::Char, "k_cache");
+-  check_dtype(v_cache, ScalarType::Char, "v_cache");
++  const bool i4 = k_cache.scalar_type() == ScalarType::Byte;
++  check_dtype(k_cache, i4 ? ScalarType::Byte : ScalarType::Char, "k_cache");
++  check_dtype(v_cache, i4 ? ScalarType::Byte : ScalarType::Char, "v_cache");
++  const int64_t row = i4 ? head_size / 2 : head_size;
++  STD_TORCH_CHECK(!i4 || head_size == kHeadSize128 || head_size == kHeadSize256,
++                  "pth_flash_attn_fwd: the int4 cache needs head size 128 or "
++                  "256, got ",
++                  head_size);
++  STD_TORCH_CHECK(!i4 || q.scalar_type() == ScalarType::BFloat16,
++                  "pth_flash_attn_fwd: the int4 cache needs bfloat16 q");
+   const int64_t num_blocks = k_cache.size(0);
+   const int64_t block_size = k_cache.size(1);
+   const int64_t num_kv_heads = k_cache.size(2);
+-  check_size(k_cache, 3, head_size, "k_cache", "D");
++  check_size(k_cache, 3, row, "k_cache", i4 ? "D/2" : "D");
+   check_size(v_cache, 0, num_blocks, "v_cache", "NB");
+   check_size(v_cache, 1, block_size, "v_cache", "BS");
+   check_size(v_cache, 2, num_kv_heads, "v_cache", "Hkv");
+-  check_size(v_cache, 3, head_size, "v_cache", "D");
++  check_size(v_cache, 3, row, "v_cache", i4 ? "D/2" : "D");
+   check_inner_stride_one(k_cache, "k_cache");
+   check_inner_stride_one(v_cache, "v_cache");
+ 
+@@ -471,6 +483,7 @@
+   // A window wider than any int32 sequence is the same as INT32_MAX.
+   a.window = window > INT32_MAX ? INT32_MAX : static_cast<int32_t>(window);
+   a.causal = causal ? 1 : 0;
++  a.kv_bits = k_cache.scalar_type() == ScalarType::Byte ? 4 : 8;
+   if (num_splits > 1) {
+     a.ws_o = static_cast<float*>(ws_o.data_ptr());
+     a.ws_o_stride_split = byte_stride(ws_o, 0);
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/smem_layout.cuh pthfa/csrc/pth_attn/smem_layout.cuh
+--- a/csrc/pth_attn/smem_layout.cuh
++++ b/csrc/pth_attn/smem_layout.cuh
+@@ -114,6 +114,26 @@
+                d - d % kPiChunk + pi_d_to_k(static_cast<int>(d % kPiChunk)), D);
+ }
+ 
++// INT4 (vLLM int4_per_token_head) K permutation. A packed K row holds two
++// d per byte (d even in the low nibble), so an ldmatrix register of lane
++// (g, q) at 16-B chunk c holds the 8 nibbles of d = 32c + 8q + 0..7. The
++// nibble conversion (int4.cuh cvt8_u4_f16x2) makes the half2 pairs
++// (8q + i, 8q + i + 4) for i = 0..3; pairs 2h and 2h + 1 are the B registers
++// (k 2q..2q+1 and 2q+8..2q+9) of k16 step 2c + h. So the MMA position
++// k of step s = 2c + h reads d = 32c + 8 ((k & 7) >> 1) + 2h + (k >> 3) +
++// 4 (k & 1), and Q is stored at the inverse position: d = 32c + 8q' + i
++// (i = 4jj + 2h + hh) -> 32c + 16h + 8hh + 2q' + jj. d and d + 4 (d & 4 == 0)
++// land in adjacent fp16 slots, so stage_q stores them as one STS.32.
++PTH_HD constexpr int pi4_d_to_pos(int d) {
++  return 32 * (d >> 5) + 16 * ((d >> 1) & 1) + 8 * (d & 1) +
++         2 * ((d & 31) >> 3) + ((d >> 2) & 1);
++}
++PTH_HD constexpr uint32_t q_elem_offset_i4(uint32_t row, uint32_t d,
++                                           uint32_t D) {
++  return q_swz(row, static_cast<uint32_t>(pi4_d_to_pos(static_cast<int>(d))),
++               D);
++}
++
+ // ---------------------------------------------------------------------------
+ // Per-lane addresses of the fragment loads (offsets within the region)
+ // ---------------------------------------------------------------------------
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/softmax.cuh pthfa/csrc/pth_attn/softmax.cuh
+--- a/csrc/pth_attn/softmax.cuh
++++ b/csrc/pth_attn/softmax.cuh
+@@ -116,7 +116,8 @@
+                                              const float (&s)[SUB / kMmaN][4],
+                                              const uint8_t* stage, int t0,
+                                              uint32_t (&pa)[SUB / kMmaN][2],
+-                                             int lane) {
++                                             int lane,
++                                             uint32_t (&vbias)[SUB / kMmaN]) {
+   constexpr int kNt = SUB / kMmaN;
+   const int q = lane & 3;
+   float mx[2] = {st.m[0], st.m[1]};
+@@ -125,6 +126,13 @@
+   #pragma unroll
+   for (int n = 0; n < kNt; ++n) {
+     v[n] = load_scale_pair<R>(stage, true, t0 + n * kMmaN + 2 * q);
++    if constexpr (R::kInt4) {
++      // int4: the zero points of tokens 2q, 2q + 1 (pv_subtile_i4's
++      // subtrahend) and the scales without them.
++      vbias[n] = i4_bias2(i4_zp(v[n].x), i4_zp(v[n].y));
++      v[n].x = i4_scale(v[n].x);
++      v[n].y = i4_scale(v[n].y);
++    }
+     vmax = fmaxf(vmax, fmaxf(v[n].x, v[n].y));
+   #pragma unroll
+     for (int h = 0; h < 2; ++h) {
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/csrc/pth_attn/tiling.cuh pthfa/csrc/pth_attn/tiling.cuh
+--- a/csrc/pth_attn/tiling.cuh
++++ b/csrc/pth_attn/tiling.cuh
+@@ -32,6 +32,7 @@
+ #include <cstdint>
+ 
+ #include "dequant.cuh"
++#include "int4.cuh"
+ #include "ptx.cuh"
+ #include "smem_layout.cuh"
+ #include "tile_traits.cuh"
+@@ -62,16 +63,20 @@
+ //                    chunks per row is what makes K ldmatrix and V LDS.32
+ //                    conflict-free.
+ // ---------------------------------------------------------------------------
+-template <int D>
++// kI4: vLLM's int4_per_token_head cache, K/V rows of KB = D / 2 bytes. The
++// stage layouts only depend on the row bytes, so they are instantiated with KB.
++template <int D, bool kI4 = false>
+ struct SepStageReader {
+-  using St = StageLayout<D, kLoadTileTokens>;
++  static constexpr int KB = kI4 ? D / 2 : D;
++  using St = StageLayout<KB, kLoadTileTokens>;
+   static constexpr bool kCell = false;
++  static constexpr bool kInt4 = kI4;
+   static constexpr int kBytes = St::kBytes;
+   PTH_HD static constexpr uint32_t k(uint32_t t, uint32_t byte) {
+-    return St::kK + k_swz(t, byte, D);
++    return St::kK + k_swz(t, byte, KB);
+   }
+   PTH_HD static constexpr uint32_t v(uint32_t t, uint32_t byte) {
+-    return St::kV + v_swz(t, byte, D);
++    return St::kV + v_swz(t, byte, KB);
+   }
+   PTH_HD static constexpr uint32_t ks(uint32_t t) {
+     return St::kKs + kScaleBytes * t;
+@@ -81,10 +86,12 @@
+   }
+ };
+ 
+-template <int D>
++template <int D, bool kI4 = false>
+ struct CellStageReader {
+-  using Cs = CellStageLayout<D, kLoadTileTokens>;
++  static constexpr int KB = kI4 ? D / 2 : D;
++  using Cs = CellStageLayout<KB, kLoadTileTokens>;
+   static constexpr bool kCell = true;
++  static constexpr bool kInt4 = kI4;
+   static constexpr int kBytes = Cs::kBytes;
+   PTH_HD static constexpr uint32_t k(uint32_t t, uint32_t byte) {
+     return t * Cs::kPitch + Cs::kCellK + byte;
+@@ -202,6 +209,96 @@
+   }
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// INT4 variants (R::kInt4). K: one 16-B chunk of a packed row is 32 d = two
++// k16 steps (smem_layout.cuh pi4); kbias[n] is the zero-point subtrahend of
++// the token of B column g of n-tile n (t0 + 8 n + g). V: one LDS.32 is 8 d of
++// one token; vbias[n] is the subtrahend of the token pair (2q, 2q + 1) of
++// n-tile n (the A fragment's k of PV), from softmax_step.
++// ---------------------------------------------------------------------------
++template <int D, int SUB, class R>
++__device__ __forceinline__ void qk_subtile_i4(float (&s)[SUB / kMmaN][4],
++                                              uint32_t q_smem,
++                                              uint32_t stage_smem,
++                                              const uint32_t (&kbias)[SUB /
++                                                                      kMmaN],
++                                              int t0, int row0, int lane) {
++  constexpr int kNt = SUB / kMmaN;
++  constexpr int kChunks = D / 32;         // 16-B chunks of a packed row
++  constexpr int kTg = kNt < 4 ? kNt : 4;  // token groups per ldmatrix.x4
++  constexpr int kCPerLd = 4 / kTg;        // chunks per ldmatrix.x4
++  static_assert(kNt % kTg == 0 && kChunks % kCPerLd == 0, "fragment tiling");
++  #pragma unroll
++  for (int n = 0; n < kNt; ++n) s[n][0] = s[n][1] = s[n][2] = s[n][3] = 0.f;
++  const int mi = lane >> 3;
++  #pragma unroll
++  for (int c0 = 0; c0 < kChunks; c0 += kCPerLd) {
++    uint32_t a[2 * kCPerLd][4];
++  #pragma unroll
++    for (int i = 0; i < 2 * kCPerLd; ++i) {
++      ldmatrix_x4(a[i], q_smem + q_ldsm_x4_offset(lane, row0, 2 * c0 + i, D));
++    }
++  #pragma unroll
++    for (int tg0 = 0; tg0 < kNt; tg0 += kTg) {
++      uint32_t kr[4];
++      const int tok = t0 + (tg0 + mi % kTg) * kMmaN + (lane & 7);
++      ldmatrix_x4(kr,
++                  stage_smem + R::k(tok, (c0 + mi / kTg) * kSmemChunkBytes));
++  #pragma unroll
++      for (int m4 = 0; m4 < 4; ++m4) {
++        const int n = tg0 + m4 % kTg, cc = m4 / kTg;
++        uint32_t p[4];
++        cvt8_u4_f16x2(kr[m4], kbias[n], p);
++        const uint32_t b0[2] = {p[0], p[1]};
++        const uint32_t b1[2] = {p[2], p[3]};
++        mma_m16n8k16_f16f32(s[n], a[2 * cc], b0);
++        mma_m16n8k16_f16f32(s[n], a[2 * cc + 1], b1);
++      }
++    }
++  }
++}
++
++// O += P'' . (V - zp) for SUB tokens. n-tile 8 grp + n_sub holds
++// d = 64 grp + 8 n + n_sub at column n (epilogue: i4_epilogue_d0).
++template <int D, int SUB, class R>
++__device__ __forceinline__ void pv_subtile_i4(
++    float (&o)[D / kMmaN][4], const uint32_t (&pa)[SUB / kMmaN][2],
++    const uint32_t (&vbias)[SUB / kMmaN], const uint8_t* stage, int t0,
++    int lane) {
++  const int g = lane >> 2, q = lane & 3;
++  #pragma unroll
++  for (int j = 0; j < SUB / kMmaK; ++j) {
++    const uint32_t a[4] = {pa[2 * j][0], pa[2 * j][1], pa[2 * j + 1][0],
++                           pa[2 * j + 1][1]};
++    const int t16 = t0 + j * kMmaK;
++  #pragma unroll
++    for (int grp = 0; grp < D / 64; ++grp) {
++      uint32_t w[4];
++  #pragma unroll
++      for (int i = 0; i < 4; ++i) {  // tokens 2q, 2q+1, 2q+8, 2q+9
++        const int tok = t16 + 2 * q + v_token_offset(i);
++        w[i] = *reinterpret_cast<const uint32_t*>(stage +
++                                                  R::v(tok, 32 * grp + 4 * g));
++      }
++      uint32_t b0[8], b1[8];
++      i4_v_pair(w[0], w[1], vbias[2 * j], b0);
++      i4_v_pair(w[2], w[3], vbias[2 * j + 1], b1);
++  #pragma unroll
++      for (int n_sub = 0; n_sub < 8; ++n_sub) {
++        const uint32_t b[2] = {b0[n_sub], b1[n_sub]};
++        mma_m16n8k16_f16f32(o[8 * grp + n_sub], a, b);
++      }
++    }
++  }
++}
++
++// First of the 8 contiguous d of (64-d group grp, accumulator column ci) of
++// lane: n-tiles 8 grp .. 8 grp + 7 at column 2q + ci are d = 64 grp +
++// 8 (2q + ci) + 0..7.
++PTH_HD constexpr int i4_epilogue_d0(int lane, int grp, int ci) {
++  return 64 * grp + 16 * (lane & 3) + 8 * ci;
++}
+ #endif  // __CUDACC__
+ 
+ }  // namespace pth_attn
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/python/pth_flash_attn/ops.py pthfa/python/pth_flash_attn/ops.py
+--- a/python/pth_flash_attn/ops.py
++++ b/python/pth_flash_attn/ops.py
+@@ -74,6 +74,7 @@
+     torch.float16: "float16",
+     torch.float32: "float32",
+     torch.int8: "int8",
++    torch.uint8: "uint8",
+     torch.int32: "int32",
+     torch.int64: "int64",
+ }
+@@ -161,14 +162,18 @@
+ 
+     _check_dim(k_cache, _RANK_CACHE, "k_cache")
+     _check_dim(v_cache, _RANK_CACHE, "v_cache")
+-    _check_dtype(k_cache, torch.int8, "k_cache")
+-    _check_dtype(v_cache, torch.int8, "v_cache")
++    # int8 cache [NB, BS, Hkv, D], or vLLM's int4_per_token_head cache as uint8
++    # [NB, BS, Hkv, D/2] (packed nibbles; the caller rotates q and out).
++    i4 = k_cache.dtype == torch.uint8
++    _check_dtype(k_cache, torch.uint8 if i4 else torch.int8, "k_cache")
++    _check_dtype(v_cache, torch.uint8 if i4 else torch.int8, "v_cache")
++    row = head_size // 2 if i4 else head_size
+     num_blocks, block_size, num_kv_heads = k_cache.shape[:3]
+-    _check_size(k_cache, 3, head_size, "k_cache", "D")
++    _check_size(k_cache, 3, row, "k_cache", "D/2" if i4 else "D")
+     _check_size(v_cache, 0, num_blocks, "v_cache", "NB")
+     _check_size(v_cache, 1, block_size, "v_cache", "BS")
+     _check_size(v_cache, 2, num_kv_heads, "v_cache", "Hkv")
+-    _check_size(v_cache, 3, head_size, "v_cache", "D")
++    _check_size(v_cache, 3, row, "v_cache", "D/2" if i4 else "D")
+     _check_inner_stride_one(k_cache, "k_cache")
+     _check_inner_stride_one(v_cache, "v_cache")
+ 
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/python/pth_flash_attn/vllm_backend.py pthfa/python/pth_flash_attn/vllm_backend.py
+--- a/python/pth_flash_attn/vllm_backend.py
++++ b/python/pth_flash_attn/vllm_backend.py
+@@ -97,8 +97,37 @@
+ # AttentionBackendEnum[backend.get_name()] must resolve, and CUSTOM is the only
+ # member reserved for plugins.
+ BACKEND_NAME = "CUSTOM"
+-# The only cache dtype served.
++# The cache dtypes served: int8, and vLLM's int4_per_token_head (packed nibbles
++# after a randomized Hadamard transform, RHT; the kernel reads the nibbles and
++# this Impl rotates q and the output with the same RHT).
+ KV_CACHE_DTYPE = "int8_per_token_head"
++KV_CACHE_DTYPE_INT4 = "int4_per_token_head"
++KV_CACHE_DTYPES = (KV_CACHE_DTYPE, KV_CACHE_DTYPE_INT4)
++# Head sizes of the int4 kernels.
++INT4_HEAD_SIZES = (128, 256)
++
++
++def int4_rotations(head_size: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
++    """Return (M_q, M_o), bf16 [D, D]: q' = q @ M_q and o = o' @ M_o.
++
++    vLLM's int4 writer stores K' = single_rht(K) = (K * s) @ H (s the RHT signs,
++    H the unnormalised Hadamard matrix, H @ H = D I), and V' likewise. With
++    M_q = diag(s) H / D, q' . k' = q . k, so the softmax scale is unchanged; the
++    kernel's output o' = sum p v' is rotated back by M_o = H diag(s) / D (the
++    inverse of single_rht up to D). The entries are +-2^-k: exact in bf16.
++    """
++    from vllm.v1.attention.ops.int4_per_token_head import (
++        _get_hadamard_matrix,
++        _get_rht_signs,
++    )
++
++    if head_size & (head_size - 1):
++        raise NotImplementedError(f"pth_flash_attn: int4 at head size {head_size}")
++    h = _get_hadamard_matrix(head_size, torch.float32, device)
++    s = _get_rht_signs(head_size, 0, device).to(torch.float32)
++    m_q = (s[:, None] * h) / head_size
++    m_o = (h * s[None, :]) / head_size
++    return m_q.to(torch.bfloat16).contiguous(), m_o.to(torch.bfloat16).contiguous()
+ # Kernel block sizes are multiples of 16 (the cp.async widths and the 64-token
+ # tile need no more); any larger multiple, such as the hybrid group's 816,
+ # is used as is, so no block-table conversion is needed.
+@@ -463,7 +492,7 @@
+     """``CUSTOM``: Triton's cache and writer, this project's kernel and builder."""
+ 
+     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
+-    supported_kv_cache_dtypes: ClassVar[list[CacheDType]] = [KV_CACHE_DTYPE]  # type: ignore[list-item]
++    supported_kv_cache_dtypes: ClassVar[list[CacheDType]] = list(KV_CACHE_DTYPES)  # type: ignore[list-item]
+ 
+     @staticmethod
+     def get_name() -> str:
+@@ -604,8 +633,10 @@
+             unsupported.append("chunk lookback")
+         if attn_type != AttentionType.DECODER:
+             unsupported.append(f"attention type {attn_type}")
+-        if kv_cache_dtype != KV_CACHE_DTYPE:
++        if kv_cache_dtype not in KV_CACHE_DTYPES:
+             unsupported.append(f"kv_cache_dtype {kv_cache_dtype}")
++        elif kv_cache_dtype == KV_CACHE_DTYPE_INT4 and head_size not in INT4_HEAD_SIZES:
++            unsupported.append(f"int4 KV cache at head size {head_size}")
+         if head_size not in SUPPORTED_HEAD_SIZES:
+             unsupported.append(f"head size {head_size}")
+         if unsupported:
+@@ -630,8 +661,19 @@
+         )
+         if self.dcp_world_size > 1 or self.pcp_world_size > 1:
+             raise NotImplementedError("pth_flash_attn: DCP/PCP are not supported")
+-        if self._kv_quant_mode != KVQuantMode.INT8_PER_TOKEN_HEAD:
+-            raise NotImplementedError("pth_flash_attn: int8_per_token_head only")
++        self._int4 = self._kv_quant_mode == KVQuantMode.INT4_PER_TOKEN_HEAD
++        if self._kv_quant_mode not in (
++            KVQuantMode.INT8_PER_TOKEN_HEAD,
++            KVQuantMode.INT4_PER_TOKEN_HEAD,
++        ):
++            raise NotImplementedError(
++                "pth_flash_attn: int8_per_token_head or int4_per_token_head only"
++            )
++        self._rht: tuple[torch.Tensor, torch.Tensor] | None = None
++        if self._int4:
++            self._rht = int4_rotations(
++                head_size, torch.device("cuda", torch.cuda.current_device())
++            )
+         # The query stays 16-bit: there is no quantised-query input.
+         self.supports_quant_query_input = False
+         # The op's window: Triton's ``self.sliding_window`` is a (left, right)
+@@ -642,7 +684,12 @@
+         self._no_workspace: torch.Tensor | None = None
+         self._reserve_workspace(get_current_vllm_config_or_none())
+         from pth_flash_attn.fa2_slab import prepare_workspace
+-        self._fa2_slab = prepare_workspace(self, get_current_vllm_config_or_none())
++        # The FA2 slab prefill gathers the int8 cache only.
++        self._fa2_slab = (
++            None
++            if self._int4
++            else prepare_workspace(self, get_current_vllm_config_or_none())
++        )
+ 
+     def _reserve_workspace(self, vllm_config: VllmConfig | None) -> None:
+         """Reserve W_ts token-splits of fp32 partials in the shared workspace.
+@@ -693,7 +740,7 @@
+         if cached is not None and cached[0] == ptr:
+             return cached[1]  # type: ignore[return-value]
+         key_cache, value_cache = self._pth_key_value_caches(kv_cache)
+-        hs = self.head_size
++        hs = self.head_size // 2 if self._int4 else self.head_size
+         views = (
+             key_cache[..., :hs],
+             value_cache[..., :hs],
+@@ -787,6 +834,22 @@
+             # Memory-profile run: no attention is executed.
+             return output.fill_(0)
+         caches = self._caches(kv_cache)
++        if self._rht is not None:
++            # int4: attention in the RHT basis of the cache, then back.
++            n = attn_metadata.num_actual_tokens
++            m_q, m_o = self._rht
++            q_rot = torch.matmul(query[:n], m_q)
++            if attn_metadata.decode is not None:
++                self._run_slice(
++                    attn_metadata.decode, q_rot, output, caches, attn_metadata.causal
++                )
++            if attn_metadata.prefill is not None:
++                self._run_slice(
++                    attn_metadata.prefill, q_rot, output, caches, attn_metadata.causal
++                )
++            out_n = output[:n]
++            out_n.copy_(torch.matmul(out_n, m_o))
++            return output
+         if self._fa2_slab is not None:
+             from pth_flash_attn.fa2_slab import try_prefill
+             if try_prefill(self, self._fa2_slab, query, output, caches, attn_metadata):
+diff -ruN -x build -x '*.so' -x __pycache__ -x '*.egg-info' pthfa.orig/tests/gate_test.py pthfa/tests/gate_test.py
+--- a/tests/gate_test.py
++++ b/tests/gate_test.py
+@@ -116,7 +116,8 @@
+ 
+     from pth_flash_attn.vllm_backend import PthFlashAttnImpl
+ 
+-    check(list(backend.supported_kv_cache_dtypes) == ["int8_per_token_head"], "KV dtype: int8_per_token_head only")
++    check(list(backend.supported_kv_cache_dtypes) == ["int8_per_token_head", "int4_per_token_head"],
++          "KV dtype: int8_per_token_head and int4_per_token_head only")
+     check(set(backend.supported_dtypes) == {torch.float16, torch.bfloat16}, "activations: float16 and bfloat16")
+     check([h for h in (32, 64, 80, 96, 128, 192, 256, 512) if backend.supports_head_size(h)] == [64, 128, 256],
+           "head sizes 64, 128, 256 only")

@@ -13,6 +13,7 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
 | Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1710 t/s at 6.4k, 1250 t/s at 100k, 1140 t/s at 128k with the [GPU unlock](#gpu-unlock) (without: 1220 / 820 / 750 t/s) | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the [vision tower on the Radeon VII](#vision-tower-on-the-radeon-vii-2026-11-23) (1 megapixel: ~1.7 s instead of ~7 s on the CPU, which remains the fallback), no VRAM of the RTX 3090 |
+| The same with the **[int4 KV cache](#int4-kv-cache-2026-11-23)** on pth-flash-attn ([`docker-compose.int4.yml`](docker-compose.int4.yml), opt-in) | **262128** | 21406 MiB with a 260k-token prompt | as above | chat 129 t/s; 119 / 113 / 80 / 69 t/s at 6.4k / 32k / 100k / 200k (the same as int8 per verify step); edits 307 / 279 t/s | 1854 / 1640 / 1251 / 929 t/s at 6.4k / 32k / 100k / 200k, 803 t/s for a 260k-token prompt | 1.95 times the KV pool in the same VRAM; output measurably less exact than int8 (mean KL divergence 12 times the noise floor, retrieval 121/132 vs 123/132), so not the default |
 | [Terminal-RSI-27B](#terminal-rsi-27b) W4A16 (GPTQ by [`quantize_w4a16.py`](quantize_w4a16.py), int8 lm_head), same drafters and settings ([`docker-compose.terminal-rsi.yml`](docker-compose.terminal-rsi.yml)) | 124928 | 21448 MiB | as above | chat 126 t/s; 133 / 130 / 105 t/s at 6.4k / 32k / 100k; edits 243 / 227 t/s | 1830 t/s at 6.4k, 1216 t/s at 100k, 1176 t/s at 123k | the terminal-agent finetune of Qwen3.8-27B; 1.8x as fast as llama.cpp on the same GPU ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md)) |
 
 Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
@@ -264,6 +265,40 @@ the conversation's images again (64 images: ~7.5 min), and each image takes ~100
 The text speed is the same as without vision within the run-to-run variation (back to back on 2026-10-28, a warm
 GPU: chat 119.5 vs 119.2 t/s, edits 269 vs 273 t/s, 105.6 / 84.4 vs 110.3 / 90.5 t/s at 6.4k / 32k tokens of context
 with a lower draft acceptance in that run, prompt processing within 2 %).
+
+## int4 KV cache (2026-11-23)
+
+[`pthfa-int4/`](pthfa-int4/README.md) extends HyperQwen's pth-flash-attn kernel to read vLLM's
+`int4_per_token_head` KV cache (packed int4 after a randomized Hadamard rotation, with a scale and zero point per token
+and head), which vLLM itself reads only with its Triton attention (4.5-5.8 times slower on this GPU). The patch is
+applied in [`Dockerfile`](Dockerfile); the int8 path is unchanged, and `PTH_KV_DTYPE=int4_per_token_head` selects
+int4 ([`docker-compose.int4.yml`](docker-compose.int4.yml)). The DFlash2 drafter's layers use it too.
+
+- **Context:** the same `KV_MEM` (5.95 GB) holds 281001 instead of 143870 tokens, so the context is 262128 tokens
+  (the DFlash2 drafter caps it at 262136) instead of 139264. A 259742-token prompt with the 32 GiB CPU KV cache and
+  the vision tower peaked at 21406 MiB and was answered correctly.
+- **Speed:** the decode attention is 2.2 times as fast as with int8 at 32k-245k tokens, but DFlash2's 8-token verify
+  is compute-bound and as fast as with int8, so chats, generation at depth, edits and prompt processing are the same
+  within the run-to-run variation; at 200k tokens of context (which int8 does not fit): 71 t/s, 924 t/s of prompt
+  processing.
+- **Quality** (`quality_http.py --tests retrieval` at 8k / 32k / 100k, greedy, 132 questions):
+
+  | Run | Correct | Same answers as int8 | Mean KLD (99 %, first token) | Changed top tokens |
+  |---|---|---|---|---|
+  | int8 | 123/132 | | | |
+  | int8, another prefill chunk (noise floor) | 122/132 | 130/132 | 0.00023 (0.0065, 0.0010) | 2 |
+  | int4 | 121/132 | 127/132 | 0.0028 (0.049, 0.0125) | 5 |
+
+  All single lookups were right in every run; int4 got 25 of the 36 two-step lookups (int8: 27, noise floor: 26).
+  The KL divergence is 12 times the noise floor: a small but real loss, which is why int8 stays the default and int4
+  is the variant for prompts beyond 139k tokens.
+- **The final image with the production settings** (32 GiB CPU KV cache, vision tower on the Radeon VII), int4 vs
+  int8 (`--tests chat depth edit image --repeat 2`): chat 129.3 vs 138.3 t/s, 119.3 / 112.9 / 80.1 / 68.7 vs 117.5 /
+  116.4 / - / - t/s at 6.4k / 32k / 100k / 200k, edits 307 vs 320 t/s, the same prompt processing; peak 21420 vs
+  21428 MiB. The draft acceptance differed by a few points between the runs, as the generated text did.
+- The kernel's correctness test ([`pthfa-int4/test_int4_attn.py`](pthfa-int4/test_int4_attn.py)) passes 20/20 cases
+  against an FP64 reference (relative RMS error 3-6e-3, Triton int4 4-19e-3), also in the final image; a CUDA-graph
+  replay is bit-identical to the eager launch. Details, kernel timings and commands: [`pthfa-int4/README.md`](pthfa-int4/README.md).
 
 ## Vision tower on the Radeon VII (2026-11-23)
 

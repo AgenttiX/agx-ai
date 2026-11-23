@@ -38,7 +38,7 @@ from vllm.distributed import parallel_state  # pyrefly: ignore[missing-import]
 DEVICE_ENV = "QWEN38_VISION_DEVICE"
 THREADS_ENV = "QWEN38_VISION_THREADS"
 SOCKET_ENV = "QWEN38_VISION_SOCKET"
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def cpu_vision_enabled() -> bool:

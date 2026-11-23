@@ -131,7 +131,8 @@ project-includes = [
     "vllm",
     "vllm-rtx3070",
     "vllm-radeon-vii",
-    "vllm-rtx3090-flash-next"
+    "vllm-rtx3090-flash-next",
+    "vllm-rtx3090-hyperqwen"
 ]
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [

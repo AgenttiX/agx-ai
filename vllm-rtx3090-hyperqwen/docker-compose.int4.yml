@@ -1,0 +1,11 @@
+# The long-context variant of docker-compose.yml: an int4 KV cache read by pth-flash-attn (pthfa-int4/README.md) holds
+# 281001 tokens in the same 5.95 GB as the int8 one (143870), for 262128 tokens of context (the DFlash2 drafter caps it
+# at 262136) at the same speed and VRAM. Its output differs measurably from int8 (mean KL divergence 12 times the noise
+# floor, retrieval 121/132 instead of 123/132), so it is not the default. See README.md (int4 KV cache).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.int4.yml up -d
+services:
+  vllm:
+    environment:
+      PTH_KV_DTYPE: int4_per_token_head
+      MAX_LEN: "262128"

@@ -74,6 +74,10 @@ What has given the largest gains, roughly in order:
   x86-64): int8 KV, causal head size 256 or sliding-window/non-causal 128 (Qwen3.5/3.8); other shapes are refused at
   startup. The MTP drafter also needs `"attention_backend": "CUSTOM"` in `speculative-config`. RTX 3090 Qwen3.8-27B:
   tg at 100k 41 -> 66-69 t/s, pp at 100k 544 -> ~800 t/s. Works with CPU KV offloading.
+- **`int4_per_token_head` on pth-flash-attn** (hyperqwen's `pthfa-int4/`, 2026-11-23; vLLM itself reads it only with
+  Triton, 4.5-5.8x slower on sm_86): 1.95x the tokens of int8 in the same memory (Qwen3.8-27B with DFlash2: 262128
+  instead of 139264 tokens of context in 5.95 GB) at the same speed (decode attention 2.2x faster, but the 8-token
+  verify is compute-bound). KL divergence 12x the noise floor (retrieval 121 vs 123/132): an opt-in, not the default.
 - **Triton split-KV fix** (`vllm.patch` until v0.31.0, upstream since v0.33.0): the 3D split-KV kernel for speculative-decoding verification batches
   (≤8 query tokens). Qwen MTP at 32k 23.7 -> 64 t/s; Gemma at 100k 16.7 -> 84 t/s; identical answers.
 - **Triton prefill tuning for sm_86** (head size 256): pp at 96k 395 -> 582 t/s. The same tuning on gfx906 was
