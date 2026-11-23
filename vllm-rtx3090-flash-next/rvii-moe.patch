@@ -1,0 +1,218 @@
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp	2026-11-23 02:04:48.446336693 +0200
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp	2026-11-23 04:37:09.643454438 +0200
+@@ -22,6 +22,7 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <vector>
++#include "rvii_protocol.h"  // agx-ai: cold experts on the Radeon VII
+ 
+ namespace {
+ 
+@@ -919,6 +920,165 @@
+   g_promoting.store(0, std::memory_order_seq_cst);
+ }
+ 
++// ---------------------------------------------------------------- agx-ai: cold experts on the Radeon VII
++// With QWEN38_RVII=1, a worker process in a ROCm container (rvii_worker, see rvii_protocol.h) keeps some of the cold
++// experts in the VRAM of a Radeon VII. For each decode request, the experts that the worker holds are sent to it
++// through /dev/shm before the pool starts on the others, and its partial sum is added to the pool's at the end. The
++// worker needs ~0.1 ms per layer, the pool ~1 ms, so the worker never delays the answer. If the worker is not ready,
++// stops beating or does not answer within QWEN38_RVII_TIMEOUT_US (default 20000), its experts are computed here.
++struct Rvii {
++  bool want = [] { const char* v = std::getenv("QWEN38_RVII"); return v && v[0] == '1'; }();
++  int64_t timeout_ns = [] {
++    const char* v = std::getenv("QWEN38_RVII_TIMEOUT_US");
++    return (v ? std::atoll(v) : 20000LL) * 1000LL;
++  }();
++  char* base = nullptr;  // the mapped segment, nullptr until the worker has created it
++  int64_t seq = 0;
++  uint64_t beat = 0;
++  std::chrono::steady_clock::time_point beat_seen{}, next_try{};
++  bool was_ready = false;
++  int64_t sent = 0, jobs = 0, timeouts = 0;
++  RviiHeader* head() const { return reinterpret_cast<RviiHeader*>(base); }
++};
++Rvii g_rv;
++
++// The worker's segment, if it is ready and alive (heartbeat seen within the last second).
++static bool rvii_usable() {
++  if (!g_rv.want) return false;
++  using clk = std::chrono::steady_clock;
++  const auto now = clk::now();
++  if (!g_rv.base) {
++    if (now < g_rv.next_try) return false;
++    g_rv.next_try = now + std::chrono::seconds(1);
++    const int fd = ::open("/dev/shm" RVII_SHM_NAME, O_RDWR);
++    if (fd < 0) return false;
++    void* p = mmap(nullptr, RVII_SHM_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++    ::close(fd);
++    if (p == MAP_FAILED) return false;
++    auto* h = reinterpret_cast<RviiHeader*>(p);
++    if (h->magic != RVII_MAGIC || h->version != RVII_VERSION || h->L != RVII_L || h->E != RVII_E ||
++        h->H != static_cast<uint32_t>(H) || h->I != static_cast<uint32_t>(I)) {
++      munmap(p, RVII_SHM_BYTES);
++      return false;
++    }
++    g_rv.base = static_cast<char*>(p);
++    g_rv.beat = h->heartbeat;
++    g_rv.beat_seen = now;
++    // Continue the worker's sequence: a restarted CPU side must not repeat an old one.
++    g_rv.seq = __atomic_load_n(reinterpret_cast<int64_t*>(g_rv.base + RVII_RESP_OFFSET), __ATOMIC_ACQUIRE);
++  }
++  const RviiHeader* h = g_rv.head();
++  const bool ready = __atomic_load_n(&h->ready, __ATOMIC_ACQUIRE) == 1;
++  if (ready != g_rv.was_ready) {
++    g_rv.was_ready = ready;
++    std::fprintf(stderr, "cpu_moe: Radeon VII expert worker %s (%u experts)\n", ready ? "ready" : "not ready",
++                 h->n_experts);
++    if (ready) g_rv.beat_seen = now;
++  }
++  const uint64_t b = __atomic_load_n(&h->heartbeat, __ATOMIC_RELAXED);
++  if (b != g_rv.beat) { g_rv.beat = b; g_rv.beat_seen = now; }
++  if (ready && now - g_rv.beat_seen < std::chrono::seconds(1)) return true;
++  // Not ready or no heartbeat for a second: the worker is loading, has exited or has died. A restarted worker creates
++  // a new segment, so drop this mapping and open the segment again (at most once per second).
++  if (now - g_rv.beat_seen > std::chrono::seconds(1)) {
++    if (g_rv.was_ready) std::fprintf(stderr, "cpu_moe: Radeon VII expert worker gone\n");
++    g_rv.was_ready = false;
++    munmap(g_rv.base, RVII_SHM_BYTES);
++    g_rv.base = nullptr;
++    g_rv.next_try = now + std::chrono::seconds(1);
++  }
++  return false;
++}
++
++// With QWEN38_EXPERT_USAGE=<file>, the decode requests of each expert are counted (uint32 [48][512]; the hot experts
++// of the GPU too, as their ids are in the request; not the cold ones that the GPU share masked) and written to the
++// file every 256 decode steps, e.g. to choose the GPU's and the Radeon VII's experts from real use instead of the
++// static rankings.
++struct ExpertUsage {
++  const char* path = std::getenv("QWEN38_EXPERT_USAGE");
++  std::vector<uint32_t> n = std::vector<uint32_t>(RVII_L * RVII_E, 0);
++  int64_t steps = 0;
++};
++ExpertUsage g_xusage;
++
++static void count_usage(int layer, int E, const uint8_t* sk, int T, int topk, const int32_t* idp) {
++  if (!g_xusage.path || layer < 0 || layer >= RVII_L || E != RVII_E) return;
++  for (int i = 0; i < T * topk; ++i) {
++    const int e = idp[i];
++    if (e >= 0 && e < E) g_xusage.n[layer * RVII_E + e] += 1;
++  }
++  if (layer == RVII_L - 1 && ++g_xusage.steps % 256 == 0) {
++    if (FILE* f = std::fopen(g_xusage.path, "wb")) {
++      std::fwrite(g_xusage.n.data(), sizeof(uint32_t), g_xusage.n.size(), f);
++      std::fclose(f);
++    }
++  }
++}
++
++// compute_layer with the worker's experts of this layer computed by the worker.
++static void compute_layer_rv(int layer, const int64_t* tab, int E, const uint8_t* sk, int T, int topk,
++                             const int32_t* idp, const float* wp, const float* xp, float* op, float* sp,
++                             size_t scratch_floats, const uint8_t* tm) {
++  count_usage(layer, E, sk, T, topk, idp);
++  if (layer < 0 || layer >= RVII_L || E != RVII_E || !rvii_usable()) {
++    compute_layer(tab, E, sk, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
++    return;
++  }
++  const int16_t* map = reinterpret_cast<const int16_t*>(g_rv.base + RVII_MAP_OFFSET) + layer * RVII_E;
++  char* rq = g_rv.base + RVII_REQ_OFFSET;
++  RviiJob* jobs = reinterpret_cast<RviiJob*>(rq + RVII_REQ_JOBS);
++  uint8_t skl[RVII_E];  // the pool skips the worker's experts too
++  std::memcpy(skl, sk, RVII_E);
++  int J = 0;
++  for (int t = 0; t < T; ++t)
++    for (int k = 0; k < topk; ++k) {
++      const int e = idp[t * topk + k];
++      if (e < 0 || e >= E || sk[e] || map[e] < 0) continue;
++      skl[e] = 1;
++      int j = 0;
++      while (j < J && jobs[j].e != e) ++j;
++      if (j == J) { jobs[J].e = e; jobs[J].n = 0; ++J; }
++      jobs[j].tok[jobs[j].n] = t; jobs[j].wt[jobs[j].n] = wp[t * topk + k]; jobs[j].n++;
++    }
++  if (J == 0) {
++    compute_layer(tab, E, sk, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
++    return;
++  }
++  auto* rh = reinterpret_cast<RviiReqHead*>(rq);
++  rh->T = T; rh->layer = layer; rh->J = J;
++  std::memcpy(rq + RVII_REQ_X, xp, sizeof(float) * T * H);
++  const int64_t q = ++g_rv.seq;
++  __atomic_store_n(&rh->seq, q, __ATOMIC_RELEASE);
++  g_rv.sent += 1; g_rv.jobs += J;
++  compute_layer(tab, E, skl, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
++  const char* rs = g_rv.base + RVII_RESP_OFFSET;
++  const auto t0 = std::chrono::steady_clock::now();
++  for (int spin = 0;; ++spin) {
++    if (__atomic_load_n(reinterpret_cast<const int64_t*>(rs), __ATOMIC_ACQUIRE) == q) {
++      const float* y = reinterpret_cast<const float*>(rs + RVII_RESP_Y);
++      for (int i = 0; i < T * H; i += 8)
++        _mm256_storeu_ps(op + i, _mm256_add_ps(_mm256_loadu_ps(op + i), _mm256_loadu_ps(y + i)));
++      return;
++    }
++    _mm_pause();
++    if ((spin & 255) == 255 && std::chrono::steady_clock::now() - t0 > std::chrono::nanoseconds(g_rv.timeout_ns))
++      break;
++  }
++  // No answer: compute the worker's experts here (the pool skips all others), and stop using the worker until it
++  // reports ready again.
++  g_rv.timeouts += 1;
++  std::fprintf(stderr, "cpu_moe: the Radeon VII expert worker did not answer within %lld us; using the CPU\n",
++               static_cast<long long>(g_rv.timeout_ns / 1000));
++  g_rv.was_ready = false;
++  uint8_t only[RVII_E];
++  for (int e = 0; e < RVII_E; ++e) only[e] = (skl[e] && !sk[e]) ? 0 : 1;
++  static thread_local std::vector<float> tmp(MAXT * H);
++  compute_layer(tab, E, only, T, topk, idp, wp, xp, tmp.data(), sp, scratch_floats, tm);
++  for (int i = 0; i < T * H; ++i) op[i] += tmp[i];
++}
++
++std::vector<int64_t> rvii_stats() { return {g_rv.sent, g_rv.jobs, g_rv.timeouts}; }
++
+ // ---------------------------------------------------------------- GPU request server
+ // Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[40] @64, w f32[40] @224, x f32[4*H] @448.
+ // Response slot: seq int64 @0, y f32[4*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
+@@ -934,6 +1094,7 @@
+ // last layer's response to the next step's first request (lm_head, drafts, sampling, scheduling).
+ struct StepStats {
+   int64_t steps = 0, compute_ns = 0, layer_gap_ns = 0, step_gap_ns = 0, requests = 0;
++  int64_t rv_jobs0 = 0;  // agx-ai: Radeon VII jobs before this window
+ };
+ StepStats g_stats;
+ std::atomic<int64_t> g_stats_every{0};
+@@ -989,7 +1150,7 @@
+           else if (layer == 0 && gap < 1000000000LL) { window.step_gap_ns += gap; window.steps += 1; }
+         }
+         if (T >= 1 && T <= MAXT && layer >= 0) {
+-          compute_layer(tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
++          compute_layer_rv(layer, tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
+                         reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 224),
+                         reinterpret_cast<float*>(rq + 448), reinterpret_cast<float*>(rs + 64), scratch.data(),
+                         scratch.size(), g_tail_mask ? g_tail_mask + static_cast<int64_t>(layer) * E : nullptr);
+@@ -1014,12 +1175,14 @@
+           const int64_t tj = g_tail_jobs.exchange(0), cj = g_cold_jobs.exchange(0);
+           std::fprintf(stderr, "cpu_moe decode steps=%lld: per step cpu %.2f ms, between layers %.2f ms, "
+                        "step tail %.2f ms (%.1f requests/step), cold experts %.0f/step of which tail %.1f; "
+-                       "promoted %lld, skipped %lld (total)\n",
++                       "promoted %lld, skipped %lld (total); Radeon VII experts %.0f/step, %lld timeouts\n",
+                        static_cast<long long>(window.steps), window.compute_ns / n / 1e6,
+                        window.layer_gap_ns / n / 1e6, window.step_gap_ns / n / 1e6, window.requests / n,
+                        cj / n, tj / n, static_cast<long long>(g_dyn.promoted),
+-                       static_cast<long long>(g_dyn.skipped));
++                       static_cast<long long>(g_dyn.skipped), (g_rv.jobs - window.rv_jobs0) / n,
++                       static_cast<long long>(g_rv.timeouts));
+           window = StepStats{};
++          window.rv_jobs0 = g_rv.jobs;
+         }
+       }
+       if (req_big_addr) {
+@@ -1146,6 +1309,7 @@
+   m.def("dyn_stats", &dyn_stats);
+   m.def("usage_ready", &usage_ready);
+   m.def("big_layout", &big_layout);
++  m.def("rvii_stats", &rvii_stats);
+   m.def("tail_read", &tail_read, py::call_guard<py::gil_scoped_release>());
+ #ifdef WITH_BRIDGE
+   m.def("bridge_submit", &bridge_submit);

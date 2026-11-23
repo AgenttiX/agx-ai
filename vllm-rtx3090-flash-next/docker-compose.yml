@@ -1,9 +1,12 @@
 # Qwen3.8-Flash-Next with vLLM on one RTX 3090 (agx-z2e), with its experts in RAM and computed partly on the CPU, and
-# images and videos through the vision tower on the CPU. The image is built from this directory, see README.md; the
-# configuration and the measurements behind it are in ../vllm-rtx3090/README.md#qwen38-flash-next.
+# images and videos through the vision tower on the CPU. A share of the cold experts is computed by the Radeon VII
+# (the rvii-experts service, rvii_experts/README.md), which needs the whole Radeon VII: stop llama-cpp-radeon-vii first.
+# The image is built from this directory, see README.md; the configuration and the measurements behind it are in
+# ../vllm-rtx3090/README.md#qwen38-flash-next and README.md (Radeon VII experts).
 # The same port as ../vllm-rtx3090 and ../llama-cpp-rtx3090 (9931): only one of them fits on the GPU at a time.
 # The API key is the one of the llama.cpp servers (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env).
-# Start: docker compose -f ../vllm-rtx3090/docker-compose.yml stop && docker compose up -d
+# Start: docker compose -f ../vllm-rtx3090/docker-compose.yml stop && docker compose -f ../llama-cpp-radeon-vii/docker-compose.yml stop
+#        && docker compose up -d
 
 x-gpu: &gpu
   deploy:
@@ -52,10 +55,14 @@ services:
       # over PCIe) and streamed to the GPU during prefill. The int8 dense layers leave room for 24 instead of 14:
       # 4 % fewer cold experts per decode step for the CPU.
       QWEN38_HOT_ONLY: "24"
-      # Share of each layer's cold experts that the GPU computes during decode, at most 8 per layer
-      # (QWEN38_GPU_SHARE_KMAX). Decode is bound by the CPU (~55 ms per step vs ~16 ms on the GPU); more did not
-      # help (see ../vllm-rtx3090/README.md).
-      QWEN38_GPU_SHARE_FRAC: "0.3"
+      # No share of the cold experts for the RTX 3090 (over PCIe): its share (0.3 before) would take the first cold
+      # experts of each layer, including those of the Radeon VII, and with the Radeon VII, 0 is 23-35 % faster
+      # (README.md). Without the Radeon VII, 0.15-0.45 made no difference.
+      QWEN38_GPU_SHARE_FRAC: "0"
+      # Cold experts on the Radeon VII (rvii-moe.patch): the experts that the rvii-experts service holds are sent to it
+      # over /dev/shm (ipc: host) and computed there while the CPU computes the others. If the service is not running
+      # or does not answer, the CPU computes them.
+      QWEN38_RVII: "1"
       # The CPU experts with int8 activations (cpu-moe.patch, README.md): ~2.3 times as fast per thread as the
       # runtime's FP32 activations, so that 8 threads, 1 on each 4-core CCX of the Threadripper 3970X, reach the
       # memory bandwidth (the runtime's default: 24 threads), and the other cores are left to the serving processes
@@ -93,6 +100,10 @@ services:
       # Kernel caches (Humming, Triton): the first start compiles kernels, later starts reuse them.
       - flash-next-cache:/root/.humming
       - flash-next-triton-cache:/root/.triton
+      # The experts that the RTX 3090 keeps (the first QWEN38_HOT_ONLY of each layer) and the Radeon VII the next ones,
+      # ranked by their use in decode measured on chat, code and retrieval prompts instead of the runtime's static
+      # ranking (README.md, Radeon VII experts).
+      - ./rvii_experts/rankings-measured.json:/opt/qwen38-3090/configs/static_hot_cache_rankings.json:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -100,6 +111,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20m
+
+  # The Radeon VII expert worker (rvii_experts/README.md): 135 experts per layer (ranks 24-158 of
+  # rvii_experts/rankings-measured.json, 15.3 GiB) in the Radeon VII's VRAM. The first start packs them from the
+  # checkpoint into ~/.cache/vllm-models/flash-next-rvii-measured (15 GB, ~15 s); later starts load them in ~8-18 s.
+  rvii-experts:
+    # Built by ../.github/workflows/deploy-docker-flash-next-rvii-experts.yml. Locally: docker build -t <the image> rvii_experts
+    image: ghcr.io/agenttix/agx-ai/flash-next-rvii-experts:latest
+    container_name: rvii-experts
+    environment:
+      # The RTX 3090 keeps the first QWEN38_HOT_ONLY experts of each layer.
+      RVII_HOT: "24"
+      RVII_RANKINGS: /opt/rvii/rankings-measured.json
+      RVII_CACHE: /root/.cache/vllm-models/flash-next-rvii-measured
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    ipc: host
+    volumes:
+      - /home/mika/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+      - /home/mika/.cache/vllm-models:/root/.cache/vllm-models
+    restart: unless-stopped
 
 volumes:
   flash-next-cache:

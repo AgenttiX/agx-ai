@@ -136,7 +136,8 @@ project-includes = [
 # The scripts are not installed as packages, so their directories have to be added as import roots.
 search-path = [
     ".",
-    "vllm"
+    "vllm",
+    "vllm-rtx3090-flash-next/rvii_experts"
 ]
 project-excludes = [
     "**/_build*",

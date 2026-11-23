@@ -26,7 +26,7 @@ left 0.8-1.0 GiB free:
 | [`config-qwen3.8-27b.yaml`](config-qwen3.8-27b.yaml) (default) | Qwen3.8-27B GPTQ int4, MTP 2, pth-flash-attn | int8 | 155648 | 81-86 t/s | 83 / 79 / 66 t/s, 60 t/s at 153k | 1210 t/s at 6.4k, 690 t/s at 153k |
 | [`config-gemma-4-26b-a4b-qat.yaml`](config-gemma-4-26b-a4b-qat.yaml) | Gemma 4 26B-A4B QAT (Google's Q4_0, bit-exact), MTP 2 | int8 | 163840 | 255 t/s | 196 / 130 / 84 t/s, 70 t/s at 150k | 5030 t/s at 6.4k, 1020 t/s at 153k |
 | [`config-gemma-4-31b-qat.yaml`](config-gemma-4-31b-qat.yaml) | Gemma 4 31B QAT (Google's w4a16), no MTP | int4 | 40960 | 36 t/s | 32 / 24 (at 36.5k) t/s | 775 t/s at 6.4k, 535 t/s at 39.5k |
-| [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM | int8 | 262144 | 32.4 t/s | 33 / 33 / 32 t/s, 52 t/s in code edits | 1750 t/s at 6.4k, 2050 t/s at 260k |
+| [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next) | Qwen3.8-Flash-Next W4A16 (int8 dense layers) + FP8 n-gram table, MTP 3, experts in RAM, [135 experts per layer on the Radeon VII](../vllm-rtx3090-flash-next/README.md#radeon-vii-experts-2026-11-23) (needs the whole Radeon VII) | int8 | 262144 | 42.7 t/s | 56 / 55 / 52 t/s, 59 t/s in code edits | 1900 t/s at 6.4k, 2370 t/s at 260k |
 | [`config-diffusiongemma-26b-a4b.yaml`](config-diffusiongemma-26b-a4b.yaml) | [DiffusionGemma](#diffusiongemma) 26B-A4B AWQ int4 (block diffusion), no MTP | int8 | 98304 | 281 t/s end to end | 194 / 148 t/s, 80 t/s at 64k (after the first 256-token block) | 2120 t/s at 6.4k, 1650 t/s at 64k |
 | [`config-phai-a1-35b-1m.yaml`](config-phai-a1-35b-1m.yaml) | [Phai-A1-35B-1M](#phai-a1-35b-1m) (Qwen3.6-35B-A3B fine-tune) int4 experts + int8 dense layers, round-to-nearest, built locally; grafted MTP head, MTP 3, vision tower on the CPU | int8 | 98304 | 215-227 t/s | 226-231 / 228 t/s (36.5k), 186 t/s at 94k; edits 341-360 t/s | 8730 t/s at 6.4k, 4580 t/s at 97k |
 | [`config-phai-a1-35b-1m-262k.yaml`](config-phai-a1-35b-1m-262k.yaml) | The same with [1.7 GiB of the experts in RAM](#262144-tokens-of-context-2026-11-22) | int8 | 262144 | 132 t/s | 136 / 142 t/s (36.5k), 133 t/s at 100k, 125 t/s at 200k; edits 212 t/s | 5590 t/s at 6.4k, 2060 t/s at 260k |
@@ -308,6 +308,11 @@ the service in [`../vllm-rtx3090-flash-next/docker-compose.yml`](../vllm-rtx3090
   56 GiB got huge pages, as the RAM was fragmented after days of uptime).
 - The runtime's serve script had no option for `gpu-memory-utilization`, whose default (0.92) fails vLLM's startup
   check next to the desktop; [`../vllm-rtx3090-flash-next`](../vllm-rtx3090-flash-next/README.md) adds it (0.8).
+
+Since 2026-11-23, the Radeon VII computes a share of the cold experts during decode, and the experts are ranked by
+their measured use: chat 42.7 t/s, 55.8 / 55.2 / 52.4 t/s at 6.4k / 32k / 100k tokens of context, code edits 59.5
+t/s (+32 %, +64-69 %, +14 %). See [`../vllm-rtx3090-flash-next/README.md`](../vllm-rtx3090-flash-next/README.md#radeon-vii-experts-2026-11-23).
+The measurements below are from before.
 
 ### Context size (2026-10-13)
 

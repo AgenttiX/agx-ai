@@ -46,9 +46,13 @@ input and a faster CPU expert kernel:
     share of the GPU is free, and the runtime's default of 0.92 fails next to a desktop. The KV cache size is set
     explicitly anyway,
   - and, for the 8 GB RTX 3070 of [`../vllm-rtx3070`](../vllm-rtx3070/README.md#cpu-experts-2026-10-26) (added on
-    2026-10-26): the lm_head is created with the checkpoint's quantization config, so that an int4 or int8 lm_head
-    loads (a BF16 one, as in the checkpoint here, is unaffected), and the serve script requires the MTP drafter only
-    with `MTP_DEPTH` > 0.
+    2026-10-26): with `QWEN38_LM_HEAD_QUANT=1`, the lm_head is created with the checkpoint's quantization config, so
+    that an int4 or int8 lm_head loads, and the serve script requires the MTP drafter only with `MTP_DEPTH` > 0.
+    Until 2026-11-23 this was unconditional, which also gave the BF16 lm_head of the checkpoint here a quantized
+    method, and the RTX 3090 configuration failed to start with MTP ("reduced draft vocabulary requires an
+    unquantized LM head"); the RTX 3070 runs without MTP and was not affected.
+- [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
+  (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
 - [`cpu-moe.patch`](cpu-moe.patch) (the runtime's `cpu_moe.cpp`, which computes the cold experts on the CPU during
   decode; compiled at startup), added on 2026-10-26:
   - integer activations, selected at startup (the default stays FP32): `QWEN38_CPU_EXPERTS_INT8=1` quantizes each
@@ -69,6 +73,93 @@ The CPU vision tower takes 1.7 GiB of RAM, and a video up to ~1.5 GiB more while
 needs a few GiB more than the expert arena (see the `mem_limit` in [`docker-compose.yml`](docker-compose.yml)). transformers logs once at startup that
 `video_max_pixels` "is not a valid argument for this processor and will be ignored"; the patch removes it before the
 processor calls, and the budget is applied (see the measurements).
+
+## Radeon VII experts (2026-11-23)
+
+Decode is bound by the CPU: per step (4 tokens with MTP 3), the CPU pool computes ~1050 cold experts in ~56 ms from
+DDR4, while the RTX 3090 needs ~13 ms. The Radeon VII (16 GB of HBM2 at ~1 TB/s) is otherwise idle in this
+configuration, so it now computes a share of the cold experts:
+
+- [`rvii_experts/`](rvii_experts/README.md): a worker in a ROCm container that keeps 135 experts per layer (6480,
+  15.3 GiB) in the Radeon VII's VRAM and computes them on request (HIP kernel for gfx906, ~70 µs for 4 tokens and 8
+  experts, relative error ~1e-5 against FP64).
+- [`rvii-moe.patch`](rvii-moe.patch) (the runtime's `cpu_moe.cpp`, with `QWEN38_RVII=1`): for each decode request of
+  a layer, the CPU pool sends the experts that the worker holds to it over `/dev/shm` ([`rvii_experts/rvii_protocol.h`](rvii_experts/rvii_protocol.h),
+  both containers with `ipc: host`), computes the others, and adds the worker's partial sum before it answers the RTX
+  3090. The worker needs ~0.1 ms per layer and the CPU ~1 ms, so it never delays the answer. If the worker is not
+  running, not ready, stops its heartbeat or does not answer within 20 ms (`QWEN38_RVII_TIMEOUT_US`), the CPU computes
+  its experts (and re-opens the worker's segment when it is back). `QWEN38_EXPERT_USAGE=<file>` counts the decode
+  requests of each expert (uint32 [48][512], written every 256 steps). The decode-step statistics
+  (`QWEN38_CPU_EXPERTS_STATS`) show the worker's experts per step and its timeouts.
+- **The GPU share off** (`QWEN38_GPU_SHARE_FRAC=0`): the RTX 3090's share of the cold experts (over PCIe, 0.3 before)
+  takes the first ~30 % of each layer's cold experts in the order they come, including those of the Radeon VII, which
+  then got only 70-100 experts per step.
+- **Experts ranked by measured use** ([`rvii_experts/rankings-measured.json`](rvii_experts/rankings-measured.json),
+  mounted over the runtime's `static_hot_cache_rankings.json`): the RTX 3090 keeps the first 24 of each layer and the
+  Radeon VII the next 135. Counted with `QWEN38_EXPERT_USAGE` on prompts other than the benchmark's chat and edit
+  ones (`chat_stream.py`, the raw generation test, 16k and 64k tokens of code, retrieval questions; 4.9 M expert
+  requests). By these counts, the runtime's static ranking puts only 11.8 % of the requests on the RTX 3090's 24 and
+  40.8 % on the Radeon VII's next 135 (47.3 % for the CPU); the measured one 24.8 % and 49.8 % (25.4 % for the CPU).
+  A ranking measured on a first, smaller collection put 60.5 % of the second collection on the Radeon VII, so the
+  counts carry over between these workloads. The CPU still computed ~1080 distinct experts per step, as the rarely
+  used experts make up most of the distinct ones; the gain was in the code tests (see below).
+
+Measured with `bench_http.py --tests chat depth edit --repeat 2 --depth 6400 32000 --edit-depth 0` (generation in
+t/s; experts per step from the decode statistics):
+
+| Configuration | Chat | Depth 6.4k | Depth 32k | Edit | Cold experts per step: CPU / Radeon VII | CPU / GPU ms per step |
+|---|---|---|---|---|---|---|
+| Before (GPU share 0.3, static ranking, no Radeon VII) | 32.0 | 32.3 | 31.9 | 52.1 | ~1050 / 0 | 56 / 13 |
+| Radeon VII, static ranking, GPU share 0.3 | 35.3 | 35.6 | 35.3 | 54.2 | ~970 / 70-100 | 53 / 14 |
+| Radeon VII, static ranking, GPU share 0 | 43.4 | 45.9 | 44.8 | 59.0 | ~1100 / ~280 | 49 / 13 |
+| Radeon VII, ranking measured for it only (first collection) | 43.4 | 52.0 | 55.8 | 58.9 | ~1070 / ~310 | 49 / 12 |
+| **Radeon VII and RTX 3090, measured ranking (current)** | 43.4 | 56.7 | 57.4 | 57.6 | ~1080 / ~290-390 | 46-59 / 12-13 |
+
+- **+36 % in chats, +75-80 % with code context, +11 % in code edits** over the configuration before. Most of it
+  comes from the Radeon VII with the GPU share off; the measured ranking added +24-28 % in the code tests (which are
+  of the same kind as part of the collection) and nothing in chats (which were in neither collection).
+- The RTX 3090 uses the same VRAM (peak 20236 MiB). Prefill does not use the worker (it streams the cold experts
+  through the RTX 3090).
+
+The current configuration with the full benchmark (`--tests generation prompt chat depth edit image --repeat 2
+--depth 6400 32000 100000 --edit-depth 0 32000 --prompt-tokens 260000`), against the last results of the
+configuration before ([`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#cpu-expert-kernel-2026-10-26), 2026-10-26):
+
+| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 260k | Image 1280x960 | Peak VRAM |
+|---|---|---|---|---|---|---|
+| Before | 32.4 | 33.4 / 32.7 / 32.0 | 52.4 / 51.8 | 1752 / 1994 / 1958 / 2054 | 8.1 s | 20238 MiB |
+| **Current** | **42.7** | **55.8 / 55.2 / 52.4** | **59.5 / 59.2** | 1904 / 2347 / 2106 / 2368 | 8.2 s | 20236 MiB |
+| Change | +32 % | +67 / +69 / +64 % | +14 % | +9 / +18 / +8 / +15 % | | |
+
+The prompt processing was faster too, probably as the measured ranking keeps more of the experts that the prompts
+use on the RTX 3090 (the cold ones are streamed in every prefill chunk).
+- **Quality:** the worker computes in FP32 with 24-bit integer activations (relative error ~1e-5, the CPU pool's
+  int8 mode ~1e-2). The retrieval questions of the usage collection were answered 42/44 at 8k tokens (as before).
+- The worker needs the whole Radeon VII, so [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) has to be stopped.
+  Without the worker, the CPU computes all cold experts as before (but with the GPU share off).
+- Not done: the Radeon VII's power profile (`high`) might shorten the worker's ~70 µs by ~15 % (it needs root and makes
+  no difference to the CPU-bound step); a dynamic selection of the Radeon VII's experts (they are loaded once).
+
+### HyperQwen's optimizations for Flash-Next (2026-11-23)
+
+Checked again against HyperQwen's newest version (`3d6c954`, vLLM 0.33.0, see
+[`../vllm-rtx3090-hyperqwen`](../vllm-rtx3090-hyperqwen/README.md)); none of them would speed up this runtime, whose
+decode is bound by the cold experts:
+
+- **pth-flash-attn** and the int8/int4 KV kernels: Flash-Next's attention is Qwen Sparse Attention with its own
+  kernels (and the Gated DeltaNet layers), not causal full attention at head size 256, and its KV cache is already
+  int8 with 262144 tokens of context.
+- **DFlash2 and lookup drafting**: there is no DFlash2 drafter for Flash-Next. Lookup drafting (copying from the
+  context) would help only code edits, where MTP 3 already accepts 98 % of its drafts; the step is capped at 4 tokens
+  by the CPU expert path (`MAXT`), and longer verify batches would need a larger request slot, new CUDA graphs and
+  more CPU work per step (more distinct experts).
+- **The FP16 recurrent state** and **the token embedding in pinned RAM**: the runtime keeps one sequence (its
+  recurrent state is small), and its token embedding is already in pinned RAM (`QWEN38_EMBED_UVA`).
+- **CPU KV offloading**: does not work with this runtime's ring buffer of the sparse attention (see
+  [`../vllm-rtx3090/README.md`](../vllm-rtx3090/README.md#other-settings-2026-10-14)).
+- **The reduced MTP draft vocabulary and the sampler patches**: the runtime has its own reduced draft vocabulary.
+
+The runtime itself has no newer release than v0.1.0 (2026-09-30).
 
 ## Measurements (2026-10-13, agx-z2e)
 

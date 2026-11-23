@@ -58,16 +58,18 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
  
  
  def without_modelopt_fp4(
-@@ -679,6 +680,8 @@
+@@ -679,6 +680,10 @@
              self.lm_head = ParallelLMHead(
                  config.vocab_size,
                  config.hidden_size,
-+                # agx-ai: an int4/int8 lm_head of the checkpoint (vllm-rtx3070); a BF16 one is unaffected.
-+                quant_config=vllm_config.quant_config,
++                # agx-ai: an int4/int8 lm_head of the checkpoint (vllm-rtx3070) with QWEN38_LM_HEAD_QUANT=1. Not by
++                # default: with the quantization config, a BF16 lm_head gets a quantized method too, which the MTP
++                # drafter's reduced draft vocabulary refuses.
++                quant_config=vllm_config.quant_config if __import__("os").environ.get("QWEN38_LM_HEAD_QUANT") == "1" else None,
                  prefix=maybe_prefix(prefix, "lm_head"),
              )
          else:
-@@ -928,12 +931,18 @@
+@@ -928,12 +933,18 @@
              self._tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
  
              with self._mark_tower_model(vllm_config, {"image", "video"}):

@@ -96,6 +96,9 @@ services:
     environment:
       SERVED_MODEL_NAME: Qwen/Qwen3.8-Flash-Next
       PORT: "8000"
+      # The checkpoint's int4 lm_head (flash-next.patch of ../vllm-rtx3090-flash-next; off by default since 2026-11-23,
+      # as it broke the MTP drafter of the RTX 3090 configuration).
+      QWEN38_LM_HEAD_QUANT: "1"
       # The largest context for this KV cache (87381 tokens for this context, ~15.3 KB per token, 1.02 times the
       # context). Peak 7588 MiB with an 85k-token prompt, vs. 7658 MiB with the earlier 1.22 GB, 75776 tokens and
       # stream groups of 32. 1.40 GB and 90112 tokens also worked, but the peak grew over the benchmarks to 7702 MiB,
