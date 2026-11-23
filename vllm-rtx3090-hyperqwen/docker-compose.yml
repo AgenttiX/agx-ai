@@ -9,8 +9,8 @@
 # clients work with all of them.
 
 x-hyperqwen: &hyperqwen
-  # HyperQwen's image of its commit 6ab9bd0 (2026-11-03, vLLM 0.32.0) with the vision tower on the CPU: the image of
-  # this directory, built by ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml. See README.md.
+  # HyperQwen's image of its commit 3d6c954 (2026-11-10, vLLM 0.33.0) with the vision tower outside the RTX 3090: the
+  # image of this directory, built by ../.github/workflows/deploy-docker-vllm-rtx3090-hyperqwen.yml. See README.md.
   image: ghcr.io/agenttix/agx-ai/vllm-hyperqwen:latest
   volumes:
     - /home/mika/.cache/vllm-models/hyperqwen:/app/models
@@ -24,6 +24,10 @@ services:
 
   vllm:
     <<: *hyperqwen
+    volumes:
+      - /home/mika/.cache/vllm-models/hyperqwen:/app/models
+      - cache:/cache
+      - qwen-vision:/run/qwen-vision
     container_name: vllm-rtx3090-hyperqwen
     deploy:
       resources:
@@ -62,12 +66,15 @@ services:
       # vLLM checks at startup that this share of the GPU is free; the KV cache has a fixed size (KV_MEM of the
       # launcher). The default of 0.93 would fail next to the desktop.
       GPU_UTIL: "0.85"
-      # Image and video input with the vision tower on the CPU (FP32, no VRAM; cpu_vision.py, README.md) instead of the
-      # launcher's VISION=1 default, which keeps its weights in RAM but runs it on the GPU. 32 threads as for
-      # ../vllm-rtx3090-flash-next, and vLLM's Qwen3-VL video loader, which decodes only the sampled frames.
+      # Image and video input with the vision tower on the Radeon VII (the rvii-vision service below, FP16, no VRAM of
+      # the RTX 3090; cpu_vision.py, rvii_vision/server.py, README.md) instead of the launcher's VISION=1 default,
+      # which keeps its weights in RAM but runs it on the RTX 3090. If the service is not running, the CPU computes the
+      # tower (FP32, 32 threads as for ../vllm-rtx3090-flash-next). vLLM's Qwen3-VL video loader decodes only the
+      # sampled frames.
       VISION: "1"
       VISION_OFFLOAD: "0"
-      QWEN38_VISION_DEVICE: cpu
+      QWEN38_VISION_DEVICE: rvii
+      QWEN38_VISION_SOCKET: /run/qwen-vision/vision.sock
       QWEN38_VISION_THREADS: "32"
       VLLM_VIDEO_LOADER_BACKEND: qwen3_vl
       # The same model name as ../vllm-rtx3090, so that the clients work with both. The vision limits override those
@@ -101,5 +108,28 @@ services:
       # The first start compiles kernels for several minutes; later ones take ~4.5 min.
       start_period: 15m
 
+  # The vision tower of Qwen3.8-27B on the Radeon VII (FP16, ~1.1 s per 1-megapixel image instead of ~6 s on the CPU),
+  # served over a Unix socket in the qwen-vision volume. It uses the ROCm image of ../vllm-radeon-vii with
+  # rvii_vision/server.py mounted, and needs ~1.5 GiB of the Radeon VII (with llama-cpp-radeon-vii stopped, or a
+  # smaller model there). See README.md.
+  rvii-vision:
+    image: ghcr.io/agenttix/agx-ai/vllm-gfx906:latest
+    container_name: rvii-vision
+    entrypoint: ["python", "/opt/rvii-vision/server.py"]
+    environment:
+      QWEN_VISION_MODEL: /models/Qwen3.8-27B-W4A16-AutoRound
+      QWEN_VISION_SOCKET: /run/qwen-vision/vision.sock
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    volumes:
+      - /home/mika/.cache/vllm-models/hyperqwen:/models:ro
+      - ./rvii_vision/server.py:/opt/rvii-vision/server.py:ro
+      - qwen-vision:/run/qwen-vision
+    restart: unless-stopped
+
 volumes:
   cache:
+  qwen-vision:

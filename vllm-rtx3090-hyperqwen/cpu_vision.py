@@ -10,13 +10,20 @@ mm_encoder_inputs_on_cpu, so that the encoder runner (hyperqwen-vision.patch) le
 only the embeddings (5120 values per token in BF16) are copied to the GPU. Zen 2 has no fast BF16, so FP32 is 3.5
 times as fast as BF16 there. With mm_device_do_normalize (the default since vLLM v0.32), the processor sends raw uint8
 pixels, and the model's input normalization (input_norm) is applied here on the CPU too. Selected with
-QWEN38_VISION_DEVICE=cpu, with QWEN38_VISION_THREADS threads (default: PyTorch's). The same module as in
+QWEN38_VISION_DEVICE=cpu, with QWEN38_VISION_THREADS threads (default: PyTorch's). With QWEN38_VISION_DEVICE=rvii,
+the normalized pixels are sent to the Radeon VII service of rvii_vision/server.py over the Unix socket
+QWEN38_VISION_SOCKET (FP16 there, a fraction of a second per image), and the CPU computes only if the service fails.
+The same module as in
 ../vllm-rtx3090-flash-next, plus tensor parallelism (../vllm-rtx-a4000): the ranks split the frames of the videos
 and the images between them and exchange the embeddings.
 """
 
 from collections.abc import Iterable
+import json
+import logging
 import os
+import socket
+import struct
 from typing import Any
 
 # The module runs in the vLLM image, which has these packages; the development environment does not have them.
@@ -30,11 +37,42 @@ from vllm.distributed import parallel_state  # pyrefly: ignore[missing-import]
 
 DEVICE_ENV = "QWEN38_VISION_DEVICE"
 THREADS_ENV = "QWEN38_VISION_THREADS"
+SOCKET_ENV = "QWEN38_VISION_SOCKET"
+logger = logging.getLogger(__name__)
 
 
 def cpu_vision_enabled() -> bool:
-    """Whether the vision tower should run on the CPU (QWEN38_VISION_DEVICE=cpu)."""
-    return os.environ.get(DEVICE_ENV, "gpu").strip().lower() == "cpu"
+    """Whether the vision tower runs outside vLLM's GPU (QWEN38_VISION_DEVICE=cpu, or rvii with the CPU as fallback)."""
+    return os.environ.get(DEVICE_ENV, "gpu").strip().lower() in ("cpu", "rvii")
+
+
+def _recv_exact(conn: socket.socket, n: int) -> bytes:
+    buf = bytearray(n)
+    view = memoryview(buf)
+    got = 0
+    while got < n:
+        k = conn.recv_into(view[got:], n - got)
+        if k == 0:
+            raise ConnectionError("the vision service closed the connection")
+        got += k
+    return bytes(buf)
+
+
+def _remote_embeddings(path: str, pixels: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
+    """The embeddings from the vision service (rvii_vision/server.py) for normalized FP32 pixel patches, in BF16."""
+    data = pixels.to(torch.float16).contiguous()
+    head = json.dumps({"rows": data.shape[0], "cols": data.shape[1], "grid": grid.tolist()}).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(600)
+        conn.connect(path)
+        conn.sendall(struct.pack("<I", len(head)) + head)
+        conn.sendall(data.view(torch.int16).numpy().tobytes())
+        reply = json.loads(_recv_exact(conn, struct.unpack("<I", _recv_exact(conn, 4))[0]))
+        if "error" in reply:
+            raise RuntimeError(f"vision service: {reply['error']}")
+        tokens, dim = int(reply["tokens"]), int(reply["dim"])
+        out = torch.frombuffer(bytearray(_recv_exact(conn, tokens * dim * 2)), dtype=torch.int16)
+    return out.view(torch.bfloat16).view(tokens, dim)
 
 
 class CpuVisionTower(nn.Module):
@@ -58,6 +96,8 @@ class CpuVisionTower(nn.Module):
         self.spatial_merge_size: int = cfg.spatial_merge_size
         self.out_hidden_size: int = cfg.out_hidden_size
         self.threads: int | None = int(os.environ.get(THREADS_ENV, "0")) or None
+        self.remote: str | None = (os.environ.get(SOCKET_ENV, "/run/qwen-vision/vision.sock")
+                                   if os.environ.get(DEVICE_ENV, "").strip().lower() == "rvii" else None)
 
     @property
     def dtype(self) -> torch.dtype:
@@ -136,6 +176,11 @@ class CpuVisionTower(nn.Module):
                 pixel_values = pixel_values.to("cpu")
                 if hasattr(self.input_norm, "forward_native"):
                     pixel_values = self.input_norm.forward_native(pixel_values, torch.float32)
+                if self.remote:
+                    try:
+                        return _remote_embeddings(self.remote, pixel_values.to(torch.float32), grid)
+                    except Exception as exc:  # noqa: BLE001 - the service is down or failed: use the CPU
+                        logger.warning("Radeon VII vision service failed (%r); computing on the CPU", exc)
                 out = self._hf(pixel_values.to(torch.float32), grid_thw=grid)
         finally:
             torch.set_num_threads(previous)

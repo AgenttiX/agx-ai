@@ -12,7 +12,7 @@ name (`Qwen/Qwen3.8-27B`) and API key, and is faster for one to three agents at 
 
 | Model | Context | VRAM (peak) | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
-| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1710 t/s at 6.4k, 1250 t/s at 100k, 1140 t/s at 128k with the [GPU unlock](#gpu-unlock) (without: 1220 / 820 / 750 t/s) | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the vision tower on the CPU (1 megapixel: ~7 s; 30-s 1080p video: ~40 s), which adds ~150 MiB to the VRAM peak and no other VRAM |
+| Qwen3.8-27B W4A16 (AutoRound, int4 lm_head), DFlash2 drafter (W4A16) + lookup drafting, int8 KV cache, pth-flash-attn | 139264 | 21478 MiB | 38 GiB: 32 GiB CPU KV cache, ~2 GiB embedding, ~4 GiB processes | chat 136 t/s; 128 / 110 / 80 / 71 t/s at 6.4k / 32k / 100k / 136k tokens of context; **290 t/s when copying code** (edits) | 1710 t/s at 6.4k, 1250 t/s at 100k, 1140 t/s at 128k with the [GPU unlock](#gpu-unlock) (without: 1220 / 820 / 750 t/s) | up to 4 sequences; an agent's evicted conversation comes back from RAM (25k tokens: 1.8 s instead of 21 s); images and videos with the [vision tower on the Radeon VII](#vision-tower-on-the-radeon-vii-2026-11-23) (1 megapixel: ~1.7 s instead of ~7 s on the CPU, which remains the fallback), no VRAM of the RTX 3090 |
 | [Terminal-RSI-27B](#terminal-rsi-27b) W4A16 (GPTQ by [`quantize_w4a16.py`](quantize_w4a16.py), int8 lm_head), same drafters and settings ([`docker-compose.terminal-rsi.yml`](docker-compose.terminal-rsi.yml)) | 124928 | 21448 MiB | as above | chat 126 t/s; 133 / 130 / 105 t/s at 6.4k / 32k / 100k; edits 243 / 227 t/s | 1830 t/s at 6.4k, 1216 t/s at 100k, 1176 t/s at 123k | the terminal-agent finetune of Qwen3.8-27B; 1.8x as fast as llama.cpp on the same GPU ([`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md)) |
 
 Compared with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090) as it was before (stock vLLM 0.31
@@ -265,6 +265,35 @@ The text speed is the same as without vision within the run-to-run variation (ba
 GPU: chat 119.5 vs 119.2 t/s, edits 269 vs 273 t/s, 105.6 / 84.4 vs 110.3 / 90.5 t/s at 6.4k / 32k tokens of context
 with a lower draft acceptance in that run, prompt processing within 2 %).
 
+## Vision tower on the Radeon VII (2026-11-23)
+
+The Radeon VII in the same computer is idle in this configuration (a draft model there would be slower than none, see
+[`../llama-cpp-rtx3090`](../llama-cpp-rtx3090/README.md#draft-model-on-the-cpu-or-the-radeon-vii)), so the vision
+tower now runs there:
+
+- [`rvii_vision/server.py`](rvii_vision/server.py): transformers' `Qwen3VLVisionModel` in FP16 on the Radeon VII
+  (gfx906 has fast FP16, but no fast BF16), served over a Unix socket in a shared volume. It runs in the ROCm image of
+  [`../vllm-radeon-vii`](../vllm-radeon-vii) with the script mounted (the `rvii-vision` service of
+  [`docker-compose.yml`](docker-compose.yml)), so no image of its own is needed. The patch embedding (a `Conv3d` whose
+  kernel equals its stride) is computed as the equivalent GEMM: MIOpen ran the `Conv3d` with a naive kernel, 2.0 of
+  3.1 s for a 1-megapixel image. A warm-up at startup compiles the kernels (the first image took 2.8 instead of 1.1 s).
+- [`cpu_vision.py`](cpu_vision.py) with `QWEN38_VISION_DEVICE=rvii`: the normalized pixels go to the service in FP16
+  and the embeddings come back in BF16. If the service is not running or fails, the CPU computes the tower as before
+  (tested: the request takes the CPU's time, and the log says why).
+- It needs ~1.5 GiB of the Radeon VII at rest and up to ~4.4 GiB while encoding a 1-megapixel image, so
+  [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) with a smaller model, or nothing else, can run next to it; the
+  Qwen3.8-Flash-Next configuration needs the whole Radeon VII for its experts.
+
+| 1-megapixel image (3888 patches) | Vision tower | Prompt of the request (1033 tokens) |
+|---|---|---|
+| CPU, FP32, 32 threads (before) | 5.9 s | ~7.5 s |
+| Radeon VII, FP16 | 1.1 s | 1.7 s |
+
+The embeddings differ from the CPU's FP32 ones by 1.0 % (relative norm; mean cosine similarity 0.99999, minimum 0.9995),
+the precision of FP16. The answer about a generated test image (its text and the colors and positions of two shapes)
+was correct, and the text answers of `chat_stream.py` 8/8. The peak VRAM of the RTX 3090 in the chat and image tests was 21140 MiB
+(not compared with the CPU tower's image peak of ~21630 MiB, which was measured with long prompts too).
+
 ## GPU unlock
 
 On 2026-10-31, with [gpu-unlock](../nvidia-unlock/README.md) 2.0.0 enabled (FP16/BF16 tensor-core math with FP32
@@ -307,6 +336,26 @@ the same tests as above (`--tests chat depth edit --repeat 2 --depth 6400 32000 
   t/s), equal in edits.
 - The KV cache holds 143870 instead of 146461 tokens with the same `KV_MEM`, still enough for the 139264 tokens of
   context. Text answers (8/8 in `chat_stream.py`) and image input with the vision tower on the CPU work.
+
+## Base image of 2026-11-10 (vLLM 0.33.0)
+
+On 2026-11-23, the base image was updated from HyperQwen's commit `6ab9bd0` (vLLM 0.32.0) to `3d6c954` (2026-11-10,
+the newest; HyperQwen's port to vLLM 0.33.0 and ~95 commits of fixes). [`hyperqwen-vision.patch`](hyperqwen-vision.patch)
+applies unchanged. The prepared model (`~/.cache/vllm-models/hyperqwen`) works as it is. Both images with the same
+settings, measured with the GPU unlock and the same tests as above (`--tests chat depth edit --repeat 2 --depth 6400
+32000 100000 128000 --edit-depth 0 32000`); the new image twice:
+
+| | Chat | Gen. 6.4k / 32k / 100k / 128k | Draft acceptance at depth | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 128k | Peak VRAM |
+|---|---|---|---|---|---|---|
+| `6ab9bd0` (vLLM 0.32.0) | 136.9 | 130.4 / 120.0 / 100.4 / 85.7 | 31.5 / 32.4 / 34.4 / 31.1 % | 273.9 / 270.3 | 1857 / 1603 / 1238 / 1130 | 21364 MiB |
+| `3d6c954` (vLLM 0.33.0) | 137.8 | 117.0 / 115.4 / 88.6 / 77.6 | 27.0 / 30.2 / 28.6 / 28.2 % | 269.6 / 269.6 | 1850 / 1611 / 1238 / 1133 | 21430 MiB |
+| `3d6c954`, again | 137.9 | 117.2 / 115.8 / 89.6 / 78.8 | the same | 275.3 / 270.8 | 1858 / 1646 / 1254 / 1129 | 21428 MiB |
+
+- **The engine is as fast:** the generation at depth is lower only because the seeded sampling generated other text,
+  whose drafts were accepted less often (the same in both runs of the new image). Per verify step (generation /
+  (1 + 7 x acceptance)), the old image made 40.7 / 36.7 / 29.5 / 27.0 steps per second at 6.4k / 32k / 100k / 128k,
+  the new one 40.5 / 37.1 / 29.5 / 26.1. Chats, edits, prompt processing, the KV cache (143870 tokens for the same
+  `KV_MEM`) and the VRAM are the same.
 
 ## Terminal-RSI-27B
 
