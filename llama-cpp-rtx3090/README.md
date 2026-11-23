@@ -716,9 +716,19 @@ prompt at 973 t/s and an image of 1280x960 in 7.0 s (vision encoder on the CPU).
   **Greedy and probabilistic drafting** (`spec-draft-sampling`) performed the same.
 - **VRAM:** the draft (2.3 GiB), its KV cache (17 KiB per token in q8_0, on top of the target's 34 KiB) and the
   snapshots of both models (~1.2 GiB for 6 drafts) leave 40960 tokens of context instead of 100352 with MTP.
-- **MTP on b12627** generated 59.0 t/s in chat and 55.5 / 52.1 t/s at 6.4k / 16k tokens (one run, without the vision
-  encoder), vs 50.4 and 52.8 / 47.4 t/s with b12242 in the [results of the default preset](#unsloth-dynamic-31). The
-  default preset may gain from an update to b12627; not checked with the full benchmark yet.
+- **MTP on b12627 vs b12242** (the default preset unchanged, with the vision encoder on the GPU, two rounds in
+  alternating order on 2026-11-23; generation in t/s, prompt processing in parentheses):
+
+  | Build | Chat | Depth 6.4k | 16k | 36.5k | 60k | 98k | Edit | Full prompt (98850) | Peak VRAM |
+  |---|---|---|---|---|---|---|---|---|---|
+  | b12242, round 1 | 51.3 | 53.4 (1240) | 47.9 (1219) | 40.5 (1092) | 33.5 (993) | 27.5 (917) | 69.7 | 883 | 21660 MiB |
+  | b12627, round 1 | 54.9 | 56.7 (1311) | 50.9 (1301) | 40.8 (1197) | 35.9 (1069) | 30.5 (909) | 74.5 | 931 | 21654 MiB |
+  | b12627, round 2 | 59.6 | 57.6 (1290) | | 44.5 (1206) | | | 77.0 | | |
+  | b12242, round 2 | 58.3 | 58.1 (1309) | | 46.9 (1220) | | | 73.8 | | |
+
+  The two builds are within the run-to-run variation (the second run of each round was faster), except perhaps
+  code edits (+4-7 % in both rounds), so the default preset stays on the pinned b12242. (A single earlier run of
+  b12627, 59.0 t/s in chat, had suggested a larger gain against the older results of the preset.)
 
 ### Draft model on the CPU or the Radeon VII
 
