@@ -208,6 +208,13 @@ What has given the largest gains, roughly in order:
   RTX 3070 for +10k tokens of KV at -3 % prompt processing; prefill chunks of 4096 did not fit in 8 GB even then;
   `expandable_segments` had no effect). Decoding is bound by the CPU memory bandwidth; 1.6x stock UVA. The offline
   `cpu_moe_bench` reproduces the server within 7 %.
+- **A second GPU for the cold experts** (flash-next, 2026-11-23): a worker in a ROCm container keeps 135 experts per
+  layer in the Radeon VII's 16 GB and computes them on request of the CPU pool over `/dev/shm`
+  (`rvii-moe.patch`, `rvii_experts/`, `QWEN38_RVII=1`; ~70 µs per layer, run in parallel with the CPU's ~1 ms):
+  +32 % chat, +64-69 % with context, +14 % edits. It only paid off with `QWEN38_GPU_SHARE_FRAC=0` (the GPU share took
+  the Radeon VII's experts first) and with the experts ranked by their **measured** decode use
+  (`QWEN38_EXPERT_USAGE`; the runtime's static ranking put only 11.8 % of the routed experts on the GPU's 24 hot
+  ones, the measured one 24.8 %). Two GPUs of different vendors cooperate through a host-memory protocol, not NCCL.
 - **Embedding model in RAM** (rtx-a4000): `offload-backend: prefetch`, `offload-group-size: 1`,
   `offload-num-in-group: 1`, `offload-prefetch-step: 2` (step 1/2/3: 5895/7153/7560 t/s).
 
@@ -217,6 +224,10 @@ What has given the largest gains, roughly in order:
   `GEMMA4_VISION_DEVICE=cpu`, `*_VISION_THREADS`): no VRAM for the tower, unchanged text speed, ~1000 tokens and
   7-15 s per image; an encode blocks the other requests. On gfx906, route the CPU math through oneDNN
   ([`../vllm-radeon-vii/cpu_onednn.py`](../vllm-radeon-vii/cpu_onednn.py), 100x faster).
+- **Vision tower on a second GPU** (hyperqwen, 2026-11-23): `QWEN38_VISION_DEVICE=rvii` sends the normalized pixels
+  to a service on the Radeon VII (FP16, `rvii_vision/server.py`, Unix socket), with the CPU as fallback: 1.1 instead
+  of 5.9 s for a 1-megapixel image, no VRAM of the main GPU. On gfx906, compute Qwen3-VL's patch embedding (a
+  `Conv3d` with kernel = stride) as a GEMM: MIOpen's naive `Conv3d` kernel took 2.0 of 3.1 s.
 - Limits: `limit-mm-per-prompt: {"image": 64, "video": 1}`,
   `mm-processor-kwargs: {"max_pixels": 1048576, "videos_kwargs": {"max_pixels": 12582912}}`,
   `media-io-kwargs: {"video": {"max_frames": 64}}`, `VLLM_VIDEO_LOADER_BACKEND=qwen3_vl`, `skip-mm-profiling: true`.

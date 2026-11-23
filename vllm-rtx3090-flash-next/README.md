@@ -137,6 +137,9 @@ use on the RTX 3090 (the cold ones are streamed in every prefill chunk).
   int8 mode ~1e-2). The retrieval questions of the usage collection were answered 42/44 at 8k tokens (as before).
 - The worker needs the whole Radeon VII, so [`../llama-cpp-radeon-vii`](../llama-cpp-radeon-vii) has to be stopped.
   Without the worker, the CPU computes all cold experts as before (but with the GPU share off).
+- **28 instead of 24 hot experts** on the RTX 3090 (the Radeon VII then takes ranks 28-162): chat 46.0, 56.7 / 55.6 t/s
+  at 6.4k / 32k, edits 58.6 t/s, i.e. the same within the noise except perhaps chats, for ~1 GiB more VRAM (peak
+  21264 MiB). Not used.
 - Not done: the Radeon VII's power profile (`high`) might shorten the worker's ~70 µs by ~15 % (it needs root and makes
   no difference to the CPU-bound step); a dynamic selection of the Radeon VII's experts (they are loaded once).
 
