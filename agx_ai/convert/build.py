@@ -28,11 +28,18 @@ def pandoc_langs() -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+# The engine message about infinitely shrinkable glue when a longtable page box is split for
+# mark handling; LaTeX ignores it and the PDF is correct (latex2e issue #1907, fixed upstream
+# for the 2026-Q2 LaTeX release and the TeX Live 2026 engines).
+IGNORABLE_LATEX_MESSAGES = ["Infinite glue shrinkage found in box being split"]
+
+
 def latex_errors(log: Path) -> list[str]:
-    """Extract the error lines from a LaTeX log."""
+    """Extract the error lines from a LaTeX log, excluding the ones LaTeX itself ignores."""
     errors = [
         line for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.startswith("!") or re.match(r"^\./doc\.tex:\d+: ", line)
+        if (line.startswith("!") or re.match(r"^\./doc\.tex:\d+: ", line))
+        and not any(msg in line for msg in IGNORABLE_LATEX_MESSAGES)
     ]
     return list(dict.fromkeys(errors))
 

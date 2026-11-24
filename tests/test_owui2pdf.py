@@ -623,7 +623,9 @@ def test_main_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_latex_errors(tmp_path: Path) -> None:
     log = tmp_path / "doc.log"
     log.write_text("ok\n! Undefined control sequence.\n./doc.tex:12: Missing $ inserted.\n"
-                   "! Undefined control sequence.\n", encoding="utf-8")
+                   "! Undefined control sequence.\n"
+                   "./doc.tex:248: Infinite glue shrinkage found in box being split [1\n"
+                   "! Infinite glue shrinkage found in box being split.\n", encoding="utf-8")
     assert build.latex_errors(log) == ["! Undefined control sequence.", "./doc.tex:12: Missing $ inserted."]
 
 
