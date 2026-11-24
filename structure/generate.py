@@ -442,7 +442,7 @@ def build(specs: bool) -> str:
                 # processing with the GPU unlock (2026-10-31), generation from 2026-10-26 (the unlock did not change
                 # it); Terminal-RSI-27B: the final DFlash2 configuration of 2026-11-11
                 [(vllm, "Qwen3.8-27B", "128", "1713"), (vllm, "Terminal-RSI-27B", "133", "1830"),
-                 (vllm, "Qwen3.8-Flash-Next", "62", "1939"),
+                 (vllm, "Qwen3.8-Flash-Next", "66", "2010"),
                  (llama, "Gemma 4 31B QAT", "77", "1060"), pub("Radeon VII (16 GB)"),
                  (llama, gemma_moe, "142", "1280")], ["kubuntu.svg"],
                 [(vllm, "vLLM", "CUDA, RTX 3090"), (llama, "llama.cpp", "ROCm, Radeon VII")]),

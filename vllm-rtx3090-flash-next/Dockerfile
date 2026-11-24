@@ -4,7 +4,8 @@
 # sets gpu-memory-utilization (flash-next.patch), and the CPU expert kernel has integer activation modes and less
 # per-layer overhead (cpu-moe.patch), and can hand some of the cold experts to a Radeon VII worker (rvii-moe.patch,
 # rvii_experts/), and has a faster int8 kernel and a prefetch of the next layer's likely experts (cpu-moe-opt.patch);
-# the sampler filters MTP's 4 rows with vLLM's Triton top-k/top-p (flash-next.patch). See README.md.
+# the sampler filters MTP's 4 rows with vLLM's Triton top-k/top-p and the lm_head can be int8 (flash-next.patch).
+# See README.md.
 FROM ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
 
 COPY cpu_vision.py /usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/cpu_vision.py

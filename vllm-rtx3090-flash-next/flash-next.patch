@@ -109,3 +109,240 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/v1/sample/ops/topk_topp_s
          return apply_top_k_top_p_triton(logits, k, p)
  
      # Use pytorch sort implementation for small batch sizes.
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/draft_vocab.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/draft_vocab.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/draft_vocab.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/draft_vocab.py
+@@ -31,7 +31,7 @@
+ 
+ 
+ def local_top_pair(hidden_states, weight, shard_start, shard_end, ranges,
+-                   *, scale=1.0, soft_cap=None):
++                   *, scale=1.0, soft_cap=None, wscale=None):
+     """Return (logit, global token ID) per row; exclude shard padding."""
+     if scale <= 0:
+         raise ValueError("greedy draft reduction requires a positive scale")
+@@ -42,7 +42,10 @@
+             continue
+         # A view, never index_select/contiguous: no duplicate head allocation.
+         selected_weight = weight[start - shard_start:end - shard_start]
+-        if (hidden_states.shape[0] <= 8 and hidden_states.dtype == torch.bfloat16
++        if wscale is not None:  # agx-ai: int8 lm_head (QWEN38_INT8_SKINNY)
++            from .triton_skinny import linear_i8
++            logits = linear_i8(hidden_states, selected_weight, wscale[start - shard_start:end - shard_start])
++        elif (hidden_states.shape[0] <= 8 and hidden_states.dtype == torch.bfloat16
+                 and selected_weight.is_contiguous() and hidden_states.is_contiguous()):
+             from .triton_skinny import skinny_mm
+             logits = skinny_mm(hidden_states, selected_weight)
+@@ -89,6 +92,7 @@
+         hidden_states, lm_head.weight, shard.org_vocab_start_index,
+         min(shard.org_vocab_end_index, processor.org_vocab_size), ranges,
+         scale=processor.scale, soft_cap=processor.soft_cap,
++        wscale=getattr(lm_head.weight, "qscale", None),
+     )
+     if lm_head.tp_size > 1:
+         pair = all_gather(pair, dim=-1)
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/low_latency_gemm.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/low_latency_gemm.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/low_latency_gemm.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/low_latency_gemm.py
+@@ -101,6 +101,38 @@
+     )
+ 
+ 
++import os as _os
++# agx-ai: QWEN38_INT8_SKINNY=1 stores the weights of the skinny-GEMM modules whose names contain one of
++# QWEN38_INT8_SKINNY_MODULES (comma-separated, default "lm_head") in int8 with one scale per row and 128 inputs.
++# Only the heads gain: in CUDA graphs on the RTX 3090, the lm_head takes 791 instead of 1483 us per decode step and
++# each of MTP's 3 drafts 211 instead of 399 us (its reduced vocabulary is a view of the same weight), while the small
++# projections of the layers are bound by latency, not by their weight reads, and were not faster (some slower).
++_INT8_SKINNY = _os.environ.get("QWEN38_INT8_SKINNY", "0") == "1"
++_INT8_MODULES = [p for p in _os.environ.get("QWEN38_INT8_SKINNY_MODULES", "lm_head").split(",") if p]
++
++
++def _quantize_layer_i8(layer: nn.Module) -> None:
++    """agx-ai: replace the BF16 weight of a skinny-GEMM module by int8 with one scale per row and 128 inputs (the
++    attribute `qscale` of the new parameter), which apply() and the reduced draft head (draft_vocab.py) use."""
++    weight = getattr(layer, "weight", None)
++    if weight is None or weight.dtype != torch.bfloat16 or not weight.is_cuda or weight.dim() != 2:
++        return
++    name = getattr(layer, "_qwen38_name", "") or getattr(layer, "prefix", "")
++    if not any(p in name for p in _INT8_MODULES):
++        return
++    from .triton_skinny import quantize_rows_i8
++    q, scale = quantize_rows_i8(weight.data)
++    param = nn.Parameter(q, requires_grad=False)
++    param.qscale = scale
++    for attr in ("weight_loader", "output_dim", "input_dim"):
++        if hasattr(weight, attr):
++            setattr(param, attr, getattr(weight, attr))
++    del layer.weight
++    layer.weight = param
++    del weight
++    torch.cuda.empty_cache()
++
++
+ class _Qwen38NextLowLatencyApply:
+     def apply(
+         self,
+@@ -108,10 +140,19 @@
+         x: torch.Tensor,
+         bias: torch.Tensor | None = None,
+     ) -> torch.Tensor:
++        scale = getattr(layer.weight, "qscale", None)
++        if scale is not None:
++            out = torch.ops.vllm.qwen3_8_flash_next_low_latency_gemm_i8(x, layer.weight, scale)
++            return out if bias is None else out + bias
+         if bias is None and not envs.VLLM_BATCH_INVARIANT:
+             return torch.ops.vllm.qwen3_8_flash_next_low_latency_gemm(x, layer.weight)
+         return super().apply(layer, x, bias)  # type: ignore[misc]
+ 
++    def process_weights_after_loading(self, layer: nn.Module) -> None:
++        super().process_weights_after_loading(layer)  # type: ignore[misc]
++        if _INT8_SKINNY:
++            _quantize_layer_i8(layer)
++
+ 
+ class Qwen38NextLowLatencyLinearMethod(
+     _Qwen38NextLowLatencyApply, UnquantizedLinearMethod
+@@ -159,6 +200,24 @@
+ )
+ 
+ 
++def _qwen38next_low_latency_gemm_i8(x: torch.Tensor, weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
++    from .triton_skinny import linear_i8
++    return linear_i8(x, weight, scale)
++
++
++def _qwen38next_low_latency_gemm_i8_fake(
++    x: torch.Tensor, weight: torch.Tensor, scale: torch.Tensor
++) -> torch.Tensor:
++    return x.new_empty((*x.shape[:-1], weight.shape[0]))
++
++
++direct_register_custom_op(
++    op_name="qwen3_8_flash_next_low_latency_gemm_i8",
++    op_func=_qwen38next_low_latency_gemm_i8,
++    fake_impl=_qwen38next_low_latency_gemm_i8_fake,
++)
++
++
+ def enable_qwen38next_low_latency_gemm(
+     module: nn.Module,
+     dtype: torch.dtype,
+@@ -179,10 +238,12 @@
+                 continue
+             child.quant_method = (Qwen38NextLowLatencyLinearMethod() if is_linear
+                                   else Qwen38NextLowLatencyEmbeddingMethod())
++            child._qwen38_name = next((n for n, m in module.named_modules() if m is child), "")
+             shapes.append(tuple(weight.shape))
+         from collections import Counter
+-        log.warning("Triton skinny GEMM enabled for %d modules: %s", len(shapes),
+-                    sorted(Counter(shapes).items()))
++        log.warning("Triton skinny GEMM enabled for %d modules: %s%s", len(shapes),
++                    sorted(Counter(shapes).items()),
++                    " (int8 weights after loading, QWEN38_INT8_SKINNY=1)" if _INT8_SKINNY else "")
+         return
+     if dtype != torch.bfloat16 or not _is_sm103():
+         return
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/triton_skinny.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/triton_skinny.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/triton_skinny.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/triton_skinny.py
+@@ -106,3 +106,99 @@
+         _reduce_kernel[(triton.cdiv(n, 128),)](part, out, m, n, out.stride(0), BLOCK_M=16,
+                                                 BLOCK_N=128, SPLIT_K=split, num_warps=4)
+     return out
++
++
++# agx-ai: int8 weights with one FP32 scale per output row and group of GROUP_K (128) inputs (QWEN38_INT8_SKINNY=1,
++# low_latency_gemm.py). The lm_head is bound by its weight reads, and int8 halves them; int8 -> BF16 is exact, and
++# each group's scale is applied to the group's FP32 dot product (per-row scales alone: KL divergence 1.5 times the
++# noise floor in the retrieval test).
++GROUP_K = 128
++@triton.jit
++def _skinny_dot_i8_kernel(x_ptr, w_ptr, s_ptr, out_ptr, part_ptr, M, N, K,
++                          stride_xm, stride_wn, stride_om, stride_sn,
++                          K_PER_SPLIT: tl.constexpr, BLOCK_N: tl.constexpr,
++                          BLOCK_K: tl.constexpr, SPLIT_K: tl.constexpr, STAGES: tl.constexpr):
++    pid_n = tl.program_id(0)
++    pid_k = tl.program_id(1)
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_m = tl.arange(0, 16)
++    n_mask = offs_n < N
++    m_mask = offs_m < M
++    acc = tl.zeros((16, BLOCK_N), dtype=tl.float32)
++    k_start = pid_k * K_PER_SPLIT
++    for k0 in tl.range(0, K_PER_SPLIT, BLOCK_K, num_stages=STAGES):
++        offs_k = k_start + k0 + tl.arange(0, BLOCK_K)
++        k_mask = offs_k < K
++        w = tl.load(w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :],
++                    mask=n_mask[:, None] & k_mask[None, :], other=0,
++                    eviction_policy='evict_first').to(tl.bfloat16)
++        x = tl.load(x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :],
++                    mask=m_mask[:, None] & k_mask[None, :], other=0.0)
++        # One FP32 scale per row and group of BLOCK_K inputs, applied to the group's FP32 dot product.
++        scale = tl.load(s_ptr + offs_n * stride_sn + (k_start + k0) // BLOCK_K, mask=n_mask, other=0.0)
++        acc += tl.dot(x, tl.trans(w)) * scale[None, :]
++    if SPLIT_K == 1:
++        tl.store(out_ptr + offs_m[:, None] * stride_om + offs_n[None, :],
++                 acc.to(out_ptr.dtype.element_ty), mask=m_mask[:, None] & n_mask[None, :])
++    else:
++        base = part_ptr + pid_k * (16 * N)
++        tl.store(base + offs_m[:, None] * N + offs_n[None, :], acc,
++                 mask=m_mask[:, None] & n_mask[None, :])
++
++
++def skinny_mm_i8(x, w, scale):
++    """x [M <= 8, K] BF16, w [N, K] int8, scale [N, K / GROUP_K] FP32 -> [M, N] BF16."""
++    m, k = x.shape
++    n = w.shape[0]
++    bn, _, split, stages = config_for(n, k)
++    bk = GROUP_K
++    assert k % GROUP_K == 0 and scale.shape == (n, k // GROUP_K)
++    out = torch.empty((m, n), dtype=x.dtype, device=x.device)
++    k_per_split = triton.cdiv(triton.cdiv(k, split), bk) * bk
++    part = out
++    if split > 1:
++        key = (x.device, split * 16 * n)
++        part = _workspace.get(key)
++        if part is None:
++            part = torch.empty(split * 16 * n, dtype=torch.float32, device=x.device)
++            _workspace[key] = part
++    _skinny_dot_i8_kernel[(triton.cdiv(n, bn), split)](
++        x, w, scale, out, part, m, n, k, x.stride(0), w.stride(0), out.stride(0), scale.stride(0),
++        K_PER_SPLIT=k_per_split, BLOCK_N=bn, BLOCK_K=bk, SPLIT_K=split,
++        STAGES=stages, num_warps=4)
++    if split > 1:
++        _reduce_kernel[(triton.cdiv(n, 128),)](part, out, m, n, out.stride(0), BLOCK_M=16,
++                                                BLOCK_N=128, SPLIT_K=split, num_warps=4)
++    return out
++
++
++def linear_i8(x, w, scale, chunk_rows=32768):
++    """F.linear with an int8 weight and per-row scales: the skinny kernel for up to 8 rows, else the weight
++    dequantized in chunks of rows (the lm_head would be 1.27 GB in BF16)."""
++    lead = x.shape[:-1]
++    x2 = x.reshape(-1, x.shape[-1])
++    if x2.shape[0] <= MAX_M and x2.dtype == torch.bfloat16 and x2.is_contiguous():
++        return skinny_mm_i8(x2, w, scale).reshape(*lead, w.shape[0])
++    parts = []
++    for r0 in range(0, w.shape[0], chunk_rows):
++        wc = w[r0:r0 + chunk_rows]
++        sc = scale[r0:r0 + chunk_rows]
++        wd = (wc.view(wc.shape[0], -1, GROUP_K).float() * sc[:, :, None]).reshape(wc.shape).to(x2.dtype)
++        parts.append(torch.nn.functional.linear(x2, wd))
++    out = parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
++    return out.reshape(*lead, w.shape[0])
++
++
++def quantize_rows_i8(w, chunk_rows=16384):
++    """Symmetric int8 per output row and group of GROUP_K inputs: (int8 [N, K], FP32 scale [N, K / GROUP_K]), in
++    chunks of rows to bound the temporaries."""
++    n, k = w.shape
++    assert k % GROUP_K == 0
++    q = torch.empty(w.shape, dtype=torch.int8, device=w.device)
++    s = torch.empty((n, k // GROUP_K), dtype=torch.float32, device=w.device)
++    for r0 in range(0, n, chunk_rows):
++        wf = w[r0:r0 + chunk_rows].float().view(-1, k // GROUP_K, GROUP_K)
++        sc = wf.abs().amax(dim=2).clamp(min=1e-30) / 127.0
++        q[r0:r0 + chunk_rows] = torch.round(wf / sc[:, :, None]).clamp(-127, 127).to(torch.int8).view(-1, k)
++        s[r0:r0 + chunk_rows] = sc
++    return q, s

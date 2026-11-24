@@ -53,7 +53,10 @@ input and a faster CPU expert kernel:
     unquantized LM head"); the RTX 3070 runs without MTP and was not affected,
   - and (2026-11-24) vLLM filters the top-k/top-p of 2-7 rows of logits with its Triton kernel instead of a full
     sort of the vocabulary: the rejection sampler of MTP 3 does it for 4 rows of 248320 logits in every decode step
-    (919 instead of 248 µs; the step's tail on the GPU 4.8 instead of 5.4 ms). See
+    (919 instead of 248 µs; the step's tail on the GPU 4.8 instead of 5.4 ms),
+  - and (2026-11-24) with `QWEN38_INT8_SKINNY=1`, the lm_head is converted to int8 after loading (one scale per row
+    and 128 inputs, `QWEN38_INT8_SKINNY_MODULES`, default `lm_head`), with an int8 variant of the runtime's skinny
+    Triton GEMM for it and for MTP's reduced draft head, which is a view of it. See
     [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24).
 - [`cpu-moe-opt.patch`](cpu-moe-opt.patch) (2026-11-24, after `rvii-moe.patch`): a faster int8 kernel, a prefetch of
   the next layer's likely experts into the L3 cache (`QWEN38_CPU_EXPERTS_PREFETCH`), the kernel compiled with
@@ -199,6 +202,13 @@ delivers. Changes ([`cpu-moe-opt.patch`](cpu-moe-opt.patch), [`flash-next.patch`
   `prefetcht0/t2/nta` bring in are not kept in the L3 when the L2 evicts them (a 2.4 MB read afterwards ran at
   ~30 GB/s, as from RAM, and at ~114 GB/s after plain loads), and the first version with prefetch instructions saved
   nothing. A new request stops the prefetch (checked every 4 KB). 2 or 3 per thread did not fit in the ~0.2 ms gap.
+- **Loader threads** (`QWEN38_CPU_EXPERTS_LOADER_CPUS`, one per pool thread, on core 2 of each CCX): when a pool
+  thread starts an expert, its loader reads the expert's weights in the kernel's order with plain loads, ahead of it,
+  into the CCX's L3, so that the pool thread's loads hit the cache; a new expert interrupts the loader. The kernel's
+  loop reaches ~61 GB/s with 8 threads, plain loads 71 GB/s with the same access pattern, so this recovers part of
+  the difference: -5 % CPU time per step in the replay (63.6 instead of 60.5 GB/s), on the SMT siblings of the pool
+  threads (which the runtime keeps idle) only -1 %. The serving processes move to cores 0 and 3 of each CCX
+  (`QWEN38_MAIN_CPUS`), 16 cores with SMT.
 - **The int8 GEMV:** the products of an activation group (4 packed rows) are summed in int16 (each `vpmaddubsw` lane is
   at most 2 * 15 * 127 = 3810, so 8 fit exactly) and widened once, and 8 instead of 16 columns at a time keep the sums
   of 4 tokens in registers; an empty `asm` barrier keeps GCC from hoisting all 32 products of the 4 rows and spilling
@@ -206,6 +216,27 @@ delivers. Changes ([`cpu-moe-opt.patch`](cpu-moe-opt.patch), [`flash-next.patch`
   bit-exact (the integer sums are the same).
 - **`-mtune=znver2`** for the kernel (1.5-3 % in the offline benchmark, the same as `-march=znver2`, which would make the
   image require a Zen 2-compatible CPU). GCC 15 and clang 21 were not faster than the image's GCC 13.
+- **An int8 lm_head** (`QWEN38_INT8_SKINNY=1`, `flash-next.patch`): the BF16 lm_head (248320 x 2560, 1.27 GB) is
+  read in every decode step by the target and, as the reduced draft vocabulary (65812 rows), by each of MTP's 3
+  drafts. After loading, it is converted to int8 with one FP32 scale per row and 128 inputs (0.64 GB), and an int8
+  variant of the runtime's skinny Triton GEMM reads it (int8 -> BF16 is exact; each group's scale multiplies its
+  FP32 dot product). In CUDA graphs: 791 instead of 1483 µs for the lm_head, 211 instead of 399 µs per draft, i.e.
+  -1.3 ms per step, and 0.6 GiB less VRAM. MTP's drafter requires an "unquantized" lm_head, which the int8 one
+  still is for it (the same method class; the draft head reads the same scales). The other BF16 projections of the
+  runtime's skinny GEMM (shared experts, hyper-connections, 437 modules in all) were not faster in int8: they are
+  small (3-7 MB) and bound by latency, not by their weight reads. Quality (the retrieval test without MTP, 88
+  questions at 8k and 32k tokens, against the BF16 lm_head):
+
+  | Run | Correct | Same answers | Mean KL divergence | 99 % | First token | Top-token flips |
+  |---|---|---|---|---|---|---|
+  | BF16 lm_head (reference) | 84/88 | | | | | |
+  | BF16 lm_head again (noise floor) | 83/88 | 86/88 | 0.00145 | 0.058 | 0.0081 | 2 of 573 |
+  | int8, one scale per row | 82/88 | 84/88 | 0.00214 | 0.064 | 0.0126 | 4 of 564 |
+  | **int8, one scale per row and 128 inputs (current)** | 80/88 | 84/88 | 0.00164 | 0.049 | 0.0080 | 4 of 567 |
+
+  With one scale per row, the divergence was 1.5 times the noise floor; with group scales it is at the noise floor
+  (the two-step lookups, which chain two greedy answers, differ by a few in every run). `QWEN38_INT8_SKINNY=0`
+  restores the BF16 lm_head.
 - **The sampler** (`flash-next.patch`): vLLM's rejection sampler applies top-k 20 / top-p 0.95 (the model's
   generation config) to the 4 rows of the target's logits with a full sort of the 248320 tokens and a cumulative sum,
   as vLLM uses its Triton top-k/top-p kernel only from 8 rows on: 919 µs per step, with the Triton kernel 248 µs and
@@ -221,24 +252,30 @@ generation in t/s; the decode statistics of the edit test):
 | Before (2026-11-23) | 43.2 | 56.2 | 56.6 | 60.3 | |
 | New GEMV, `-mtune=znver2`, prefetch | 48.7 | 59.8 | 59.5 | 63.7 | 43.2-44.9 / 13.3-13.6 / 5.4 |
 | The same, again | 47.9 | 59.1 | 57.1 | 63.9 | 43.3-44.4 / 13.1-13.3 / 5.4 |
-| **And the Triton top-k/top-p (current)** | 49.7 | 59.3 | 64.3 | 64.9 | 42.8-44.1 / 13.2-13.3 / 4.8 |
+| And the Triton top-k/top-p | 49.7 | 59.3 | 64.3 | 64.9 | 42.8-44.1 / 13.2-13.3 / 4.8 |
+| The same, with the serving processes on cores 0 and 3 of each CCX (control) | 48.2 | 59.5 | 60.2 | 64.8 | 43.6-44.6 / 13.3-13.4 / 4.8 |
+| And loader threads on core 2 of each CCX | 50.7 | 61.9 | 63.6 | 66.4 | |
+| **And the int8 lm_head (current; from the full benchmark below)** | 52.8 | 65.5 | 65.4 | 68.2 | 41.3-42.3 / 13.5-14.4 / 3.6 |
 
 The trace of the first run with the prefetch: CPU 28.8 instead of 32.0 ms per step (-10 %) for the same ~630 CPU
 experts.
 The current configuration with the full benchmark (`--tests chat depth edit prompt --repeat 2 --depth 6400 32000
 100000 --edit-depth 0 32000 --prompt-tokens 260000`), against the full benchmark of 2026-11-23 (see above):
 
-| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 260k | Peak VRAM |
-|---|---|---|---|---|---|
-| 2026-11-23 | 42.7 | 55.8 / 55.2 / 52.4 | 59.5 / 59.2 | 1904 / 2347 / 2106 / 2368 | 20236 MiB |
-| **2026-11-24** | **47.8** | **62.2 / 59.3 / 62.9** | **64.9 / 65.1** | 1939 / 2272 / 2231 / 2366 | 20236 MiB |
-| Change | +12 % | +11 / +7 / +20 % | +9 / +10 % | within the noise | |
+| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 260k | Image 1280x960 | Peak VRAM |
+|---|---|---|---|---|---|---|
+| 2026-11-23 | 42.7 | 55.8 / 55.2 / 52.4 | 59.5 / 59.2 | 1904 / 2347 / 2106 / 2368 | 8.2 s | 20236 MiB |
+| 2026-11-24: GEMV, prefetch, sampler | 47.8 | 62.2 / 59.3 / 62.9 | 64.9 / 65.1 | 1939 / 2272 / 2231 / 2366 | | 20236 MiB |
+| **2026-11-24: and loader threads, int8 lm_head (current)** | **52.8** | **65.5 / 65.4 / 67.3** | **68.2 / 68.2** | 2010 / 2352 / 2188 / 2366 | 8.2 s | 19598 MiB |
+| Change | +24 % | +17 / +18 / +28 % | +15 % | within the noise | the same | -638 MiB |
 
 The chat and depth tests vary with the draft acceptance (36-45 % in these runs); the edit test (98 % acceptance) is the
-most stable: +8-10 %. Prefill does not use the changed code paths. No quality test was needed: the kernel's output is
-the same (6.7e-8 relative difference to the old kernel in the offline benchmark, as between two runs of the old one,
-whose threads sum in varying order), the prefetch changes only when the weights are read, and the sampler keeps the
-same tokens.
+most stable: +15 %. Per decode step (the edit test's statistics): CPU 41-42 ms (2026-11-23: 46-59 ms in the same
+tests), the GPU's tail 3.6 instead of 5.4 ms. Prefill does not use the changed code paths, and the image (vision tower on the serving
+processes' CPUs, now 16 cores with SMT instead of 24) took as long as before. The changes of the CPU kernel need no
+quality test: its output is the same (6.7e-8 relative difference to the old kernel in the offline benchmark, as
+between two runs of the old one, whose threads sum in varying order), the prefetch and the loaders change only when
+the weights are read, and the sampler keeps the same tokens; the int8 lm_head was tested (above).
 
 Tried, not better (offline benchmark unless noted):
 
@@ -259,12 +296,10 @@ Tried, not better (offline benchmark unless noted):
 
 Not done:
 
-- **An int8 lm_head** (-0.7 ms per step, ~1.5 %, and ~0.3 GB of VRAM): the MTP drafter builds its reduced draft
-  vocabulary from the target's lm_head, which the runtime requires to be unquantized, so it would need a separate
-  BF16 copy of the draft rows and a quality test. The draft head (3 x 0.38 ms) likewise.
-- **Loader threads**: a second core of each CCX that reads the next experts with plain loads (which reach the RAM's
-  71 GB/s) into the shared L3 while the pool thread computes from the cache, for the ~15 % that the kernel's loop
-  leaves. It would take 8 more cores from the serving processes.
+- **A GPU share of the CPU's experts:** the RTX 3090 waits ~0.5 ms per layer for the CPU, and its PCIe share
+  (`QWEN38_GPU_SHARE_FRAC`) could compute some cold experts meanwhile if its selection skipped the Radeon VII's
+  experts (it takes the first cold ones in routing order). But it reads them from the same RAM, which the CPU's pool
+  now reads at ~63 of 71 GB/s, and without the Radeon VII, shares of 0.15-0.45 made no difference.
 
 ### Ideas outside the containers (for review)
 

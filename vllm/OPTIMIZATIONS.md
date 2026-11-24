@@ -130,6 +130,12 @@ What has given the largest gains, roughly in order:
   tokens.
 - **Fine-tunes published without their MTP head:** [`graft_mtp.py`](graft_mtp.py) copies the base model's MTP tensors
   into a checkpoint directory of symlinks (Phai-A1-35B-1M: 43-65 % acceptance with 3 drafts, 99 % in code edits).
+- **An int8 lm_head converted at load time** (flash-next, 2026-11-24, `QWEN38_INT8_SKINNY=1`): when the drafter
+  needs the target's lm_head unquantized (Flash-Next's reduced MTP draft vocabulary is a view of it), keep its
+  method class and convert only the weight after loading, with an int8 kernel for both uses: 0.64 instead of 1.27 GB
+  read per use, -1.3 ms per decode step with MTP 3 (the head and 3 drafts). One scale per row: KL divergence 1.5
+  times the noise floor; one per row and 128 inputs: at the noise floor. The smaller BF16 projections (3-7 MB) were
+  not faster in int8 (latency-bound at 4 tokens).
 
 ## CUDA graphs and compilation
 
@@ -240,6 +246,9 @@ What has given the largest gains, roughly in order:
     barrier so that GCC does not hoist all products and spill them): 4-token experts 7.0 -> 9.0 GB/s per core,
     -5.5 % CPU time; bit-exact. `-mtune=znver2` (portable, unlike `-march=znver2`, which gave the same) another
     ~2 %; clang 21 and GCC 15 were not faster than the image's GCC 13.
+  - **Loader threads:** a second core per CCX (`QWEN38_CPU_EXPERTS_LOADER_CPUS`) reads the expert that its pool
+    thread is computing with plain loads, ahead of it, into the shared L3: -5 % CPU time, +2.5-6 % t/s, as the
+    kernel's loop alone reaches ~61 of the 71 GB/s that plain loads get. On the pool cores' SMT siblings only -1 %.
   - Not better: column slices of an expert for load balance (strided rows halve the RAM bandwidth with 8 threads,
     as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
     distances, 12-16 threads. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same

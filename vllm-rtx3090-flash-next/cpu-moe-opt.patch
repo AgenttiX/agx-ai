@@ -13,7 +13,15 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
 diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
 --- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
 +++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
-@@ -289,36 +289,38 @@
+@@ -13,6 +13,7 @@
+ #include <cstdint>
+ #include <cstdio>
+ #include <cstring>
++#include <string>
+ #include <functional>
+ #include <thread>
+ #include <pthread.h>
+@@ -289,36 +290,38 @@
          xo[r][t] = _mm256_set1_epi32(o);
        }
      const uint16_t* srow = sc + static_cast<size_t>(g) * N + n0;
@@ -75,7 +83,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
      }
    }
    for (int t = 0; t < T; ++t) std::memcpy(y + static_cast<size_t>(t) * ldy, tot[t], sizeof(float) * W);
-@@ -365,33 +367,79 @@
+@@ -365,33 +368,79 @@
    int size() const { return n_; }
    // Run fn(item) for item in [0, count) on all threads; returns when done.
    template <class F>
@@ -157,7 +165,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
          if (++spins < kSpin) { _mm_pause(); continue; }
          epoch_.wait(seen, std::memory_order_acquire);  // idle: sleep instead of burning a core
        }
-@@ -409,6 +457,11 @@
+@@ -409,6 +458,11 @@
    alignas(64) std::atomic<bool> stop_{false};
    int count_ = 0;
    std::function<void(int, int)> fn_;
@@ -169,7 +177,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  };
  
  Pool* g_pool = nullptr;
-@@ -434,6 +487,20 @@
+@@ -434,6 +488,112 @@
  
  // Raw-pointer core: out[T][H] = sum over non-skipped (t, k) of w[t,k] * expert(ids[t,k], x[t]).
  struct Job { int e, n; int tok[MAXT]; float wt[MAXT]; };
@@ -186,11 +194,103 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
 +  int8_t* operator[](int l) { return w[l]; }
 +};
 +PfOwner g_pf_owner;
++// agx-ai: loader threads (QWEN38_CPU_EXPERTS_LOADER_CPUS: one CPU per pool thread, in the order of the pool's CPUs,
++// on the same CCX): when pool thread w starts an expert, loader w reads the expert's weights in the kernel's order
++// with plain loads, ahead of the pool thread, so that the pool thread finds them in the CCX's L3 instead of waiting
++// for the RAM (the kernel's loop reaches ~61 GB/s of the RAM's 71 GB/s; plain loads, 71). A new expert of the same
++// pool thread interrupts the loader (checked every 4 KB). Another core of the CCX: -5 % CPU time per step in the
++// replay of a decode trace, +2.5-6 % in the server; the SMT sibling of the pool thread: -1 %.
++struct alignas(64) LoaderSlot {
++  std::atomic<uint64_t> seq{0};
++  const int64_t* e = nullptr;  // the expert's 6 pointers
++  int c0 = 0, c1 = I;          // its intermediate columns (slices)
++};
++struct Loaders {
++  std::vector<std::thread> th;
++  LoaderSlot slot[256];
++  std::atomic<bool> stop{false};
++  int n = 0;
++  std::atomic<int64_t> bytes{0};
++  void start(const std::vector<int>& cpus) {
++    n = static_cast<int>(cpus.size());
++    for (int i = 0; i < n; ++i) th.emplace_back([this, i, c = cpus[i]] {
++      cpu_set_t set; CPU_ZERO(&set); CPU_SET(c, &set);
++      pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
++      loop(i);
++    });
++  }
++  void loop(int i) {
++    LoaderSlot& sl = slot[i];
++    uint64_t seen = 0;
++    int spins = 0;
++    while (!stop.load(std::memory_order_relaxed)) {
++      const uint64_t q = sl.seq.load(std::memory_order_acquire);
++      if (q == seen) {
++        if (++spins < (1 << 16)) { _mm_pause(); continue; }
++        sl.seq.wait(seen, std::memory_order_acquire);
++        continue;
++      }
++      seen = q; spins = 0;
++      if (stop.load(std::memory_order_relaxed)) break;
++      const int64_t* e = sl.e;
++      if (!e) continue;
++      static const size_t sizes[6] = {819200, 25600, 819200, 25600, 819200, 25600};
++      int64_t done = 0;
++      for (int part = 0; part < 6; ++part) {
++        const char* p = reinterpret_cast<const char*>(e[part]);
++        const size_t n = sizes[part];
++        bool interrupted = false;
++        for (size_t off = 0; off < n; off += 4096) {
++          if (sl.seq.load(std::memory_order_relaxed) != seen) { interrupted = true; break; }
++          const size_t end = std::min(n, off + 4096);
++          __m256i a = _mm256_setzero_si256();
++          for (size_t b = off; b + 64 <= end; b += 64)
++            a = _mm256_or_si256(a, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + b)));
++          asm volatile("" : : "x"(a));
++          done += static_cast<int64_t>(end - off);
++        }
++        if (interrupted) break;
++      }
++      bytes.fetch_add(done, std::memory_order_relaxed);
++    }
++  }
++  ~Loaders() {
++    stop.store(true, std::memory_order_relaxed);
++    for (int i = 0; i < n; ++i) { slot[i].seq.fetch_add(1, std::memory_order_release); slot[i].seq.notify_one(); }
++    for (auto& t : th) t.join();
++  }
++  void post(int w, const int64_t* e) {
++    if (w >= n) return;
++    LoaderSlot& sl = slot[w];
++    sl.e = e;
++    sl.seq.fetch_add(1, std::memory_order_release);
++    sl.seq.notify_one();
++  }
++};
++Loaders g_loaders;
++const bool g_loaders_env = [] {
++  const char* v = std::getenv("QWEN38_CPU_EXPERTS_LOADER_CPUS");
++  if (!v || !*v) return false;
++  std::vector<int> cpus;
++  std::string str(v);
++  size_t p = 0;
++  while (p < str.size()) {
++    size_t q = str.find(',', p);
++    std::string tok = str.substr(p, q == std::string::npos ? std::string::npos : q - p);
++    size_t d = tok.find('-');
++    if (d == std::string::npos) cpus.push_back(std::stoi(tok));
++    else for (int i = std::stoi(tok.substr(0, d)); i <= std::stoi(tok.substr(d + 1)); ++i) cpus.push_back(i);
++    if (q == std::string::npos) break;
++    p = q + 1;
++  }
++  g_loaders.start(cpus);
++  return true;
++}();
 +std::atomic<int64_t> g_pf_jobs{0}, g_pf_hits{0};
  // One work item per expert by default (fastest in the trace-driven bench); set_slices() splits further.
  int g_slices[I / GS + 1] = {0, 640};
  int g_nslices = 1;
-@@ -475,6 +542,12 @@
+@@ -475,6 +635,12 @@
      if (tm) nres = static_cast<int>(std::find_if(jobs, jobs + J, [&](const Job& jb) { return tm[jb.e]; }) - jobs);
      std::stable_sort(jobs, jobs + nres, [](const Job& a, const Job& b) { return a.n > b.n; });
    }
@@ -203,7 +303,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    const int nw = g_pool->size();
    const size_t per_job = MAXT * H + MAXT * (H / GS);
    const size_t per_worker = 3 * MAXT * I + MAXT * H + MAXT * (I / GS);
-@@ -500,6 +573,18 @@
+@@ -500,6 +666,18 @@
    uint8_t used[256] = {};
    TORCH_CHECK(nw <= 256, "too many workers");
    const int SL = g_nslices;
@@ -222,7 +322,15 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    g_pool->run(J * SL, [&](int item, int w) {
      const Job& jb = jobs[item / SL];
      const int c0 = g_slices[item % SL], c1 = g_slices[item % SL + 1], cw = c1 - c0;
-@@ -583,7 +668,7 @@
+@@ -512,6 +690,7 @@
+     float* ag = yacc + MAXT * H;
+     if (!used[w]) { std::memset(yacc, 0, sizeof(float) * T * H); used[w] = 1; }
+     const int64_t* e = tab + static_cast<int64_t>(jb.e) * 6;
++    if (g_loaders.n) g_loaders.post(w, e);
+     const int ng = cw / GS;
+     alignas(32) int8_t xq[MAXT * H];
+     float xsq[MAXT * (H / QG)];
+@@ -583,7 +762,7 @@
            _mm256_storeu_ps(o + n, _mm256_fmadd_ps(wv, _mm256_loadu_ps(y + t * 320 + n), _mm256_loadu_ps(o + n)));
        }
      }
@@ -231,7 +339,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    int ws[256], nu = 0;
    for (int w = 0; w < nw; ++w) if (used[w]) ws[nu++] = w;
    constexpr int CH = 640;  // floats per reduction item
-@@ -994,6 +1079,28 @@
+@@ -994,6 +1173,28 @@
  // of the GPU too, as their ids are in the request; not the cold ones that the GPU share masked) and written to the
  // file every 256 decode steps, e.g. to choose the GPU's and the Radeon VII's experts from real use instead of the
  // static rankings.
@@ -260,7 +368,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  struct ExpertUsage {
    const char* path = std::getenv("QWEN38_EXPERT_USAGE");
    std::vector<uint32_t> n = std::vector<uint32_t>(RVII_L * RVII_E, 0);
-@@ -1051,6 +1158,7 @@
+@@ -1051,6 +1252,7 @@
    __atomic_store_n(&rh->seq, q, __ATOMIC_RELEASE);
    g_rv.sent += 1; g_rv.jobs += J;
    compute_layer(tab, E, skl, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
@@ -268,7 +376,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    const char* rs = g_rv.base + RVII_RESP_OFFSET;
    const auto t0 = std::chrono::steady_clock::now();
    for (int spin = 0;; ++spin) {
-@@ -1073,12 +1181,38 @@
+@@ -1073,12 +1275,38 @@
    uint8_t only[RVII_E];
    for (int e = 0; e < RVII_E; ++e) only[e] = (skl[e] && !sk[e]) ? 0 : 1;
    static thread_local std::vector<float> tmp(MAXT * H);
@@ -307,7 +415,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  // ---------------------------------------------------------------- GPU request server
  // Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[40] @64, w f32[40] @224, x f32[4*H] @448.
  // Response slot: seq int64 @0, y f32[4*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
-@@ -1150,6 +1284,7 @@
+@@ -1150,6 +1378,7 @@
            else if (layer == 0 && gap < 1000000000LL) { window.step_gap_ns += gap; window.steps += 1; }
          }
          if (T >= 1 && T <= MAXT && layer >= 0) {
@@ -315,7 +423,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
            compute_layer_rv(layer, tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
                          reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 224),
                          reinterpret_cast<float*>(rq + 448), reinterpret_cast<float*>(rs + 64), scratch.data(),
-@@ -1158,7 +1293,22 @@
+@@ -1158,7 +1387,22 @@
            std::memset(rs + 64, 0, sizeof(float) * MAXT * H);
          }
          __atomic_store_n(reinterpret_cast<int64_t*>(rs), q, __ATOMIC_RELEASE);
@@ -338,7 +446,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
          const int64_t cns = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done - tc0).count();
          g_compute_ns.fetch_add(cns, std::memory_order_relaxed);
          g_served.fetch_add(1, std::memory_order_relaxed);
-@@ -1175,12 +1325,12 @@
+@@ -1175,12 +1419,12 @@
            const int64_t tj = g_tail_jobs.exchange(0), cj = g_cold_jobs.exchange(0);
            std::fprintf(stderr, "cpu_moe decode steps=%lld: per step cpu %.2f ms, between layers %.2f ms, "
                         "step tail %.2f ms (%.1f requests/step), cold experts %.0f/step of which tail %.1f; "
@@ -353,7 +461,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
            window = StepStats{};
            window.rv_jobs0 = g_rv.jobs;
          }
-@@ -1318,3 +1468,10 @@
+@@ -1318,3 +1562,10 @@
    m.def("bridge_wait_add_f32", &bridge_wait_add_f32);
  #endif
  }
