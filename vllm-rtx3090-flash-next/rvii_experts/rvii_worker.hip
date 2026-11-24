@@ -589,10 +589,12 @@ int main(int argc, char** argv) {
   while (!g_stop.load(std::memory_order_relaxed)) {
     const int64_t seq = req_seq->load(std::memory_order_acquire);
     if (seq == last || seq == 0) {
-      // Spin while active; when idle for more than 100 ms, poll every 100 us so as not to burn a core.
+      // Spin while active; when idle for more than 100 ms, poll every 100 us so as not to burn a core, and after 2 s,
+      // every 1 ms (~1000 instead of ~10000 wake-ups per second while the model is not used).
       for (int i = 0; i < 8; ++i) _mm_pause();
-      if (now_s() - t_last > 0.1) {
-        usleep(100);
+      const double idle = now_s() - t_last;
+      if (idle > 0.1) {
+        usleep(idle > 2.0 ? 1000 : 100);
         const hipError_t e = hipStreamQuery(st);  // report a failed kernel
         if (e != hipSuccess && e != hipErrorNotReady) CK(e);
       }

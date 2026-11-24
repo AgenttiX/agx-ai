@@ -346,3 +346,38 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
 +        q[r0:r0 + chunk_rows] = torch.round(wf / sc[:, :, None]).clamp(-127, 127).to(torch.int8).view(-1, k)
 +        s[r0:r0 + chunk_rows] = sc
 +    return q, s
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/v1/ple_offload/connector.py b/usr/local/lib/python3.12/dist-packages/vllm/v1/ple_offload/connector.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/v1/ple_offload/connector.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/v1/ple_offload/connector.py
+@@ -455,7 +455,10 @@
+             num_reqs=num_reqs,
+         )
+         if self.tp_rank == 0:
+-            self._request_queue.put_nowait(request)
++            # agx-ai: wait for the request thread to take the previous step's request instead of failing (put_nowait on
++            # the queue of 1 raised queue.Full and killed the engine when other programs loaded the serving processes'
++            # CPUs and the request thread fell one decode step behind).
++            self._request_queue.put(request, timeout=60)
+ 
+         if not getattr(self, "_qwen38_stale_ready_possible", True):
+             return
+diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
+--- a/usr/local/bin/qwen38-serve
++++ b/usr/local/bin/qwen38-serve
+@@ -71,7 +71,15 @@
+   mm_args=(--language-model-only)
+ fi
+ 
+-exec vllm serve "$model" \
++# agx-ai: with real-time CPU pool threads (QWEN38_CPU_EXPERTS_FIFO), all serving processes stay on the serving CPUs
++# (QWEN38_MAIN_CPUS; the GPU worker and the PLE worker did already, the API server and the engine core could run on
++# the pool's CPUs, where a spinning real-time thread would starve them). The pool's and the loaders' threads set their
++# own CPUs.
++launch=()
++if [[ -n "${QWEN38_CPU_EXPERTS_FIFO:-}" && -n "${QWEN38_MAIN_CPUS:-}" ]]; then
++  launch=(taskset -c "$QWEN38_MAIN_CPUS")
++fi
++exec "${launch[@]}" vllm serve "$model" \
+   --served-model-name "$SERVED_MODEL_NAME" \
+   --host 0.0.0.0 --port "$PORT" \
+   --tensor-parallel-size 1 \

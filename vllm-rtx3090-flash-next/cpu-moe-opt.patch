@@ -13,7 +13,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
 diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
 --- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
 +++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
-@@ -13,6 +13,7 @@
+@@ -13,11 +13,14 @@
  #include <cstdint>
  #include <cstdio>
  #include <cstring>
@@ -21,7 +21,14 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  #include <functional>
  #include <thread>
  #include <pthread.h>
-@@ -289,36 +290,38 @@
+ #include <sched.h>
+ #include <sys/mman.h>
++#include <sys/resource.h>  // agx-ai: setpriority
++#include <sys/syscall.h>
+ #include <cerrno>
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -289,36 +292,38 @@
          xo[r][t] = _mm256_set1_epi32(o);
        }
      const uint16_t* srow = sc + static_cast<size_t>(g) * N + n0;
@@ -83,7 +90,54 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
      }
    }
    for (int t = 0; t < T; ++t) std::memcpy(y + static_cast<size_t>(t) * ldy, tot[t], sizeof(float) * W);
-@@ -365,33 +368,79 @@
+@@ -338,6 +343,31 @@
+ }
+ 
+ // ---------------------------------------------------------------- thread pool
++// agx-ai: the scheduling priority of the pool's, the loaders' and the request server's threads, so that other
++// programs on their CPUs give way to them while they compute (they sleep between requests, so the CPUs are free for
++// other programs then): QWEN38_CPU_EXPERTS_NICE=<-20..19> (SCHED_OTHER with this nice value) or
++// QWEN38_CPU_EXPERTS_FIFO=<1..99> (SCHED_FIFO with this priority; the kernel keeps 5 % of each CPU for normal
++// threads that are waiting). Both need the capability CAP_SYS_NICE (docker: cap_add: SYS_NICE); without it, the
++// threads keep the default priority (with a warning).
++static void set_thread_priority(const char* who) {
++  static const int fifo = [] { const char* v = std::getenv("QWEN38_CPU_EXPERTS_FIFO"); return v ? std::atoi(v) : 0; }();
++  static const char* nice_env = std::getenv("QWEN38_CPU_EXPERTS_NICE");
++  static std::atomic<bool> warned{false};
++  int rc = 0;
++  if (fifo > 0) {
++    sched_param sp{};
++    sp.sched_priority = fifo;
++    rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
++  } else if (nice_env && *nice_env) {
++    rc = setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), std::atoi(nice_env)) == 0 ? 0 : errno;
++  } else {
++    return;
++  }
++  if (rc != 0 && !warned.exchange(true))
++    std::fprintf(stderr, "cpu_moe: could not set the priority of the %s threads (%s); is CAP_SYS_NICE missing?\n",
++                 who, std::strerror(rc));
++}
++
+ class Pool {
+  public:
+   // ~1 ms of pause-spinning covers the GPU work between two layers of one decode step.
+@@ -348,12 +378,14 @@
+         cpu_set_t set; CPU_ZERO(&set); CPU_SET(cpus[i], &set);
+         pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+       }
++      set_thread_priority("pool");
+       loop(i);
+     });
+     if (!cpus.empty()) {
+       cpu_set_t set; CPU_ZERO(&set); CPU_SET(cpus[0], &set);
+       pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+     }
++    set_thread_priority("pool");  // the caller (the request server's thread) is worker 0
+   }
+   int id_of_caller() const { return 0; }
+   ~Pool() {
+@@ -365,33 +397,79 @@
    int size() const { return n_; }
    // Run fn(item) for item in [0, count) on all threads; returns when done.
    template <class F>
@@ -100,7 +154,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
      work();
      while (done_.load(std::memory_order_acquire) != n_ - 1) _mm_pause();
 +    owner_ = nullptr;
-   }
++  }
 +  // agx-ai: prefetch ranges into the caches of the workers (1..n-1) while they wait for the next run(): worker w
 +  // reads its ranges pf_[w] line by line (into its L2, whose evictions fill its CCX's L3) and stops as soon as a
 +  // run() is posted.
@@ -113,7 +167,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
 +      pf_[w].k = k;
 +    }
 +    pf_epoch_.fetch_add(1, std::memory_order_acq_rel);
-+  }
+   }
 +  static constexpr int kMaxItems = 1024;
  
   private:
@@ -165,7 +219,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
          if (++spins < kSpin) { _mm_pause(); continue; }
          epoch_.wait(seen, std::memory_order_acquire);  // idle: sleep instead of burning a core
        }
-@@ -409,6 +458,11 @@
+@@ -409,6 +487,11 @@
    alignas(64) std::atomic<bool> stop_{false};
    int count_ = 0;
    std::function<void(int, int)> fn_;
@@ -177,7 +231,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  };
  
  Pool* g_pool = nullptr;
-@@ -434,6 +488,112 @@
+@@ -434,6 +517,113 @@
  
  // Raw-pointer core: out[T][H] = sum over non-skipped (t, k) of w[t,k] * expert(ids[t,k], x[t]).
  struct Job { int e, n; int tok[MAXT]; float wt[MAXT]; };
@@ -216,6 +270,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
 +    for (int i = 0; i < n; ++i) th.emplace_back([this, i, c = cpus[i]] {
 +      cpu_set_t set; CPU_ZERO(&set); CPU_SET(c, &set);
 +      pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
++      set_thread_priority("loader");
 +      loop(i);
 +    });
 +  }
@@ -290,7 +345,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  // One work item per expert by default (fastest in the trace-driven bench); set_slices() splits further.
  int g_slices[I / GS + 1] = {0, 640};
  int g_nslices = 1;
-@@ -475,6 +635,12 @@
+@@ -475,6 +665,12 @@
      if (tm) nres = static_cast<int>(std::find_if(jobs, jobs + J, [&](const Job& jb) { return tm[jb.e]; }) - jobs);
      std::stable_sort(jobs, jobs + nres, [](const Job& a, const Job& b) { return a.n > b.n; });
    }
@@ -303,7 +358,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    const int nw = g_pool->size();
    const size_t per_job = MAXT * H + MAXT * (H / GS);
    const size_t per_worker = 3 * MAXT * I + MAXT * H + MAXT * (I / GS);
-@@ -500,6 +666,18 @@
+@@ -500,6 +696,18 @@
    uint8_t used[256] = {};
    TORCH_CHECK(nw <= 256, "too many workers");
    const int SL = g_nslices;
@@ -322,7 +377,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    g_pool->run(J * SL, [&](int item, int w) {
      const Job& jb = jobs[item / SL];
      const int c0 = g_slices[item % SL], c1 = g_slices[item % SL + 1], cw = c1 - c0;
-@@ -512,6 +690,7 @@
+@@ -512,6 +720,7 @@
      float* ag = yacc + MAXT * H;
      if (!used[w]) { std::memset(yacc, 0, sizeof(float) * T * H); used[w] = 1; }
      const int64_t* e = tab + static_cast<int64_t>(jb.e) * 6;
@@ -330,7 +385,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
      const int ng = cw / GS;
      alignas(32) int8_t xq[MAXT * H];
      float xsq[MAXT * (H / QG)];
-@@ -583,7 +762,7 @@
+@@ -583,7 +792,7 @@
            _mm256_storeu_ps(o + n, _mm256_fmadd_ps(wv, _mm256_loadu_ps(y + t * 320 + n), _mm256_loadu_ps(o + n)));
        }
      }
@@ -339,7 +394,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    int ws[256], nu = 0;
    for (int w = 0; w < nw; ++w) if (used[w]) ws[nu++] = w;
    constexpr int CH = 640;  // floats per reduction item
-@@ -994,6 +1173,28 @@
+@@ -994,6 +1203,28 @@
  // of the GPU too, as their ids are in the request; not the cold ones that the GPU share masked) and written to the
  // file every 256 decode steps, e.g. to choose the GPU's and the Radeon VII's experts from real use instead of the
  // static rankings.
@@ -368,7 +423,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  struct ExpertUsage {
    const char* path = std::getenv("QWEN38_EXPERT_USAGE");
    std::vector<uint32_t> n = std::vector<uint32_t>(RVII_L * RVII_E, 0);
-@@ -1051,6 +1252,7 @@
+@@ -1051,6 +1282,7 @@
    __atomic_store_n(&rh->seq, q, __ATOMIC_RELEASE);
    g_rv.sent += 1; g_rv.jobs += J;
    compute_layer(tab, E, skl, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
@@ -376,7 +431,18 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
    const char* rs = g_rv.base + RVII_RESP_OFFSET;
    const auto t0 = std::chrono::steady_clock::now();
    for (int spin = 0;; ++spin) {
-@@ -1073,12 +1275,38 @@
+@@ -1067,18 +1299,47 @@
+   // No answer: compute the worker's experts here (the pool skips all others), and stop using the worker until it
+   // reports ready again.
+   g_rv.timeouts += 1;
+-  std::fprintf(stderr, "cpu_moe: the Radeon VII expert worker did not answer within %lld us; using the CPU\n",
+-               static_cast<long long>(g_rv.timeout_ns / 1000));
++  // agx-ai: the first 3 timeouts, then every 100th (with a short timeout, a loaded host gives a few per minute).
++  if (g_rv.timeouts <= 3 || g_rv.timeouts % 100 == 0)
++    std::fprintf(stderr, "cpu_moe: the Radeon VII expert worker did not answer within %lld us; using the CPU "
++                 "(%lld timeouts so far)\n", static_cast<long long>(g_rv.timeout_ns / 1000),
++                 static_cast<long long>(g_rv.timeouts));
+   g_rv.was_ready = false;
    uint8_t only[RVII_E];
    for (int e = 0; e < RVII_E; ++e) only[e] = (skl[e] && !sk[e]) ? 0 : 1;
    static thread_local std::vector<float> tmp(MAXT * H);
@@ -415,7 +481,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
  // ---------------------------------------------------------------- GPU request server
  // Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[40] @64, w f32[40] @224, x f32[4*H] @448.
  // Response slot: seq int64 @0, y f32[4*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
-@@ -1150,6 +1378,7 @@
+@@ -1150,6 +1411,7 @@
            else if (layer == 0 && gap < 1000000000LL) { window.step_gap_ns += gap; window.steps += 1; }
          }
          if (T >= 1 && T <= MAXT && layer >= 0) {
@@ -423,7 +489,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
            compute_layer_rv(layer, tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
                          reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 224),
                          reinterpret_cast<float*>(rq + 448), reinterpret_cast<float*>(rs + 64), scratch.data(),
-@@ -1158,7 +1387,22 @@
+@@ -1158,7 +1420,22 @@
            std::memset(rs + 64, 0, sizeof(float) * MAXT * H);
          }
          __atomic_store_n(reinterpret_cast<int64_t*>(rs), q, __ATOMIC_RELEASE);
@@ -446,7 +512,7 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
          const int64_t cns = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done - tc0).count();
          g_compute_ns.fetch_add(cns, std::memory_order_relaxed);
          g_served.fetch_add(1, std::memory_order_relaxed);
-@@ -1175,12 +1419,12 @@
+@@ -1175,12 +1452,12 @@
            const int64_t tj = g_tail_jobs.exchange(0), cj = g_cold_jobs.exchange(0);
            std::fprintf(stderr, "cpu_moe decode steps=%lld: per step cpu %.2f ms, between layers %.2f ms, "
                         "step tail %.2f ms (%.1f requests/step), cold experts %.0f/step of which tail %.1f; "
@@ -461,7 +527,21 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/qua
            window = StepStats{};
            window.rv_jobs0 = g_rv.jobs;
          }
-@@ -1318,3 +1562,10 @@
+@@ -1207,6 +1484,13 @@
+       }
+       if (any) { idle = 0; continue; }
+       if (++idle < (1 << 16)) { _mm_pause(); continue; }
++      // agx-ai: after ~1 s without requests (20000 polls), poll every 1 ms instead of every 50 us, which woke the
++      // CPU ~10000 times per second while the server was idle. The first request after a pause waits up to 1 ms.
++      if (idle > (1 << 16) + 20000) {
++        idle = (1 << 16) + 20001;
++        std::this_thread::sleep_for(std::chrono::milliseconds(1));
++        continue;
++      }
+       std::this_thread::sleep_for(std::chrono::microseconds(50));
+     }
+     delete g_pool;
+@@ -1318,3 +1602,10 @@
    m.def("bridge_wait_add_f32", &bridge_wait_add_f32);
  #endif
  }

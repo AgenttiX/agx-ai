@@ -143,9 +143,14 @@ What has given the largest gains, roughly in order:
   batch sizes that occur: `max-num-seqs` x (1 + drafted tokens). [1] for one sequence without speculative decoding,
   [1, 2, 3] for MTP 2, [1, 2, 3, 4, 6, 8, 9, 12] for 4 sequences with MTP 2. Eager mode is ~2x slower (7.4 vs
   15.3 t/s).
-- The Flash-Next runtime does not compile (`mode: 3` fails at startup with "auto_functionalized was not removed"),
-  so it runs with `mode: 0`; its GPU part per layer is mostly weight reads near the bandwidth (int8 `_skinny_dot`,
-  int4 Marlin) anyway.
+- The Flash-Next runtime does not compile (`mode: 3` fails at startup with "auto_functionalized was not removed",
+  from its custom ops that write into their inputs), so it runs with `mode: 0`; its GPU part per layer is mostly
+  weight reads near the bandwidth (W8A16 Marlin at 590-770 GB/s, the skinny Triton GEMVs) anyway. The elementwise
+  kernels that compiling could fuse take ~1.8 ms of a ~55 ms decode step (2026-11-24, see
+  [its README](../vllm-rtx3090-flash-next/README.md#torchcompile)).
+- Measure kernels in CUDA graphs (`torch.cuda.CUDAGraph` with 10-20 calls, replayed), not with launches: small
+  decode GEMVs are 3-15 µs, of the order of a launch. A torch profile of a served model (`--profiler-config`)
+  shows the kernels inside the graphs with their grids, which identifies them.
 - Keep the compile caches on a volume (`TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, the `vllm-cache` volume):
   gfx906 first start ~6 min, later 1.5-3 min. `TORCHINDUCTOR_COMPILE_THREADS=1` when the RAM is nearly all pinned.
 
@@ -253,6 +258,13 @@ What has given the largest gains, roughly in order:
     as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
     distances, 12-16 threads. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same
     access pattern.
+- **Other programs on the CPU pool's cores** (flash-next, 2026-11-24): 64 busy threads of a desktop program cut
+  decode to 40 %, as each layer waits for the slowest of the pool's 8 threads. Nice values do not help across
+  cgroups (Docker's `system.slice` and the desktop's `user.slice` have the same CPU weight); the real-time policy
+  SCHED_FIFO for the pool's threads does (`QWEN38_CPU_EXPERTS_FIFO=10`, `cap_add: SYS_NICE`): 88-94 % of the
+  unloaded speed with the same load, and the cores are free between requests, as the threads sleep. Keep every other
+  thread of the serving processes off the real-time threads' CPUs (`taskset`), and make the runtime's single-slot
+  queues wait instead of failing (the PLE offload's `put_nowait` killed the engine under load).
 - **Embedding model in RAM** (rtx-a4000): `offload-backend: prefetch`, `offload-group-size: 1`,
   `offload-num-in-group: 1`, `offload-prefetch-step: 2` (step 1/2/3: 5895/7153/7560 t/s).
 
@@ -303,6 +315,10 @@ What has given the largest gains, roughly in order:
 
 ## Power and the host
 
+- Temperatures: `bench_http` records the min, mean and max of the GPUs' (with their memory) and the CPU's sensors
+  (`agx_ai/benchmark/temps.py`). The RTX 3090's GDDR6X reached 98 °C in a Flash-Next decode benchmark (the core
+  ~80 °C, the Radeon VII at most 44 °C); its power profiles and those of the Radeon VII are in
+  [`../vllm-rtx3090-flash-next/README.md`](../vllm-rtx3090-flash-next/README.md#power-profiles).
 - RTX 3070: a 1600 MHz clock lock or 170 W limit is needed, as with llama.cpp. LXC does not permit
   `ulimits: memlock: -1`. Faster RAM and the `performance` governor are untried for CPU-expert runtimes.
 - GeForce RTX 30 series: [gpu-unlock](../nvidia-unlock/README.md) removes the half-rate cap of FP16/BF16 tensor-core

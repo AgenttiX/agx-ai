@@ -12,7 +12,7 @@ request of the CPU pool, in parallel with the CPU computing the rest, over the s
 | VRAM | 15.4 GiB used, ~600 MiB free (`RVII_RESERVE_MIB`, default 640 MiB, is left for the HIP runtime and the buffers) |
 | Latency, 4 tokens and 8 experts | 71 µs median, 91 µs p99 (from the request's seq to the response's seq, see below) |
 | Error | max \|y - ref\| / max \|ref\| ≈ 1e-5 against an FP64 reference (the CPU pool: 1e-7 in FP32, 1e-2 with int8 activations) |
-| CPU | one core spins while requests come; when idle for 100 ms, a poll every 100 µs (~3 % of a core) |
+| CPU | one core spins while requests come; when idle for 100 ms, a poll every 100 µs (~3 % of a core), and after 2 s every 1 ms |
 
 Files:
 

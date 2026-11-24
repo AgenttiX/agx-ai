@@ -121,7 +121,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"per step: CPU layers {sum(compute) / ms:.2f} ms (of which waiting for the Radeon VII "
           f"{sum(rv_wait) / ms:.2f}), GPU between the layers {sum(gaps) / ms:.2f} ms, "
           f"step tail {sum(tails) / max(1, len(tails)) / 1e6:.2f} ms")
-    print(f"percentiles (10/50/90/99, us): CPU layer {percentiles(compute)}, gap {percentiles(gaps)}")
+    print(f"percentiles (10/50/90/99, us): CPU layer {percentiles(compute)}, gap {percentiles(gaps)}, "
+          f"waiting for the Radeon VII {percentiles(rv_wait)}")
+    late = sorted(rv_wait)[-3:]
+    print(f"the longest waits for the Radeon VII: {[round(v / 1e3) for v in late]} us; "
+          f"{sum(1 for v in rv_wait if v > 1_000_000)} of {len(rv_wait)} layers over 1 ms")
     print(f"{hits / max(1, total):.1%} of the CPU experts were CPU experts of the same layer in the previous step")
     pairs = (n - 1) * LAYERS
     for k, (h, p) in top.items():

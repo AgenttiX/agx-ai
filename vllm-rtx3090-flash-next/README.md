@@ -57,13 +57,24 @@ input and a faster CPU expert kernel:
   - and (2026-11-24) with `QWEN38_INT8_SKINNY=1`, the lm_head is converted to int8 after loading (one scale per row
     and 128 inputs, `QWEN38_INT8_SKINNY_MODULES`, default `lm_head`), with an int8 variant of the runtime's skinny
     Triton GEMM for it and for MTP's reduced draft head, which is a view of it. See
-    [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24).
+    [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24),
+  - and (2026-11-24) the PLE offload's request queue (of one) waits for its thread instead of failing: `put_nowait`
+    raised `queue.Full` and killed the engine once when other programs loaded the serving processes' CPUs, and with
+    `QWEN38_CPU_EXPERTS_FIFO`, the serve script starts all serving processes on `QWEN38_MAIN_CPUS` (`taskset`). See
+    [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24).
 - [`cpu-moe-opt.patch`](cpu-moe-opt.patch) (2026-11-24, after `rvii-moe.patch`): a faster int8 kernel, a prefetch of
   the next layer's likely experts into the L3 cache (`QWEN38_CPU_EXPERTS_PREFETCH`), the kernel compiled with
   `-mtune=znver2`, and a decode trace for [`cpu_moe_bench`](#offline-benchmark-of-the-cpu-expert-kernel)
-  (`QWEN38_DECODE_TRACE`); see [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24).
+  (`QWEN38_DECODE_TRACE`); see [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24). Also the scheduling
+  priority of the pool's and the loaders' threads (`QWEN38_CPU_EXPERTS_FIFO` or `QWEN38_CPU_EXPERTS_NICE`), and the
+  idle request server polls every 1 ms after 1 s without requests instead of every 50 µs, see
+  [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24).
 - [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
   (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
+- Tools: [`test_server.sh`](test_server.sh) starts a test server as in the compose file with another image or
+  settings, [`kernel_bench/`](kernel_bench/README.md) has microbenchmarks of the RTX 3090's kernels, and
+  [`isolate_cpus.py`](isolate_cpus.py) is a prototype (for review, not installed) that reserves the pool's cores
+  during requests from the host.
 - [`cpu-moe.patch`](cpu-moe.patch) (the runtime's `cpu_moe.cpp`, which computes the cold experts on the CPU during
   decode; compiled at startup), added on 2026-10-26:
   - integer activations, selected at startup (the default stays FP32): `QWEN38_CPU_EXPERTS_INT8=1` quantizes each
@@ -317,14 +328,211 @@ These would change the host's configuration, so they are not implemented:
 3. **The CPU frequency policy** `performance` (or the energy-performance preference `performance`) instead of
    `powersave` / `balance_performance`: the pool threads alternate between spinning and short bursts of work every
    ~0.2 ms, and each layer waits for the slowest of 8 threads.
-4. **Isolating the pool CPUs** (1, 5, ..., 29) from the scheduler and timer interrupts (`isolcpus=`, `nohz_full=`,
-   `irqaffinity=` on the kernel command line): an interrupted pool thread delays the whole layer. The container's
-   cpusets would then need the isolated CPUs explicitly (they are already pinned).
+4. **Isolating the pool CPUs** from the scheduler and interrupts: done inside the containers with SCHED_FIFO since
+   then, and a prototype for reserving the cores from the host only during requests ([`isolate_cpus.py`](isolate_cpus.py)),
+   see [Isolating the CPU pool's cores](#isolating-the-cpu-pools-cores).
 5. **Huge pages for the expert arena** at boot (`hugepagesz=1G hugepages=58`): transparent huge pages covered all of
    it now (57.9 GB of `AnonHugePages`), but on 2026-10-14 only 23.6 of 56 GiB after days of uptime, as the RAM was
    fragmented. Reserving them would make it independent of the uptime, but takes the RAM from everything else.
 6. **The Radeon VII's power profile** (`high`, see above): ~15 % shorter worker latency, which is not on the critical
-   path now (0.3 ms of waiting per step).
+   path now (0.3 ms of waiting per step). See [Power profiles](#power-profiles) for the commands.
+
+## GPU kernels, the Radeon VII and CPU isolation (2026-11-24)
+
+### The RTX 3090's kernels
+
+A torch profile of the decode steps (CUDA graphs, the configuration before the int8 lm_head): 2370 kernels per step,
+18.5 ms of kernel time besides the waits for the CPU. Per Gated DeltaNet layer, the GPU's part before it hands the
+layer's cold experts to the CPU (the part on the critical path, ~190 µs):
+
+| Kernel | µs per layer | Reads | |
+|---|---|---|---|
+| in_proj_qkvz, Marlin W8A16 (16384 x 2560) | 54.6 | 42 MB | 770 GB/s |
+| out_proj, Marlin W8A16 (2560 x 6144) | 26.5 | 16 MB | 590 GB/s |
+| 4 hyper-connection GEMVs, BF16 skinny Triton (336 x 10240, 10240 x 320) | 42 | 4 x 6.6-6.9 MB | 600-820 GB/s |
+| Gated DeltaNet recurrence (`fused_gdn_decode_post_conv_mtp`, in vLLM's `_C`) | 22.6 | | 48 blocks |
+| CPU expert submit (40 KB to pinned host memory) | 13-17 | | |
+| router, norms and ~20 small kernels | ~30 | | |
+
+Tried with [`kernel_bench/`](kernel_bench/README.md):
+
+- **The int8 skinny Triton kernel** (the int8 lm_head's) instead of Marlin for the W8A16 projections (the checkpoint's
+  symmetric int8 with group 128 maps exactly onto its format): with the best configuration per shape, 52.7 instead
+  of 55.5 µs, 22.7 instead of 23.2 µs, 43.6 instead of 46.5 µs (attention qkv), i.e. ~0.15 ms per decode step, and
+  its dequantizing path for prefill is 30-50 % slower than Marlin (2048 tokens: 2333 instead of 1661 µs for
+  in_proj_qkvz). Keeping both would need 1.3 GB more VRAM. Not changed: Marlin is near the practical bandwidth.
+- **Other configurations of the BF16 skinny kernel** for the hyper-connections: 10240 x 320 takes 7.3 instead of
+  8.0 µs with BLOCK_N 64 (0.07 ms per step), 336 x 10240 none faster. Not changed.
+- **The submit kernel** (one block writes x, 4 x 2560 FP32, into pinned host memory for the CPU and publishes the
+  request): ~10-11 µs whatever the kernel does (16- or 8-byte loads, all loads first, 2-40 blocks with the last one
+  publishing, or a conversion kernel and a copy-engine `cudaMemcpyAsync`): the GPU writes host memory at ~4 GB/s
+  here. Only a smaller request (BF16 instead of FP32, a protocol change for the CPU and the Radeon VII) would save
+  ~5 µs per layer (0.25 ms per step).
+- The Gated DeltaNet recurrence reads and writes its FP32 state (3.1 MB per layer) at ~280 GB/s with 48 blocks on 82
+  SMs, so a version with more blocks might save ~0.4 ms per step, but it is compiled into vLLM's `_C` library of
+  the base image (no source in the image).
+
+So the RTX 3090's share of a step (~14 ms between the layers, 3.6 ms at the end) is bound by its memory bandwidth and
+by small kernels; the CPU's experts (~40 ms) remain the bottleneck.
+
+### `torch.compile`
+
+The runtime runs with `--compilation-config '{"mode":0,"cudagraph_mode":"FULL_DECODE_ONLY"}'`: no compilation, but
+the whole decode step in one CUDA graph. With mode 3 (vLLM's default), Inductor failed at startup with
+"auto_functionalized was not removed": the runtime registers custom ops that write into their inputs (the CPU
+experts' wait-and-add into the MoE output, the PLE offload, the hyper-connection and QSA kernels), and Inductor's
+functionalization cannot turn them back into in-place calls. What it would take:
+
+- register these ops with their `mutates_args` and either make them functional (return new tensors) or add them to
+  vLLM's `splitting_ops`, so that the graph is split around them like around attention, and
+- check that the CPU expert bridge's ordering (submit, GPU experts, wait) survives the reordering of the compiled
+  graph, which assumes no side effects outside the tensors.
+
+What it could gain: fusing the small elementwise kernels into their neighbours. Per decode step, 1477 kernels take
+less than 4 µs (2.9 ms in all), of which the elementwise ones (norms, activations, additions, copies) 1.8 ms; the
+runtime already fuses the hyper-connections' and QSA's in Triton. A perfect fusion would save ~1-1.5 ms of a ~55 ms
+step (2-3 %), at the cost of minutes of compilation at startup and the risk of the reordering above. Not pursued.
+
+### The Radeon VII
+
+From a decode trace (`QWEN38_DECODE_TRACE`, 13909 steps of chat and code edits, with and without other programs
+loading the CPU), the time from the CPU finishing its own experts to the Radeon VII's answer: 6 / 8 / 12 / 16 µs
+(10th / 50th / 90th / 99th percentile), i.e. the Radeon VII's ~10 experts per layer (~70-120 µs, see
+[`rvii_experts/README.md`](rvii_experts/README.md#measurements)) are done long before the CPU's ~13. Its kernel is
+not on the critical path, so making it faster would not change the speed. The delays come from elsewhere: 533 of
+668k layers waited more than 1 ms (at most 5 ms), and with the shorter timeout below, the timeouts came only in the
+runs where 64 busy threads of other programs loaded the CPU. Changes:
+
+- **The timeout is 2 ms instead of 20 ms** (`QWEN38_RVII_TIMEOUT_US=2000`): if the Radeon VII does not answer within
+  2 ms after the CPU has computed its own experts, the CPU computes the Radeon VII's experts for that layer (~0.7 ms)
+  instead of waiting up to 20 ms, so a stall (a busy host, a clock change, a hiccup of the worker) costs at most
+  ~3 ms per layer. A late answer is ignored by its sequence number, and the worker is used again from the next layer
+  on. In 25 min of the final configuration (3 runs with 64 busy threads of other programs, 1 without), it fired 3
+  times, all in the first second of the first request. The message is logged for the first 3 and then every 100th
+  timeout.
+- The idle worker polls every 1 ms after 2 s without requests (before: every 100 µs, ~10000 wake-ups per second).
+
+Tried: the worker with SCHED_FIFO (its polling thread, or all its threads including the HIP runtime's), to protect
+it from other programs: with 64 busy threads, the 2-ms timeout then fired 340-680 times in 5 min instead of never
+(a spinning real-time thread on the serving processes' CPUs, which the load already crowded, probably delayed the
+threads that the worker's answers depend on), and the run with all threads real-time ended with a hung engine.
+Not used.
+
+### Isolating the CPU pool's cores
+
+The pool's threads compute the cold experts in ~0.6 ms per layer, and a layer waits for the slowest of 8 threads, so
+any other program on their cores delays the whole step. With 64 busy threads of another program (`stress-ng --cpu
+64` in the desktop session, i.e. in `user.slice`), unpinned, the speed fell to 40 %. Kept off the pool's and the
+loaders' cores (`taskset` on `QWEN38_MAIN_CPUS`, i.e. what isolating these 16 cores would do), it fell only by 3-6 %.
+Nice values cannot do this: the containers run in `system.slice`, which has the same CPU weight as `user.slice`, so a
+spinning pool thread gets only half of its core next to a busy program however nice it is. The real-time policy
+SCHED_FIFO ranks above all normal threads instead, and the threads sleep between requests, so the cores are free
+for other programs then: `QWEN38_CPU_EXPERTS_FIFO=10` (`cpu-moe-opt.patch`; with `cap_add: SYS_NICE`), which also
+starts all serving processes on `QWEN38_MAIN_CPUS`, so that none of their threads waits behind a real-time thread
+(the GPU worker and the PLE worker were already there, the API server and the engine core were not). The kernel
+still gives normal threads 5 % of each CPU (its fair server), so nothing on those CPUs starves.
+
+`--tests chat edit --repeat 2 --edit-depth 0`, generation in tokens/s:
+
+| Configuration | Other programs | Chat | Edit |
+|---|---|---|---|
+| Normal priority (the configuration of the morning) | none | 52.3 | 67.4 |
+| Normal priority | 64 busy threads | 20.0 | 27.0 |
+| Normal priority | 64 busy threads, kept off the pool's and the loaders' cores | 49.0 | 65.2 |
+| Pool with SCHED_FIFO | none | 53.2 | 68.1 |
+| Pool with SCHED_FIFO | 64 busy threads | 46.1 | 63.3 |
+| **Pool with SCHED_FIFO, serving processes on their CPUs, Radeon VII timeout 2 ms (current)** | none | 53.0 | 68.1 |
+| The same | 64 busy threads (3 runs) | 45.6-46.8 | 63.2-63.7 |
+
+The first run with SCHED_FIFO and the load ended with the engine dead: the PLE offload's request queue holds one
+request, and the model thread added the next one with `put_nowait`, which fails when the queue's thread (on the
+serving CPUs, which the load now crowded) has not taken the previous one yet. `flash-next.patch` makes it wait
+instead. With it, the final configuration ran 4 benchmarks (3 with the load, ~25 min) without errors.
+
+Not done (outside the containers, for review):
+
+- **Reserving the cores during requests from the host**: [`isolate_cpus.py`](isolate_cpus.py) is a prototype of a
+  root service that polls vLLM's `vllm:num_requests_running` and, while requests run, moves the desktop's programs
+  (`systemctl set-property --runtime user.slice AllowedCPUs=...`) and the movable interrupts (`/proc/irq/*/smp_affinity_list`)
+  off the pool's and the loaders' 16 cores (32 hardware threads), and gives them back after 5 s without requests
+  (`--dry-run` shows what it would do). The measurement above with the load kept off these cores is what it would
+  achieve: SCHED_FIFO already gives most of it (46 / 63 vs 49 / 65 t/s), so it would add a few %. The kernel here
+  supports cgroup v2 cpuset partitions (`cpuset.cpus.partition = isolated`), which would also take the cores out of
+  the scheduler's load balancing, but the container would then need a threaded cgroup for the pool's threads alone.
+  Interrupts are not the problem now: the pool's CPUs get ~20-150 per second (besides the timer), except the request
+  server's CPU, whose idle polling caused ~10000 timer interrupts per second (fixed above).
+- **`isolcpus=` / `nohz_full=` on the kernel command line** (the kernel has `CONFIG_NO_HZ_FULL`): this would also
+  stop the timer tick on the pool's cores, but permanently, so the cores would not be available for other programs
+  without requests, which is not wanted here.
+
+### Temperatures
+
+Recorded by `bench_http` since today ([`agx_ai/benchmark/temps.py`](../agx_ai/benchmark/temps.py); the RTX 3090's VRAM
+from the [nvidia-vram-hwmon](https://github.com/AgenttiX/nvidia-vram-hwmon) kernel module), min / mean / max °C during
+the runs above (~5 min each):
+
+| Device | Sensor | Without other programs (after 3 loaded runs) | With 64 busy threads (the first run) |
+|---|---|---|---|
+| RTX 3090 | VRAM (GDDR6X) | 92 / 95.7 / 98 | 72 / 89.1 / 94 |
+| RTX 3090 | core | 75 / 81.2 / 84 | 62 / 77.7 / 82 |
+| Radeon VII | edge | 37 / 38.4 / 40 | 35 / 37.1 / 38 |
+| Radeon VII | junction | 41 / 43.7 / 45 | 39 / 42.5 / 44 |
+| Radeon VII | memory (HBM2) | 39 / 39.9 / 40 | 37 / 38.6 / 39 |
+| CPU (Threadripper 3970X) | Tctl | 58.8 / 63.1 / 72 | 65.3 / 68.4 / 76.6 |
+
+The RTX 3090's GDDR6X is the hottest part: after ~20 minutes of continuous decoding, which reads the VRAM all the
+time, it averaged 96 °C and reached 98 °C (the core ~81 °C; the card had logged ~350 s of "SW thermal slowdown"
+since the driver loaded, the cause of which nvidia-smi does not say). Micron is quoted to rate GDDR6X for up to
+95 °C, and the card throttles its memory at ~110 °C, so it is below the throttling point but above the rating in
+long sessions; a lower power limit, a lower memory clock or more airflow would help (see below). In normal use the
+model is idle most of the time. The Radeon VII stays cool (at most ~44 °C at the junction): it computes ~10 experts in ~0.1 ms per layer and
+idles in between.
+
+### Power profiles
+
+The settings below need root and reset at a reboot; they are host settings, so this repository does not apply them.
+To make one permanent, put the command in a systemd service (`Type=oneshot`, `After=nvidia-persistenced.service` for
+the RTX 3090) or, for the Radeon VII, a udev rule.
+
+RTX 3090 (`nvidia-smi`; currently: power limit 350 W of 100-350 W, persistence mode on):
+
+```sh
+nvidia-smi -q -d POWER,CLOCK,PERFORMANCE,TEMPERATURE   # limits, clocks and the reasons for slowdowns
+sudo nvidia-smi -pm 1          # persistence mode (keeps the settings while no program uses the GPU)
+sudo nvidia-smi -pl 280        # power limit in W (100-350); back to the default: sudo nvidia-smi -pl 350
+sudo nvidia-smi -lgc 210,1695  # limit the core clock range (MHz); undo: sudo nvidia-smi -rgc
+sudo nvidia-smi -lmc 405,9501  # limit the memory clock range (MHz; supported: 405, 810, 5001, 9501, 9751);
+                               # undo: sudo nvidia-smi -rmc
+```
+
+Decode is bound by the CPU and, on the GPU, by memory bandwidth, so a lower power limit or core clock should cost
+little decode speed while lowering the core's heat next to the VRAM; prefill (compute bound) would slow down more.
+The memory clock is what heats the GDDR6X; one step down (9501 instead of 9751 MHz) costs ~2.5 % of the GPU's
+bandwidth, i.e. well under 1 % of decode. To measure a setting:
+`uv run -m agx_ai.benchmark.bench_http --url http://localhost:9931 --env-file llama-cpp/llama-cpp.env
+--no-embedding --tests chat edit prompt --repeat 2 --edit-depth 0 --label "power limit 280 W"`, which now records
+the temperatures too.
+
+Radeon VII (amdgpu's sysfs, `/sys/class/drm/card1/device` = PCI `0000:4f:00.0`; check the card number with
+`ls -l /sys/class/drm`):
+
+```sh
+D=/sys/class/drm/card1/device
+cat $D/power_dpm_force_performance_level   # auto (current)
+cat $D/pp_power_profile_mode               # the active profile has a *: COMPUTE (5) while a ROCm program runs
+cat $D/pp_dpm_sclk $D/pp_dpm_mclk          # the clock levels, the current one with a *
+echo high | sudo tee $D/power_dpm_force_performance_level   # always the highest clocks; back: echo auto
+echo manual | sudo tee $D/power_dpm_force_performance_level
+echo 5 | sudo tee $D/pp_power_profile_mode                  # COMPUTE, with "manual" (ROCm sets it anyway)
+H=$(echo $D/hwmon/hwmon*)
+cat $H/power1_cap                           # the power limit in µW: 250000000 (also the maximum)
+echo 200000000 | sudo tee $H/power1_cap     # 200 W
+```
+
+`high` keeps the Radeon VII at its highest clocks between requests, which made the worker's latency ~15 % shorter
+in the offline benchmark ([`rvii_experts/README.md`](rvii_experts/README.md#measurements)), but it is not on the
+critical path (see above), and the card then idles at a higher power. Undervolting (`pp_od_clk_voltage`) would need
+the kernel parameter `amdgpu.ppfeaturemask=0xffffffff` (OverDrive is off now: `0xfff7bfff`).
 
 ## Measurements (2026-10-13, agx-z2e)
 

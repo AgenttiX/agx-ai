@@ -317,6 +317,10 @@ t/s (+32 %, +64-69 %, +14 %). See [`../vllm-rtx3090-flash-next/README.md`](../vl
 Since 2026-11-24, a faster int8 kernel, a prefetch of the next layer's likely experts into the L3 cache, loader
 threads, a faster sampler and an int8 lm_head: chat 52.8 t/s, 65.5 / 65.4 / 67.3 t/s, edits 68.2 / 68.2 t/s (+24 %,
 +17-28 %, +15 %); see [CPU kernel and prefetch](../vllm-rtx3090-flash-next/README.md#cpu-kernel-and-prefetch-2026-11-24).
+Since later that day, the CPU pool's threads run with the real-time policy SCHED_FIFO, so other programs give way
+to them: with 64 busy threads of other programs, 46 / 63 t/s in chats and edits instead of 20 / 27, and the same speed
+as before without them; see
+[GPU kernels, the Radeon VII and CPU isolation](../vllm-rtx3090-flash-next/README.md#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24).
 The measurements below are from before.
 
 ### Context size (2026-10-13)

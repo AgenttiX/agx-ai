@@ -87,6 +87,15 @@ services:
       # The serving processes on cores 0 and 3 of each CCX and their SMT siblings, i.e. without the pool's and the
       # loaders' cores (the runtime's default: all CPUs except the SMT siblings of the pool's cores).
       QWEN38_MAIN_CPUS: "0,3-4,7-8,11-12,15-16,19-20,23-24,27-28,31-32,35-36,39-40,43-44,47-48,51-52,55-56,59-60,63"
+      # The pool's and the loaders' threads with the real-time policy SCHED_FIFO (priority 10) while they compute
+      # (cpu-moe-opt.patch; needs cap_add SYS_NICE below), and all serving processes on QWEN38_MAIN_CPUS: other
+      # programs on the pool's cores give way to it. The threads sleep between requests, so the cores are free for
+      # other programs then. With 64 busy threads of other programs: 46 instead of 20 t/s in chats, 63 instead of 27
+      # in code edits; without other programs the same as before (README.md, CPU isolation).
+      QWEN38_CPU_EXPERTS_FIFO: "10"
+      # The Radeon VII answers within ~16 us after the CPU has computed its own experts (99th percentile): if it has
+      # not answered 2 ms after that (default 20 ms), the CPU computes its experts for that layer.
+      QWEN38_RVII_TIMEOUT_US: "2000"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Image and video input with the vision tower on the CPU (README.md): 32 threads were the
@@ -99,6 +108,8 @@ services:
     ipc: host
     cap_add:
       - SYS_PTRACE
+      # For QWEN38_CPU_EXPERTS_FIFO
+      - SYS_NICE
     ulimits:
       memlock: -1
       stack: 67108864
