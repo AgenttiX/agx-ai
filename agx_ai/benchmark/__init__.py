@@ -12,3 +12,5 @@ from agx_ai.hostname import REPO_DIR
 
 #: The results are stored in the repository and not in the package.
 RESULTS_DIR: Path = REPO_DIR / "benchmark" / "results"
+#: Downloaded benchmark inputs (not in Git).
+DATA_DIR: Path = REPO_DIR / "benchmark" / "data"

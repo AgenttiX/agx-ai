@@ -24,6 +24,7 @@ open-webui/open-webui.env
 ssh/config/id_*
 ssh/config/known_hosts
 ssh/config/private.conf
+benchmark/data/
 benchmark/scratch
 benchmark/results/dx2-*.jsonl
 benchmark/results/vxl-*.jsonl

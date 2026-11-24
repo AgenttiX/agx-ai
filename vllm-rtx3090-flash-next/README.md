@@ -622,7 +622,9 @@ to a JSON file with a `refusal_direction` list or a safetensors file with a `ref
 
 The 2x RTX 3090 runtime's check, 8 mild borderline requests (a fake review, an offensive joke, an insult, lock
 picking, an excuse for missing work, cheating in an exam, a villain's threat, a role-play without rules) and 2
-controls, without thinking, up to 400 tokens, refusals detected by phrase and read through:
+controls, without thinking, up to 400 tokens, refusals detected by phrase and read through
+([`agx_ai/benchmark/refusal_http.py`](../agx_ai/benchmark/refusal_http.py); the runs are in
+[`agx-z2e-kubuntu-refusal.jsonl`](../benchmark/results/agx-z2e-kubuntu-refusal.jsonl)):
 
 | `QWEN38_ABLITERATION` | Borderline requests refused | Controls refused | Chat t/s | Edit t/s |
 |---|---|---|---|---|

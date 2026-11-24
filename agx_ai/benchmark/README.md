@@ -246,6 +246,21 @@ with a setting that is lossless in principle (another `ubatch-size`, or `n-cpu-m
 the prompt cache, as a cache hit changes the batching and thus the output; the same configuration then reproduces
 its outputs exactly. The retrieval test reuses the cached haystack for all questions of a context length.
 
+## `refusal_http.py`: refusals of mild borderline requests
+
+Sends the 8 mild borderline requests and 2 controls of the 2x RTX 3090 runtime of Qwen3.8-Flash-Next (its check of
+the `QWEN38_ABLITERATION` switch) to a running chat server, once each, without thinking (`--thinking` to allow it),
+and counts the replies whose start contains a refusal phrase ("I can't", "I cannot", ...). The prompts are
+downloaded on first use from a fixed commit of
+[DominikBucko/qwen38-flash-next-2x3090](https://github.com/DominikBucko/qwen38-flash-next-2x3090) into
+`benchmark/data/` (not in Git). It prints a table of the replies' starts (read them: a deflection without a refusal
+phrase is not counted) and appends the run, with the full replies, to `results/<hostname>-refusal.jsonl`.
+
+```sh
+uv run -m agx_ai.benchmark.refusal_http --url http://localhost:9931 --env-file llama-cpp/llama-cpp.env \
+    --label "Flash-Next, QWEN38_ABLITERATION=orcarouter"
+```
+
 ## `llama_cpp/kld.py`: KL divergence with llama-perplexity
 
 The standard llama.cpp method for the same question: `llama-perplexity` saves the full token distributions of a base
