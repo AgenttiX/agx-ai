@@ -1,9 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "additionalDirectories": [
-      "/tmp"
-    ],
     "allow": [
       "Bash(* --help *)",
       "Bash(* --version)",
@@ -36,7 +33,10 @@
       "Bash(git log *)",
       "Bash(git show *)",
       "Bash(git status *)",
+      "Bash(kpsewhich *)",
+      "Bash(latexmk *)",
       "Bash(lsb_release *)",
+      "Bash(lualatex *)",
       "Bash(lspci *)",
       "Bash(montage *)",
       "Bash(mypy *)",
@@ -99,12 +99,39 @@
       "Read(~/.ssh/id_*[!p]ub)",
       "Read(~/.ssh/id_*[!.]pub)",
       "Read(~/Vaults/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   },
-  "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true,
   "model": "opus[1m]",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
+          }
+        ]
+      }
+    ]
+  },
   "enableWorkflows": true,
+  "statusLine": {
+    "type": "command",
+    "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/statusline.py"
+  },
   "enabledPlugins": {
     "lot-map@lot-map": true,
     "desktop-statusline@centminmod": true,
@@ -136,33 +163,37 @@
       }
     }
   },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/session_urls.py"
-          }
-        ]
-      }
-    ]
-  },
-  "remoteControlAtStartup": true,
-  "statusLine": {
-    "type": "command",
-    "command": "python3 ~/[Gg]it/agx-ai/agx_ai/claude/statusline.py"
-  },
+  "tui": "fullscreen",
   "theme": "dark",
-  "tui": "fullscreen"
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: None configured",
+      "**Cloud provider(s)**: None configured",
+      "**Repository visibility**: Most repositories are public so that any push publishes. Public repositories: agenttix.github.io, agx-ai, linux-scripts, phd-presentations, PTPlot, pttools, windows-scripts. Private repositories: phd-research, private-scripts",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: Never commit secrets in Git. Store them e.g. in gitignored .env files.",
+      "**Default / protected branches**: main / master",
+      "**CI/CD deploy targets**: Some repositories build and publish packages and Docker images with GitHub Actions or GitLab CI/CD",
+      "**Network posture**: None configured",
+      "**Host containment**: None configured — assume Claude Code runs on an ordinary developer machine or shared server with access to internet",
+      "**Source control**: The trusted repo and its remote(s) only, plus related own repositories as defined in AGENTS.md",
+      "**Trusted internal domains**: Personal domain: agx.fi",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: None configured",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: any file or store holding personal data, confidential business data, credentials, regulated data, or similarly sensitive material; preserve exact handles when known and share only with audiences cleared at the [named+specifics] bar. Treat gitignored .env files as sensitive. Access paths in /mnt only when necessary for the given task.",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries prod or production as a whole word or name segment",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries prod or production as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: physics PhD research (first-order cosmological phase transitions), simulation code development, software development, IT management, local AI development, debugging",
+      "**Trusted repo**: github.com/AgenttiX/*, github.com/CFT-HY/*. These include agenttix.github.io, agx-ai, linux-scripts, phd-presentations, phd-research, private-scripts, PTPlot, pttools and windows-scripts, which are cloned in `~/[Gg]it/`.",
+      "**Org-specific CLIs**: None configured"
+    ]
+  }
 }
