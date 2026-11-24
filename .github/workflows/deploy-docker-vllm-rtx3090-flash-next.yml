@@ -7,6 +7,8 @@ on:
     paths:
       - "vllm-rtx3090-flash-next/Dockerfile"
       - "vllm-rtx3090-flash-next/cpu_vision.py"
+      - "vllm-rtx3090-flash-next/abliteration.py"
+      - "vllm-rtx3090-flash-next/abliteration/**"
       - "vllm-rtx3090-flash-next/flash-next.patch"
       - "vllm-rtx3090-flash-next/vllm-mm.patch"
       - "vllm-rtx3090-flash-next/cpu-moe.patch"

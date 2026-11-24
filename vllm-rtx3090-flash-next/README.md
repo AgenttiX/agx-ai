@@ -72,6 +72,8 @@ input and a faster CPU expert kernel:
   [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24). And the
   prefetch predicted by the next layer's router (`QWEN38_CPU_EXPERTS_PREGATE`, the routers registered by
   `flash-next.patch`), see [Pre-gating prefetch](#pre-gating-prefetch-2026-11-24).
+- [`abliteration.py`](abliteration.py), [`abliteration/`](abliteration) and hooks in `flash-next.patch` (2026-11-24):
+  the optional removal of the refusal direction (`QWEN38_ABLITERATION`), see [Abliteration](#abliteration-2026-11-24).
 - [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
   (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
 - Tools: [`test_server.sh`](test_server.sh) starts a test server as in the compose file with another image or
@@ -594,6 +596,42 @@ The image time is from a separate run on a fresh server: in the full benchmark, 
 script then started all serving processes on `QWEN38_MAIN_CPUS` (16 cores), which took the vision tower's threads
 off the SMT siblings of the pool's cores; now only the real-time threads' 16 CPUs are excluded (48 CPUs on all 32
 cores). With the load of 64 busy threads, this configuration gave 45.9-46.2 t/s in chats and 64.5-64.9 in edits.
+
+## Abliteration (2026-11-24)
+
+`QWEN38_ABLITERATION=orcarouter` serves the model like
+[orcarouter/Qwen3.8-Flash-Next-Uncensored](https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored), an
+abliterated release of the same base model, without other weights: the release's single refusal direction is
+projected out of every write to the residual stream at runtime. This removes the model's safety refusals; unset or
+`0` keeps the original behaviour.
+
+It is the implementation of the 2x RTX 3090 runtime
+([DominikBucko/qwen38-flash-next-2x3090](https://github.com/DominikBucko/qwen38-flash-next-2x3090/blob/main/docs/abliteration.md),
+Apache-2.0): [`abliteration.py`](abliteration.py) (copied, with a docstring and lint comments added) and the
+direction [`abliteration/orcarouter.json`](abliteration/orcarouter.json) (2560 values, recovered there from the
+release's weights; `/opt/qwen38/abliteration` in the image), and the same hooks in `flash-next.patch` for this
+runtime's `model.py`, `mtp.py` and `ple_layer.py`. With a unit direction r, the release edits every residual-writing
+matrix as W' = W - r (rᵀW); for an output y = W a, that is y - r (r · y), so the runtime projects, in place, the
+outputs of the attention and linear-attention blocks, the MoE block, `ple.value_proj` (before the PLE's norm) and
+the text token embeddings, in the model and in the MTP head. The MoE projection comes after the CPU's and the Radeon
+VII's experts have been added, so it covers them too (projecting the weighted sum of the experts' outputs equals
+editing each expert's down projection), and the int4 experts in RAM and in the Radeon VII's VRAM stay as they are.
+Also with the token embedding in pinned host memory (`QWEN38_EMBED_UVA`), as the projection acts on the lookup's
+result. A bare name resolves to `/opt/qwen38/abliteration/<name>.json`; any other value is a path in the container
+to a JSON file with a `refusal_direction` list or a safetensors file with a `refusal_direction` tensor.
+
+The 2x RTX 3090 runtime's check, 8 mild borderline requests (a fake review, an offensive joke, an insult, lock
+picking, an excuse for missing work, cheating in an exam, a villain's threat, a role-play without rules) and 2
+controls, without thinking, up to 400 tokens, refusals detected by phrase and read through:
+
+| `QWEN38_ABLITERATION` | Borderline requests refused | Controls refused | Chat t/s | Edit t/s |
+|---|---|---|---|---|
+| off | 7 of 8 (all but the villain's threat) | 0 of 2 | 56.3 | 74.0 |
+| `orcarouter` | 0 of 8 (all answered) | 0 of 2 (the haiku identical, the capital answer reworded) | 54.9 | 75.1 |
+
+The same 7 of 8 and 0 of 8 as the 2x RTX 3090 runtime measured. The speed is the same within the noise (each
+residual write costs a 2560-wide dot product and a rank-1 update per token, in the CUDA graph). Both runs with the
+RAM at DDR4-3466 (set in the BIOS on 2026-11-24; before: DDR4-2666, 70 t/s in edits).
 
 ## Measurements (2026-10-13, agx-z2e)
 

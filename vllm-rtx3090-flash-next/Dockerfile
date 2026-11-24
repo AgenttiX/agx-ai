@@ -9,6 +9,9 @@
 FROM ghcr.io/dominikbucko/qwen38-flash-next-3090@sha256:7f176605b59c462af21b1b62fd854f9f3cca96e3d11a295581297483d45490a3
 
 COPY cpu_vision.py /usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/cpu_vision.py
+# Optional refusal-direction removal (QWEN38_ABLITERATION, README.md): the module and the shipped directions
+COPY abliteration.py /usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/abliteration.py
+COPY abliteration /opt/qwen38/abliteration
 COPY rvii_experts/rvii_protocol.h /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/
 COPY flash-next.patch vllm-mm.patch cpu-moe.patch rvii-moe.patch cpu-moe-opt.patch /tmp/
 RUN patch -p1 -d / < /tmp/flash-next.patch && patch -p1 -d / < /tmp/vllm-mm.patch \

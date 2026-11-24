@@ -49,9 +49,11 @@ services:
       # context. Peak 20238 MiB with a 260000-token prompt.
       MAX_MODEL_LEN: "262144"
       KV_CACHE_MEMORY_BYTES: "5150000000"
-      # This switch is only available for the 2x RTX 3090 runtime.
+      # Uncensored mode: removes the model's refusal direction at runtime, as orcarouter/Qwen3.8-Flash-Next-Uncensored
+      # (abliteration.py, from the 2x RTX 3090 runtime; README.md, Abliteration). This removes the model's safety
+      # refusals; remove the line (or set it to "0") for the original behaviour. Speed unchanged.
       # https://github.com/DominikBucko/qwen38-flash-next-2x3090/blob/main/docs/abliteration.md
-      # QWEN38_ABLITERATION: "orcarouter"
+      QWEN38_ABLITERATION: "orcarouter"
       QWEN38_EMBED_UVA: "1"
       # The lm_head in int8 with one scale per row and 128 inputs (flash-next.patch), converted after loading: it and
       # MTP's reduced draft head (a view of it) read half as much in every decode step, -1.3 ms per step, and 0.6 GiB

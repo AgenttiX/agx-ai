@@ -404,3 +404,110 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
  
  
  class Qwen3_8FlashNextDecoderLayer(nn.Module):
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
+@@ -76,6 +76,7 @@
+ from vllm.v1.kv_cache_interface import MambaSpec
+ 
+ from ..config import Qwen3_8FlashNextConfig
++from . import abliteration  # agx-ai: QWEN38_ABLITERATION
+ from .hyperconnection import GatedResidual, HyperConnectionConfig
+ from .low_latency_gemm import enable_qwen38next_low_latency_gemm
+ from .ple_layer import Qwen3_8FlashNextPLELayer
+@@ -285,6 +286,7 @@
+             hc_config,
+             prefix=maybe_prefix(prefix, "mlp_hyper_connection"),
+         )
++        abliteration.register(self, config.hidden_size, model_config.dtype)
+ 
+     def forward(
+         self,
+@@ -333,12 +335,15 @@
+             )
+         else:
+             raise ValueError("Invalid layer_type")
++        abliteration.project_(attn_out, self._abliteration_r)
+ 
+         mlp_hc = self.mlp_hyper_connection
+         hidden_states, block_input, injection = mlp_hc.combine_and_mix(
+             hidden_states, attn_out, injection
+         )
+         mlp_out = self.mlp(block_input)
++        # agx-ai: after the CPU's and the Radeon VII's experts have been added to the MoE output
++        abliteration.project_(mlp_out, self._abliteration_r)
+         return hidden_states, mlp_out, injection
+ 
+ 
+@@ -442,6 +447,7 @@
+             )
+         else:
+             self.embed_tokens = PPMissingLayer()
++        abliteration.register(self, config.hidden_size, vllm_config.model_config.dtype)
+ 
+         def get_layer(prefix: str) -> Qwen3_8FlashNextDecoderLayer:
+             layer_idx = extract_layer_index(prefix)
+@@ -499,7 +505,7 @@
+             self._mtp_hidden_buffer = None
+ 
+     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+-        return self.embed_tokens(input_ids)
++        return abliteration.project_(self.embed_tokens(input_ids), self._abliteration_r)
+ 
+     def forward(
+         self,
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/mtp.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/mtp.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/mtp.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/mtp.py
+@@ -46,6 +46,7 @@
+     Qwen3_8FlashNextTextConfig,
+ )
+ 
++from . import abliteration  # agx-ai: QWEN38_ABLITERATION
+ from .hyperconnection import GatedResidual, HyperConnectionConfig
+ from .low_latency_gemm import enable_qwen38next_low_latency_gemm
+ from .model import (
+@@ -185,6 +186,7 @@
+         self.hc_count = config.hc_count
+ 
+         self.embed_tokens = VocabParallelEmbedding(self.vocab_size, self.hidden_size)
++        abliteration.register(self, self.hidden_size, model_config.dtype)
+         draft_vllm_config = _make_draft_vllm_config(
+             vllm_config,
+             self.mtp_start_layer_idx,
+@@ -272,7 +274,7 @@
+             buffer[:num_rows].copy_(selected)
+ 
+     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
+-        return self.embed_tokens(input_ids)
++        return abliteration.project_(self.embed_tokens(input_ids), self._abliteration_r)
+ 
+     def forward(
+         self,
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/ple_layer.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/ple_layer.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/ple_layer.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/ple_layer.py
+@@ -56,6 +56,7 @@
+ )
+ from vllm.v1.attention.backends.utils import NULL_BLOCK_ID
+ 
++from . import abliteration  # agx-ai: QWEN38_ABLITERATION
+ from ..common.ple import copy_ple_embedding_shard_
+ 
+ _MASK64 = (1 << 64) - 1
+@@ -724,6 +725,7 @@
+             quant_config=quant_config,
+             prefix=f"{prefix}.value_proj",
+         )
++        abliteration.register(self, self.hidden_size, model_config.dtype)
+         norm_args = (
+             self.hc_hidden_size,
+             config.rms_norm_eps,
+@@ -1429,6 +1431,7 @@
+         embeddings = self._dequantize_embeddings(embeddings, hidden_states.dtype)
+         key, _ = self.key_proj(embeddings)
+         value, _ = self.value_proj(embeddings)
++        abliteration.project_(value, self._abliteration_r)
+         token_count = hidden_states.shape[0]
+         key = key.reshape(token_count, self.hc_count, self.hidden_size)
+         query = hidden_states.reshape(token_count, self.hc_count, self.hidden_size)
