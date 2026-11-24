@@ -76,7 +76,7 @@ def discover_backends() -> list[Backend]:
         try:
             server = bench_http.connect(url, key, timeout=120)
             models = server.models()
-        except SystemExit:
+        except (SystemExit, OSError):  # e.g. a server that is starting or busy resets the connection
             continue
         model = next((m["id"] for m in models if is_loaded_chat_model(m)), None)
         if model is None or isinstance(server, bench_http.OvmsServer):
