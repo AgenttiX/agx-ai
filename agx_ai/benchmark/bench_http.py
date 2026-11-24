@@ -9,7 +9,8 @@ Measures, for the serving configuration as it actually runs (router presets, slo
   real code as a long context (``depth``); these use the chat template and the server's own sampling settings, so
   they give representative draft acceptance for speculative decoding, unlike the repeated-text prompts at
   temperature 0 of the other tests,
-- peak GPU memory during the run (nvidia-smi or amd-smi, if available on this machine).
+- peak GPU memory during the run (nvidia-smi or amd-smi, if available on this machine),
+- the min, mean and max temperatures of the GPUs (with their memory) and the CPU during the run (see ``temps``).
 
 Speeds for the LLM come from the ``timings`` object that llama-server attaches to every completion (server-side
 prompt and generation timings, plus draft-token acceptance when speculative decoding is on). Embedding timings are
@@ -63,6 +64,7 @@ import urllib.request
 import zlib
 
 from agx_ai.benchmark import RESULTS_DIR
+from agx_ai.benchmark.temps import TempSampler, format_summary
 from agx_ai.hostname import repo_hostname
 
 PARAGRAPH = (
@@ -969,7 +971,7 @@ def main() -> int:
         "embedding_server_args": server_args(emb_models, embedding_model) if embedding_model else None,
     }
 
-    with GpuSampler() as gpu:
+    with GpuSampler() as gpu, TempSampler() as temps:
         print("warm-up...", file=sys.stderr)
         if chat_model != embedding_model:
             server.completion(chat_model, "Hello", 8)
@@ -1027,6 +1029,8 @@ def main() -> int:
         if gpu.process_peak is not None:
             gpu_result["peak_llama_server_memory_mib"] = gpu.process_peak
         result["gpu"] = gpu_result
+    if temperatures := temps.summary():
+        result["temperatures_c"] = temperatures
 
     output = args.output or RESULTS_DIR / f"{result['host'].split('.')[0]}.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1082,6 +1086,8 @@ def main() -> int:
         print(f"| Peak GPU memory | {', '.join(f'{n}: {m} MiB' for n, m in zip(gpu.names, gpu.peak, strict=False))} |")
         if gpu.process_peak is not None:
             print(f"| Peak GPU memory of the server processes (NVIDIA) | {gpu.process_peak} MiB |")
+    if temperatures:
+        print(f"| Temperatures, °C (min / mean / max) | {format_summary(temperatures)} |")
     print(f"\nAppended to `{output}`.")
     return 0
 
