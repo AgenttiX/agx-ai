@@ -60,7 +60,8 @@ input and a faster CPU expert kernel:
     [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24),
   - and (2026-11-24) the PLE offload's request queue (of one) waits for its thread instead of failing: `put_nowait`
     raised `queue.Full` and killed the engine once when other programs loaded the serving processes' CPUs, and with
-    `QWEN38_CPU_EXPERTS_FIFO`, the serve script starts all serving processes on `QWEN38_MAIN_CPUS` (`taskset`). See
+    `QWEN38_CPU_EXPERTS_FIFO`, the serve script starts all serving processes off the CPUs of the pool's and the
+    loaders' real-time threads (`taskset`). See
     [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24).
 - [`cpu-moe-opt.patch`](cpu-moe-opt.patch) (2026-11-24, after `rvii-moe.patch`): a faster int8 kernel, a prefetch of
   the next layer's likely experts into the L3 cache (`QWEN38_CPU_EXPERTS_PREFETCH`), the kernel compiled with
@@ -68,7 +69,9 @@ input and a faster CPU expert kernel:
   (`QWEN38_DECODE_TRACE`); see [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24). Also the scheduling
   priority of the pool's and the loaders' threads (`QWEN38_CPU_EXPERTS_FIFO` or `QWEN38_CPU_EXPERTS_NICE`), and the
   idle request server polls every 1 ms after 1 s without requests instead of every 50 µs, see
-  [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24).
+  [GPU kernels, the Radeon VII and CPU isolation](#gpu-kernels-the-radeon-vii-and-cpu-isolation-2026-11-24). And the
+  prefetch predicted by the next layer's router (`QWEN38_CPU_EXPERTS_PREGATE`, the routers registered by
+  `flash-next.patch`), see [Pre-gating prefetch](#pre-gating-prefetch-2026-11-24).
 - [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
   (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
 - Tools: [`test_server.sh`](test_server.sh) starts a test server as in the compose file with another image or
@@ -427,9 +430,10 @@ loaders' cores (`taskset` on `QWEN38_MAIN_CPUS`, i.e. what isolating these 16 co
 Nice values cannot do this: the containers run in `system.slice`, which has the same CPU weight as `user.slice`, so a
 spinning pool thread gets only half of its core next to a busy program however nice it is. The real-time policy
 SCHED_FIFO ranks above all normal threads instead, and the threads sleep between requests, so the cores are free
-for other programs then: `QWEN38_CPU_EXPERTS_FIFO=10` (`cpu-moe-opt.patch`; with `cap_add: SYS_NICE`), which also
-starts all serving processes on `QWEN38_MAIN_CPUS`, so that none of their threads waits behind a real-time thread
-(the GPU worker and the PLE worker were already there, the API server and the engine core were not). The kernel
+for other programs then: `QWEN38_CPU_EXPERTS_FIFO=10` (`cpu-moe-opt.patch`; with `cap_add: SYS_NICE`). With it, the
+serve script starts all serving processes on the CPUs other than the pool's and the loaders' (`taskset`), so that
+none of their threads waits behind a real-time thread (the API server and the engine core could run anywhere
+before; see [Pre-gating prefetch](#pre-gating-prefetch-2026-11-24) for why not only on `QWEN38_MAIN_CPUS`). The kernel
 still gives normal threads 5 % of each CPU (its fair server), so nothing on those CPUs starves.
 
 `--tests chat edit --repeat 2 --edit-depth 0`, generation in tokens/s:
@@ -483,9 +487,10 @@ the runs above (~5 min each):
 The RTX 3090's GDDR6X is the hottest part: after ~20 minutes of continuous decoding, which reads the VRAM all the
 time, it averaged 96 °C and reached 98 °C (the core ~81 °C; the card had logged ~350 s of "SW thermal slowdown"
 since the driver loaded, the cause of which nvidia-smi does not say). Micron is quoted to rate GDDR6X for up to
-95 °C, and the card throttles its memory at ~110 °C, so it is below the throttling point but above the rating in
-long sessions; a lower power limit, a lower memory clock or more airflow would help (see below). In normal use the
-model is idle most of the time. The Radeon VII stays cool (at most ~44 °C at the junction): it computes ~10 experts in ~0.1 ms per layer and
+95 °C, and the card throttles its memory at ~110 °C. In the full benchmark (with a 260k-token prompt, whose prefill
+runs the GPU at full power for minutes), the VRAM averaged 99.7 °C and reached **108 °C**, i.e. 2 °C below the
+throttling point. A lower power limit, a lower memory clock or more airflow would help (see below); in normal use
+the model is idle most of the time. The Radeon VII stays cool (at most ~44 °C at the junction): it computes ~10 experts in ~0.1 ms per layer and
 idles in between.
 
 ### Power profiles
@@ -533,6 +538,62 @@ echo 200000000 | sudo tee $H/power1_cap     # 200 W
 in the offline benchmark ([`rvii_experts/README.md`](rvii_experts/README.md#measurements)), but it is not on the
 critical path (see above), and the card then idles at a higher power. Undervolting (`pp_od_clk_voltage`) would need
 the kernel parameter `amdgpu.ppfeaturemask=0xffffffff` (OverDrive is off now: `0xfff7bfff`).
+
+## Pre-gating prefetch (2026-11-24)
+
+The prefetch of [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24) loads, while the GPU computes between
+two layers, the experts that the next layer's CPU computed in the previous decode step (one per idle pool thread, 7
+per layer); 42 % of them were used. Instead, the RTX 3090 now predicts the next layer's experts: after handing layer
+l's experts to the CPU, while it would otherwise only wait, it applies layer l+1's router to layer l's MoE input (a
+4 x 2560 by 2560 x 512 BF16 GEMV and a top-10 per token, a few µs) and writes the 40 expert ids into a pinned "hint"
+slot of layer l+1, with the sequence number that layer l+1's request will have. When the CPU has answered layer l,
+it prefetches the hinted CPU experts of layer l+1 (not the GPU's or the Radeon VII's), most tokens first, and falls
+back to the previous step's if no hint is there (layer 0, after the previous step's last layer).
+`QWEN38_CPU_EXPERTS_PREGATE=1` ([`cpu-moe-opt.patch`](cpu-moe-opt.patch): `cpu_experts.py`, `bridge_cuda.cu`,
+`cpu_moe.cpp`; the model registers its routers in [`flash-next.patch`](flash-next.patch)). Which experts are loaded
+into the cache does not change the result.
+
+Measured first, offline: with `QWEN38_DECODE_XDUMP`, the CPU side dumps each decode request's MoE input and
+routing; [`cpu_moe_bench/pregate_eval.py`](cpu_moe_bench/pregate_eval.py) reads the routers from the checkpoint and
+compares the choices (1000 decode steps of chat and code edits; each layer's own router reproduces 98.5 % of its
+routes from the dumped input, i.e. the dump is right):
+
+| Prefetch of 7 experts per layer chosen by | Of the layer's 11.8 CPU experts, prefetched | Prefetched ones used |
+|---|---|---|
+| The previous step (before) | 3.53 (30 %) | 50 % |
+| **Pre-gating** | **4.91 (42 %)** | **70 %** |
+| Half each | 4.45 (38 %) | 64 % |
+| 14 per layer: previous step / pre-gating | 4.99 / 7.17 | 36 / 51 % |
+
+In the server (`--tests chat depth edit --repeat 2 --depth 6400 32000 --edit-depth 0`, generation in t/s; CPU time
+per step and the prefetched experts that were used, from `QWEN38_CPU_EXPERTS_STATS`):
+
+| Prefetch | Chat | Depth 6.4k | Depth 32k | Edit | CPU ms per step | Used of 336 prefetched per step |
+|---|---|---|---|---|---|---|
+| **Pre-gating, 1 per thread** | 54.3 | 67.7 | 69.8 | 69.8 | 38.6-39.7 | 202-207 |
+| Previous step, 1 per thread (control) | 53.1 | 63.4 | 65.2 | 68.2 | 40.0-41.1 | 138-142 |
+| Pre-gating, 2 per thread | 54.3 | 70.2 | 67.3 | 69.9 | 38.1-39.9 | 356-363 of 653 |
+| **Pre-gating, 1 per thread (again)** | 55.8 | 64.7 | 70.0 | 69.9 | 38.4-40.0 | 199-207 |
+
+The edits (98 % draft acceptance, the most stable test): +2.4 %; the chat and depth tests vary with the draft
+acceptance (35-43 % here). In the server, 61 % of the prefetched experts are used (offline 70 %: there, the Radeon
+VII's experts were taken as fixed). Two per thread were not faster, as before: the gap between the layers (~0.2 ms)
+fits about one expert per thread. The GPU's extra work happens while it waits for the CPU (between the layers
+13.4-13.7 ms per step either way).
+
+The full benchmark of the production configuration (`--tests chat depth edit prompt image --repeat 2 --depth 6400
+32000 100000 --edit-depth 0 32000 --prompt-tokens 260000`), against that of the morning:
+
+| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 260k | Image 1280x960 | Peak VRAM |
+|---|---|---|---|---|---|---|
+| 2026-11-24 b: loader threads, int8 lm_head | 52.8 | 65.5 / 65.4 / 67.3 | 68.2 / 68.2 | 2366 | 8.2 s | 19598 MiB |
+| **2026-11-24 c: and SCHED_FIFO, Radeon VII timeout 2 ms, pre-gating (current)** | **54.3** | **67.9 / 69.4 / 69.4** | **69.8 / 70.5** | 2376 | 8.1 s | 19600 MiB |
+| Change | +3 % | +4 / +6 / +3 % | +2 / +3 % | the same | the same | the same |
+
+The image time is from a separate run on a fresh server: in the full benchmark, the image took 12.3 s, as the serve
+script then started all serving processes on `QWEN38_MAIN_CPUS` (16 cores), which took the vision tower's threads
+off the SMT siblings of the pool's cores; now only the real-time threads' 16 CPUs are excluded (48 CPUs on all 32
+cores). With the load of 64 busy threads, this configuration gave 45.9-46.2 t/s in chats and 64.5-64.9 in edits.
 
 ## Measurements (2026-10-13, agx-z2e)
 

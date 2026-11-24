@@ -138,7 +138,8 @@ project-includes = [
 search-path = [
     ".",
     "vllm",
-    "vllm-rtx3090-flash-next/rvii_experts"
+    "vllm-rtx3090-flash-next/rvii_experts",
+    "vllm-rtx3090-flash-next/cpu_moe_bench"
 ]
 project-excludes = [
     "**/_build*",

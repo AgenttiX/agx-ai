@@ -254,6 +254,11 @@ What has given the largest gains, roughly in order:
   - **Loader threads:** a second core per CCX (`QWEN38_CPU_EXPERTS_LOADER_CPUS`) reads the expert that its pool
     thread is computing with plain loads, ahead of it, into the shared L3: -5 % CPU time, +2.5-6 % t/s, as the
     kernel's loop alone reaches ~61 of the 71 GB/s that plain loads get. On the pool cores' SMT siblings only -1 %.
+  - **Pre-gating for the prefetch** (`QWEN38_CPU_EXPERTS_PREGATE=1`): the GPU, which waits for the CPU anyway,
+    applies the next layer's router to this layer's MoE input and sends the predicted experts; prefetching those
+    instead of the previous step's: 61 instead of 42 % of the prefetched experts used, -3.5 % CPU time, +2.4 % t/s
+    in code edits. Measure the prediction offline first (`QWEN38_DECODE_XDUMP`, `cpu_moe_bench/pregate_eval.py`:
+    70 vs 50 % with 7 experts per layer).
   - Not better: column slices of an expert for load balance (strided rows halve the RAM bandwidth with 8 threads,
     as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
     distances, 12-16 threads. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same
@@ -316,8 +321,8 @@ What has given the largest gains, roughly in order:
 ## Power and the host
 
 - Temperatures: `bench_http` records the min, mean and max of the GPUs' (with their memory) and the CPU's sensors
-  (`agx_ai/benchmark/temps.py`). The RTX 3090's GDDR6X reached 98 °C in a Flash-Next decode benchmark (the core
-  ~80 °C, the Radeon VII at most 44 °C); its power profiles and those of the Radeon VII are in
+  (`agx_ai/benchmark/temps.py`). The RTX 3090's GDDR6X reached 98 °C in Flash-Next decode benchmarks and 108 °C
+  with a 260k-token prefill (it throttles at ~110 °C; the core ~80 °C, the Radeon VII at most 46 °C); its power profiles and those of the Radeon VII are in
   [`../vllm-rtx3090-flash-next/README.md`](../vllm-rtx3090-flash-next/README.md#power-profiles).
 - RTX 3070: a 1600 MHz clock lock or 170 W limit is needed, as with llama.cpp. LXC does not permit
   `ulimits: memlock: -1`. Faster RAM and the `performance` governor are untried for CPU-expert runtimes.

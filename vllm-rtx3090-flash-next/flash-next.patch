@@ -364,20 +364,43 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/v1/ple_offload/connector.
 diff -ru a/usr/local/bin/qwen38-serve b/usr/local/bin/qwen38-serve
 --- a/usr/local/bin/qwen38-serve
 +++ b/usr/local/bin/qwen38-serve
-@@ -71,7 +71,15 @@
+@@ -71,7 +71,23 @@
    mm_args=(--language-model-only)
  fi
  
 -exec vllm serve "$model" \
-+# agx-ai: with real-time CPU pool threads (QWEN38_CPU_EXPERTS_FIFO), all serving processes stay on the serving CPUs
-+# (QWEN38_MAIN_CPUS; the GPU worker and the PLE worker did already, the API server and the engine core could run on
-+# the pool's CPUs, where a spinning real-time thread would starve them). The pool's and the loaders' threads set their
-+# own CPUs.
++# agx-ai: with real-time CPU pool threads (QWEN38_CPU_EXPERTS_FIFO), no other thread of the serving processes may run
++# on the CPUs of the pool's and the loaders' threads, where a spinning real-time thread would starve it: all start on
++# the other CPUs (the pool's and the loaders' threads set their own). Not only on QWEN38_MAIN_CPUS: the CPU vision
++# tower's threads use the SMT siblings of the pool's cores too (an image took 12.3 instead of 8.2 s on 16 cores).
 +launch=()
-+if [[ -n "${QWEN38_CPU_EXPERTS_FIFO:-}" && -n "${QWEN38_MAIN_CPUS:-}" ]]; then
-+  launch=(taskset -c "$QWEN38_MAIN_CPUS")
++if [[ -n "${QWEN38_CPU_EXPERTS_FIFO:-}" ]]; then
++  others=$(python3 -c 'import os
++from vllm.qwen38_host import format_cpus, parse_cpus
++cpus = set(os.sched_getaffinity(0))
++for name in ("QWEN38_CPU_EXPERTS_CPUS", "QWEN38_CPU_EXPERTS_LOADER_CPUS"):
++    spec = os.environ.get(name, "").strip()
++    if spec and spec != "auto":
++        cpus -= set(parse_cpus(spec))
++print(format_cpus(sorted(cpus)))')
++  launch=(taskset -c "$others")
 +fi
 +exec "${launch[@]}" vllm serve "$model" \
    --served-model-name "$SERVED_MODEL_NAME" \
    --host 0.0.0.0 --port "$PORT" \
    --tensor-parallel-size 1 \
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/model.py
+@@ -169,6 +169,11 @@
+         super().__init__(vllm_config=vllm_config, prefix=prefix)
+         config = vllm_config.model_config.hf_text_config
+         self.n_shared_experts = int(config.shared_expert_intermediate_size > 0)
++        # agx-ai: the router for the pre-gating hints of the CPU experts (cpu_experts.py, QWEN38_CPU_EXPERTS_PREGATE);
++        # not the MTP layer's, whose prefix also gives layer index 0.
++        if "mtp" not in prefix:
++            from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import cpu_experts
++            cpu_experts.register_gate(extract_layer_index(prefix), self.gate)
+ 
+ 
+ class Qwen3_8FlashNextDecoderLayer(nn.Module):
