@@ -1,0 +1,366 @@
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
+@@ -48,7 +48,7 @@
+     build = os.environ.get("QWEN38_CPU_EXPERTS_BUILD", "/root/.cache/qwen38/cpu_experts")
+     os.makedirs(build, exist_ok=True)
+     return load("qwen38_cpu_experts", [os.path.join(here, "cpu_moe.cpp"), os.path.join(here, "bridge_cuda.cu")],
+-                extra_cflags=["-O3", "-mavx2", "-mfma", "-mf16c", "-DPF_ROWS=6", "-DWITH_BRIDGE"],
++                extra_cflags=["-O3", "-mavx2", "-mfma", "-mf16c", "-mtune=znver2", "-DPF_ROWS=6", "-DWITH_BRIDGE"],
+                 extra_cuda_cflags=["-O3", "-gencode=arch=compute_86,code=sm_86",
+                                    "-gencode=arch=compute_86,code=compute_86"],
+                 build_directory=build, verbose=verbose)
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
+@@ -289,36 +289,38 @@
+         xo[r][t] = _mm256_set1_epi32(o);
+       }
+     const uint16_t* srow = sc + static_cast<size_t>(g) * N + n0;
+-    for (int c = 0; c < W; c += 16) {
+-      __m256 fa[T][2];
+-      for (int t = 0; t < T; ++t) fa[t][0] = fa[t][1] = _mm256_setzero_ps();
++    // agx-ai: 8 columns at a time (one int32 vector), so that the int16/int32 sums and the float sums of 4 tokens
++    // take 8 of the 16 YMM registers (16 columns at a time needed 16 and spilled), with the products of an activation
++    // group summed in int16 in their order (see below). An expert with 4 tokens: 9.0 instead of 7.0 GB/s on one Zen 2
++    // core from the cache; bit-exact (the integer sums are the same).
++    for (int c = 0; c < W; c += 8) {
++      __m256 fa[T];
++      for (int t = 0; t < T; ++t) fa[t] = _mm256_setzero_ps();
+       for (int sg = 0; sg < SUB; ++sg) {
+-        __m256i acc[T][2];
+-        for (int t = 0; t < T; ++t) acc[t][0] = acc[t][1] = _mm256_setzero_si256();
++        // The SR (4) rows of an activation group are summed in int16 and widened once: each maddubs lane is at most
++        // 2 * 15 * 127 = 3810 in magnitude, so 2 * SR of them (30480) fit exactly.
++        static_assert(2 * SR * 2 * 15 * 127 <= 32767, "int16 sums could overflow");
++        __m256i acc[T];
++        for (int t = 0; t < T; ++t) acc[t] = _mm256_setzero_si256();
+         for (int rr = 0; rr < SR; ++rr) {
+           const int r = sg * SR + rr;
+-          const int32_t* row = qw + static_cast<size_t>(r0 + r) * N + n0 + c;
+-          for (int u = 0; u < 2; ++u) {
+-            const __m256i q = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(row + 8 * u));
+-            const __m256i lo = _mm256_and_si256(q, mask), hi = _mm256_and_si256(_mm256_srli_epi32(q, 4), mask);
+-            for (int t = 0; t < T; ++t) {
+-              const __m256i pp = _mm256_add_epi16(_mm256_maddubs_epi16(lo, xe[r][t]), _mm256_maddubs_epi16(hi, xo[r][t]));
+-              acc[t][u] = _mm256_add_epi32(acc[t][u], _mm256_madd_epi16(pp, ones));
+-            }
++          const __m256i q = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(qw + static_cast<size_t>(r0 + r) * N + n0 + c));
++          const __m256i lo = _mm256_and_si256(q, mask), hi = _mm256_and_si256(_mm256_srli_epi32(q, 4), mask);
++          for (int t = 0; t < T; ++t) {
++            acc[t] = _mm256_add_epi16(acc[t], _mm256_maddubs_epi16(lo, xe[r][t]));
++            acc[t] = _mm256_add_epi16(acc[t], _mm256_maddubs_epi16(hi, xo[r][t]));
+           }
++          for (int t = 0; t < T; ++t) asm("" : "+x"(acc[t]));  // keep the sums in order (no hoisted products)
+         }
+         const int qg = g * SUB + sg;
+-        for (int t = 0; t < T; ++t)
+-          for (int u = 0; u < 2; ++u) {
+-            const __m256i d = _mm256_sub_epi32(acc[t][u], _mm256_set1_epi32(xz[t * qgroups + qg]));
+-            fa[t][u] = _mm256_fmadd_ps(_mm256_set1_ps(xs[t * qgroups + qg]), _mm256_cvtepi32_ps(d), fa[t][u]);
+-          }
+-      }
+-      for (int u = 0; u < 2; ++u) {
+-        const __m256 sv = load_h8(srow + c + 8 * u);
+-        for (int t = 0; t < T; ++t)
+-          _mm256_store_ps(&tot[t][c + 8 * u], _mm256_fmadd_ps(sv, fa[t][u], _mm256_load_ps(&tot[t][c + 8 * u])));
++        for (int t = 0; t < T; ++t) {
++          const __m256i d = _mm256_sub_epi32(_mm256_madd_epi16(acc[t], ones), _mm256_set1_epi32(xz[t * qgroups + qg]));
++          fa[t] = _mm256_fmadd_ps(_mm256_set1_ps(xs[t * qgroups + qg]), _mm256_cvtepi32_ps(d), fa[t]);
++        }
+       }
++      const __m256 sv = load_h8(srow + c);
++      for (int t = 0; t < T; ++t)
++        _mm256_store_ps(&tot[t][c], _mm256_fmadd_ps(sv, fa[t], _mm256_load_ps(&tot[t][c])));
+     }
+   }
+   for (int t = 0; t < T; ++t) std::memcpy(y + static_cast<size_t>(t) * ldy, tot[t], sizeof(float) * W);
+@@ -365,33 +367,79 @@
+   int size() const { return n_; }
+   // Run fn(item) for item in [0, count) on all threads; returns when done.
+   template <class F>
+-  void run(int count, F&& fn) {
++  void run(int count, F&& fn, const int8_t* owner = nullptr) {
+     fn_ = [&fn](int i, int w) { fn(i, w); };
+     count_ = count;
++    owner_ = owner;
++    if (owner) for (int i = 0; i < count; ++i) taken_[i].store(0, std::memory_order_relaxed);
+     next_.store(0, std::memory_order_relaxed);
+     done_.store(0, std::memory_order_relaxed);
+     epoch_.fetch_add(1, std::memory_order_acq_rel);
+     epoch_.notify_all();
+     work();
+     while (done_.load(std::memory_order_acquire) != n_ - 1) _mm_pause();
++    owner_ = nullptr;
+   }
++  // agx-ai: prefetch ranges into the caches of the workers (1..n-1) while they wait for the next run(): worker w
++  // reads its ranges pf_[w] line by line (into its L2, whose evictions fill its CCX's L3) and stops as soon as a
++  // run() is posted.
++  struct Range { const char* p; size_t n; };
++  static constexpr int kMaxPf = 24;  // 6 ranges per expert, up to 4 experts per worker
++  void prefetch(const std::vector<std::vector<Range>>& per_worker) {
++    for (int w = 1; w < n_ && w < static_cast<int>(per_worker.size()); ++w) {
++      const int k = std::min<int>(kMaxPf, static_cast<int>(per_worker[w].size()));
++      for (int i = 0; i < k; ++i) pf_[w].r[i] = per_worker[w][i];
++      pf_[w].k = k;
++    }
++    pf_epoch_.fetch_add(1, std::memory_order_acq_rel);
++  }
++  static constexpr int kMaxItems = 1024;
+ 
+  private:
+   void work(int w = 0) {
++    if (owner_) {  // the items prefetched by this worker first, then any free one
++      for (int i = 0; i < count_; ++i)
++        if (owner_[i] == w && !taken_[i].exchange(1, std::memory_order_relaxed)) fn_(i, w);
++      for (;;) {
++        const int i = next_.fetch_add(1, std::memory_order_relaxed);
++        if (i >= count_) break;
++        if (!taken_[i].exchange(1, std::memory_order_relaxed)) fn_(i, w);
++      }
++      return;
++    }
+     for (;;) {
+       const int i = next_.fetch_add(1, std::memory_order_relaxed);
+       if (i >= count_) break;
+       fn_(i, w);
+     }
+   }
++  void do_prefetch(int id, uint64_t run_epoch) {
++    const int k = pf_[id].k;
++    for (int i = 0; i < k; ++i) {
++      const char* p = pf_[id].r[i].p;
++      const size_t n = pf_[id].r[i].n;
++      for (size_t off = 0; off < n; off += 4096) {
++        if (epoch_.load(std::memory_order_relaxed) != run_epoch) return;
++        // Real loads: on Zen 2, lines brought in by prefetch instructions are not kept in the L3 cache when L2
++        // evicts them (a 2.4 MB read after prefetcht0/t2/nta: ~30 GB/s as from RAM; after loads: ~114 GB/s).
++        const size_t end = std::min(n, off + 4096);
++        __m256i a = _mm256_setzero_si256();
++        for (size_t b = off; b + 64 <= end; b += 64)
++          a = _mm256_or_si256(a, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + b)));
++        asm volatile("" : : "x"(a));
++      }
++    }
++  }
+   void loop(int id) {
+     // Start from the construction epoch (0), not the current one: a worker that starts
+     // late must still serve a run() posted before it began spinning.
+-    uint64_t seen = 0;
++    uint64_t seen = 0, pf_seen = 0;
+     for (;;) {
+       uint64_t e;
+       int spins = 0;
+       while ((e = epoch_.load(std::memory_order_acquire)) == seen) {
++        const uint64_t pe = pf_epoch_.load(std::memory_order_acquire);
++        if (pe != pf_seen) { pf_seen = pe; do_prefetch(id, seen); spins = 0; continue; }
+         if (++spins < kSpin) { _mm_pause(); continue; }
+         epoch_.wait(seen, std::memory_order_acquire);  // idle: sleep instead of burning a core
+       }
+@@ -409,6 +457,11 @@
+   alignas(64) std::atomic<bool> stop_{false};
+   int count_ = 0;
+   std::function<void(int, int)> fn_;
++  const int8_t* owner_ = nullptr;
++  std::atomic<uint8_t> taken_[kMaxItems];
++  alignas(64) std::atomic<uint64_t> pf_epoch_{0};
++  struct alignas(64) Pf { Range r[kMaxPf]; int k = 0; };
++  Pf pf_[256];
+ };
+ 
+ Pool* g_pool = nullptr;
+@@ -434,6 +487,20 @@
+ 
+ // Raw-pointer core: out[T][H] = sum over non-skipped (t, k) of w[t,k] * expert(ids[t,k], x[t]).
+ struct Job { int e, n; int tok[MAXT]; float wt[MAXT]; };
++// agx-ai: prefetch of the next layer's likely experts (QWEN38_CPU_EXPERTS_PREFETCH=N experts per worker, 0 = off):
++// the CPU experts of each layer in the previous decode step (most tokens first) are prefetched by the idle workers
++// into their caches while the GPU computes, and each worker then computes the experts that it prefetched.
++int g_pf_per_worker = [] { const char* v = std::getenv("QWEN38_CPU_EXPERTS_PREFETCH"); return v ? std::atoi(v) : 0; }();
++int g_cur_layer = -1;  // the decode layer of the current compute_layer call (-1: none)
++struct PrevJobs { int n = 0; int e[MAXT * 16]; int cnt[MAXT * 16]; };
++PrevJobs g_prev[64];
++struct PfOwner {  // layer -> expert -> worker that prefetched it in this step (-1: none)
++  int8_t w[64][512];
++  PfOwner() { std::memset(w, -1, sizeof(w)); }
++  int8_t* operator[](int l) { return w[l]; }
++};
++PfOwner g_pf_owner;
++std::atomic<int64_t> g_pf_jobs{0}, g_pf_hits{0};
+ // One work item per expert by default (fastest in the trace-driven bench); set_slices() splits further.
+ int g_slices[I / GS + 1] = {0, 640};
+ int g_nslices = 1;
+@@ -475,6 +542,12 @@
+     if (tm) nres = static_cast<int>(std::find_if(jobs, jobs + J, [&](const Job& jb) { return tm[jb.e]; }) - jobs);
+     std::stable_sort(jobs, jobs + nres, [](const Job& a, const Job& b) { return a.n > b.n; });
+   }
++  const int cl = g_cur_layer;
++  if (cl >= 0 && cl < 64) {
++    PrevJobs& pj = g_prev[cl];
++    pj.n = J;
++    for (int j = 0; j < J; ++j) { pj.e[j] = jobs[j].e; pj.cnt[j] = jobs[j].n; }
++  }
+   const int nw = g_pool->size();
+   const size_t per_job = MAXT * H + MAXT * (H / GS);
+   const size_t per_worker = 3 * MAXT * I + MAXT * H + MAXT * (I / GS);
+@@ -500,6 +573,18 @@
+   uint8_t used[256] = {};
+   TORCH_CHECK(nw <= 256, "too many workers");
+   const int SL = g_nslices;
++  int8_t owner[Pool::kMaxItems];
++  const int8_t* own = nullptr;
++  if (cl >= 0 && cl < 64 && g_pf_per_worker > 0 && J * SL <= Pool::kMaxItems) {
++    int hits = 0;
++    for (int it = 0; it < J * SL; ++it) {
++      const int o = g_pf_owner[cl][jobs[it / SL].e];
++      owner[it] = static_cast<int8_t>(o);
++      hits += o >= 0 && it % SL == 0;
++    }
++    own = owner;
++    g_pf_hits.fetch_add(hits, std::memory_order_relaxed);
++  }
+   g_pool->run(J * SL, [&](int item, int w) {
+     const Job& jb = jobs[item / SL];
+     const int c0 = g_slices[item % SL], c1 = g_slices[item % SL + 1], cw = c1 - c0;
+@@ -583,7 +668,7 @@
+           _mm256_storeu_ps(o + n, _mm256_fmadd_ps(wv, _mm256_loadu_ps(y + t * 320 + n), _mm256_loadu_ps(o + n)));
+       }
+     }
+-  });
++  }, own);
+   int ws[256], nu = 0;
+   for (int w = 0; w < nw; ++w) if (used[w]) ws[nu++] = w;
+   constexpr int CH = 640;  // floats per reduction item
+@@ -994,6 +1079,28 @@
+ // of the GPU too, as their ids are in the request; not the cold ones that the GPU share masked) and written to the
+ // file every 256 decode steps, e.g. to choose the GPU's and the Radeon VII's experts from real use instead of the
+ // static rankings.
++// agx-ai: decode trace (QWEN38_DECODE_TRACE=<file>) for cpu_moe_bench (analyze_trace.py, the replay mode of bench):
++// per decode request {t_req, t_cpu_end, t_done (ns, steady clock), layer, T, ids[40]}, buffered and written every 4096
++// records (the last ones are lost when the server stops).
++struct TraceRec { int64_t t_req, t_cpu, t_done; int32_t layer, T; int32_t ids[40]; };
++struct DecodeTrace {
++  FILE* f = nullptr;
++  std::vector<TraceRec> buf;
++  int64_t t_cpu = 0;
++  DecodeTrace() {
++    if (const char* p = std::getenv("QWEN38_DECODE_TRACE")) { f = std::fopen(p, "wb"); buf.reserve(4096); }
++  }
++  void add(const TraceRec& r) {
++    if (!f) return;
++    buf.push_back(r);
++    if (buf.size() >= 4096) { std::fwrite(buf.data(), sizeof(TraceRec), buf.size(), f); std::fflush(f); buf.clear(); }
++  }
++};
++DecodeTrace g_trace;
++static inline int64_t now_ns() {
++  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++}
++
+ struct ExpertUsage {
+   const char* path = std::getenv("QWEN38_EXPERT_USAGE");
+   std::vector<uint32_t> n = std::vector<uint32_t>(RVII_L * RVII_E, 0);
+@@ -1051,6 +1158,7 @@
+   __atomic_store_n(&rh->seq, q, __ATOMIC_RELEASE);
+   g_rv.sent += 1; g_rv.jobs += J;
+   compute_layer(tab, E, skl, T, topk, idp, wp, xp, op, sp, scratch_floats, tm);
++  g_trace.t_cpu = now_ns();
+   const char* rs = g_rv.base + RVII_RESP_OFFSET;
+   const auto t0 = std::chrono::steady_clock::now();
+   for (int spin = 0;; ++spin) {
+@@ -1073,12 +1181,38 @@
+   uint8_t only[RVII_E];
+   for (int e = 0; e < RVII_E; ++e) only[e] = (skl[e] && !sk[e]) ? 0 : 1;
+   static thread_local std::vector<float> tmp(MAXT * H);
++  g_cur_layer = -1;
+   compute_layer(tab, E, only, T, topk, idp, wp, xp, tmp.data(), sp, scratch_floats, tm);
+   for (int i = 0; i < T * H; ++i) op[i] += tmp[i];
+ }
+ 
+ std::vector<int64_t> rvii_stats() { return {g_rv.sent, g_rv.jobs, g_rv.timeouts}; }
+ 
++// agx-ai: post the prefetch of the likely CPU experts of `layer` (from the previous step) to the idle workers.
++static void post_prefetch(const int64_t* tab, int E, int layer) {
++  if (g_pf_per_worker <= 0 || layer < 0 || layer >= 64 || !g_pool) return;
++  const int nw = g_pool->size();
++  for (int e = 0; e < 512 && e < E; ++e) g_pf_owner[layer][e] = -1;
++  const PrevJobs& pj = g_prev[layer];
++  int order[MAXT * 16];
++  for (int j = 0; j < pj.n; ++j) order[j] = j;
++  std::stable_sort(order, order + pj.n, [&](int a, int b) { return pj.cnt[a] > pj.cnt[b]; });
++  static std::vector<std::vector<Pool::Range>> per(256);
++  for (int w = 0; w < nw; ++w) per[w].clear();
++  int k = 0;
++  for (int r = 0; r < g_pf_per_worker; ++r)
++    for (int w = 1; w < nw && k < pj.n; ++w, ++k) {
++      const int e = pj.e[order[k]];
++      g_pf_owner[layer][e] = w;
++      const int64_t* p = tab + static_cast<int64_t>(e) * 6;
++      static const size_t sizes[6] = {819200, 25600, 819200, 25600, 819200, 25600};
++      for (int i = 0; i < 6 && static_cast<int>(per[w].size()) < Pool::kMaxPf; ++i)
++        per[w].push_back({reinterpret_cast<const char*>(p[i]), sizes[i]});
++    }
++  g_pf_jobs.fetch_add(k, std::memory_order_relaxed);
++  g_pool->prefetch(per);
++}
++
+ // ---------------------------------------------------------------- GPU request server
+ // Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[40] @64, w f32[40] @224, x f32[4*H] @448.
+ // Response slot: seq int64 @0, y f32[4*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
+@@ -1150,6 +1284,7 @@
+           else if (layer == 0 && gap < 1000000000LL) { window.step_gap_ns += gap; window.steps += 1; }
+         }
+         if (T >= 1 && T <= MAXT && layer >= 0) {
++          g_cur_layer = layer;
+           compute_layer_rv(layer, tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
+                         reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 224),
+                         reinterpret_cast<float*>(rq + 448), reinterpret_cast<float*>(rs + 64), scratch.data(),
+@@ -1158,7 +1293,22 @@
+           std::memset(rs + 64, 0, sizeof(float) * MAXT * H);
+         }
+         __atomic_store_n(reinterpret_cast<int64_t*>(rs), q, __ATOMIC_RELEASE);
++        if (g_cur_layer >= 0) {
++          const int nl = layer + 1 < 48 ? layer + 1 : 0;
++          post_prefetch(tab + static_cast<int64_t>(nl) * E * 6, E, nl);
++        }
++        g_cur_layer = -1;
+         last_done = clk::now();
++        if (g_trace.f && T >= 1 && T <= MAXT && layer >= 0) {
++          TraceRec r{};
++          r.t_req = std::chrono::duration_cast<std::chrono::nanoseconds>(tc0.time_since_epoch()).count();
++          r.t_done = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done.time_since_epoch()).count();
++          r.t_cpu = g_trace.t_cpu ? g_trace.t_cpu : r.t_done; g_trace.t_cpu = 0;
++          r.layer = layer; r.T = T;
++          std::memcpy(r.ids, rq + 64, sizeof(int32_t) * T * 10);
++          for (int i = T * 10; i < 40; ++i) r.ids[i] = -1;
++          g_trace.add(r);
++        }
+         const int64_t cns = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done - tc0).count();
+         g_compute_ns.fetch_add(cns, std::memory_order_relaxed);
+         g_served.fetch_add(1, std::memory_order_relaxed);
+@@ -1175,12 +1325,12 @@
+           const int64_t tj = g_tail_jobs.exchange(0), cj = g_cold_jobs.exchange(0);
+           std::fprintf(stderr, "cpu_moe decode steps=%lld: per step cpu %.2f ms, between layers %.2f ms, "
+                        "step tail %.2f ms (%.1f requests/step), cold experts %.0f/step of which tail %.1f; "
+-                       "promoted %lld, skipped %lld (total); Radeon VII experts %.0f/step, %lld timeouts\n",
++                       "promoted %lld, skipped %lld (total); Radeon VII experts %.0f/step, %lld timeouts; prefetched %.1f/step, hits %.1f/step\n",
+                        static_cast<long long>(window.steps), window.compute_ns / n / 1e6,
+                        window.layer_gap_ns / n / 1e6, window.step_gap_ns / n / 1e6, window.requests / n,
+                        cj / n, tj / n, static_cast<long long>(g_dyn.promoted),
+                        static_cast<long long>(g_dyn.skipped), (g_rv.jobs - window.rv_jobs0) / n,
+-                       static_cast<long long>(g_rv.timeouts));
++                       static_cast<long long>(g_rv.timeouts), g_pf_jobs.exchange(0) / n, g_pf_hits.exchange(0) / n);
+           window = StepStats{};
+           window.rv_jobs0 = g_rv.jobs;
+         }
+@@ -1318,3 +1468,10 @@
+   m.def("bridge_wait_add_f32", &bridge_wait_add_f32);
+ #endif
+ }
++
++// agx-ai: hooks for the replay mode of the offline benchmark (cpu_moe_bench/bench.cpp)
++#define SET_LAYER(l) (g_cur_layer = (l))
++#define AFTER_LAYER(tab, E, l, L) do { g_cur_layer = -1; const int nl_ = (l) + 1 < (L) ? (l) + 1 : 0; \
++    post_prefetch((tab) + static_cast<int64_t>(nl_) * (E) * 6, (E), nl_); } while (0)
++#define PF_REPORT() std::printf("prefetched %lld experts, %lld of them used\n", \
++    static_cast<long long>(g_pf_jobs.load()), static_cast<long long>(g_pf_hits.load()))

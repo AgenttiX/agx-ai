@@ -70,6 +70,11 @@ services:
       # QWEN38_CPU_EXPERTS_INT16=1 instead is practically exact and needs 16 threads (1-2,5-6,...,29-30).
       QWEN38_CPU_EXPERTS_INT8: "1"
       QWEN38_CPU_EXPERTS_CPUS: "1,5,9,13,17,21,25,29"
+      # While the GPU computes between two layers (~0.2 ms), the idle pool threads load the experts of the next layer
+      # that the CPU computed in the previous step (1 per thread, most tokens first) into their L3 cache, and then
+      # compute those experts first (cpu-moe-opt.patch): ~45 % of them are used again, 9 % less CPU time per step
+      # (README.md, CPU kernel and prefetch). 2 per thread were not faster.
+      QWEN38_CPU_EXPERTS_PREFETCH: "1"
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Image and video input with the vision tower on the CPU (README.md): 32 threads were the

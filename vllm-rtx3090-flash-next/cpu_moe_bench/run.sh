@@ -12,7 +12,7 @@ src=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantizat
 id=$(docker create "$image")
 docker cp -q "$id:$src" "$build/cpu_moe.cpp"
 docker rm "$id" >/dev/null
-flags=(-std=c++20 -O3 -mavx2 -mfma -mf16c -pthread)
+flags=(-std=c++20 -O3 -mavx2 -mfma -mf16c -mtune=znver2 -pthread)
 g++ "${flags[@]}" bw.cpp -o "$build/bw"
 g++ "${flags[@]}" -DPF_ROWS=6 -Istub -DKERNEL="\"$build/cpu_moe.cpp\"" bench.cpp -o "$build/bench"
 # The pool's CPUs as in the runtime: 1, 2 or 3 cores of each 4-core CCX of the Threadripper 3970X

@@ -50,7 +50,15 @@ input and a faster CPU expert kernel:
     that an int4 or int8 lm_head loads, and the serve script requires the MTP drafter only with `MTP_DEPTH` > 0.
     Until 2026-11-23 this was unconditional, which also gave the BF16 lm_head of the checkpoint here a quantized
     method, and the RTX 3090 configuration failed to start with MTP ("reduced draft vocabulary requires an
-    unquantized LM head"); the RTX 3070 runs without MTP and was not affected.
+    unquantized LM head"); the RTX 3070 runs without MTP and was not affected,
+  - and (2026-11-24) vLLM filters the top-k/top-p of 2-7 rows of logits with its Triton kernel instead of a full
+    sort of the vocabulary: the rejection sampler of MTP 3 does it for 4 rows of 248320 logits in every decode step
+    (919 instead of 248 µs; the step's tail on the GPU 4.8 instead of 5.4 ms). See
+    [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24).
+- [`cpu-moe-opt.patch`](cpu-moe-opt.patch) (2026-11-24, after `rvii-moe.patch`): a faster int8 kernel, a prefetch of
+  the next layer's likely experts into the L3 cache (`QWEN38_CPU_EXPERTS_PREFETCH`), the kernel compiled with
+  `-mtune=znver2`, and a decode trace for [`cpu_moe_bench`](#offline-benchmark-of-the-cpu-expert-kernel)
+  (`QWEN38_DECODE_TRACE`); see [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24).
 - [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
   (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
 - [`cpu-moe.patch`](cpu-moe.patch) (the runtime's `cpu_moe.cpp`, which computes the cold experts on the CPU during
@@ -167,6 +175,122 @@ decode is bound by the cold experts:
 
 The runtime itself has no newer release than v0.1.0 (2026-09-30).
 
+## CPU kernel and prefetch (2026-11-24)
+
+Where the time of a decode step went with the configuration of 2026-11-23, from a decode trace of the chat, depth and
+edit tests (`QWEN38_DECODE_TRACE`, [`cpu_moe_bench/analyze_trace.py`](cpu_moe_bench/analyze_trace.py); 5973 steps of 4
+tokens):
+
+| Part of a step | Time | |
+|---|---|---|
+| CPU experts (48 requests of the RTX 3090) | 32.0 ms | ~13 experts per layer (630 per step; 73 % with 1 token, 18 % 2, 6 % 3, 3 % 4) on 8 threads, ~0.6 ms per layer |
+| Waiting for the Radeon VII after the CPU | 0.3 ms | its ~520 experts per step never delay the CPU |
+| RTX 3090 between the layers | 13.8 ms | ~0.2 ms per layer: dense layers (int8 `_skinny_dot`, int4 Marlin in the Gated DeltaNet), norms, router, near the memory bandwidth |
+| RTX 3090 at the end of the step | 6.8 ms | lm_head 1.45 ms (BF16), 3 MTP drafts ~2 ms (each a 0.38 ms reduced-vocabulary head), sampling 0.9 ms |
+
+So the CPU's RAM was idle ~40 % of a step, and the CPU kernel itself reached ~55 GB/s of the 71 GB/s that the RAM
+delivers. Changes ([`cpu-moe-opt.patch`](cpu-moe-opt.patch), [`flash-next.patch`](flash-next.patch)):
+
+- **Prefetch of the next layer's likely experts** (`QWEN38_CPU_EXPERTS_PREFETCH=1`): after answering a layer, each
+  idle pool thread reads one expert that the CPU computed for the next layer in the previous step (the ones with the
+  most tokens first) into its CCX's L3 cache while the GPU computes, and computes the experts that it read first
+  (the others are claimed as before). 37.7 % of a layer's CPU experts were CPU experts of the same layer in the
+  previous step; of the 7 prefetched per layer, ~45 % are used. The prefetch has to use loads: on Zen 2, lines that
+  `prefetcht0/t2/nta` bring in are not kept in the L3 when the L2 evicts them (a 2.4 MB read afterwards ran at
+  ~30 GB/s, as from RAM, and at ~114 GB/s after plain loads), and the first version with prefetch instructions saved
+  nothing. A new request stops the prefetch (checked every 4 KB). 2 or 3 per thread did not fit in the ~0.2 ms gap.
+- **The int8 GEMV:** the products of an activation group (4 packed rows) are summed in int16 (each `vpmaddubsw` lane is
+  at most 2 * 15 * 127 = 3810, so 8 fit exactly) and widened once, and 8 instead of 16 columns at a time keep the sums
+  of 4 tokens in registers; an empty `asm` barrier keeps GCC from hoisting all 32 products of the 4 rows and spilling
+  them. An expert with 4 tokens: 9.0 instead of 7.0 GB/s on one core from the cache (1 token: ~25 as before);
+  bit-exact (the integer sums are the same).
+- **`-mtune=znver2`** for the kernel (1.5-3 % in the offline benchmark, the same as `-march=znver2`, which would make the
+  image require a Zen 2-compatible CPU). GCC 15 and clang 21 were not faster than the image's GCC 13.
+- **The sampler** (`flash-next.patch`): vLLM's rejection sampler applies top-k 20 / top-p 0.95 (the model's
+  generation config) to the 4 rows of the target's logits with a full sort of the 248320 tokens and a cumulative sum,
+  as vLLM uses its Triton top-k/top-p kernel only from 8 rows on: 919 µs per step, with the Triton kernel 248 µs and
+  the same tokens kept. The step's tail on the GPU: 4.8 instead of 5.4 ms.
+
+The offline replay of the trace ([`cpu_moe_bench`](#offline-benchmark-of-the-cpu-expert-kernel), 24 layers, 1500 steps,
+the traced GPU gaps spun out), CPU time per step of 24 layers: 14.1 ms before, 13.4 ms with the new GEMV, 12.2 ms with
+the prefetch too (-14 %). In the server (`--tests chat depth edit --repeat 2 --depth 6400 32000 --edit-depth 0`,
+generation in t/s; the decode statistics of the edit test):
+
+| Configuration | Chat | Depth 6.4k | Depth 32k | Edit | CPU / between layers / tail ms per step (edit) |
+|---|---|---|---|---|---|
+| Before (2026-11-23) | 43.2 | 56.2 | 56.6 | 60.3 | |
+| New GEMV, `-mtune=znver2`, prefetch | 48.7 | 59.8 | 59.5 | 63.7 | 43.2-44.9 / 13.3-13.6 / 5.4 |
+| The same, again | 47.9 | 59.1 | 57.1 | 63.9 | 43.3-44.4 / 13.1-13.3 / 5.4 |
+| **And the Triton top-k/top-p (current)** | 49.7 | 59.3 | 64.3 | 64.9 | 42.8-44.1 / 13.2-13.3 / 4.8 |
+
+The trace of the first run with the prefetch: CPU 28.8 instead of 32.0 ms per step (-10 %) for the same ~630 CPU
+experts.
+The current configuration with the full benchmark (`--tests chat depth edit prompt --repeat 2 --depth 6400 32000
+100000 --edit-depth 0 32000 --prompt-tokens 260000`), against the full benchmark of 2026-11-23 (see above):
+
+| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 260k | Peak VRAM |
+|---|---|---|---|---|---|
+| 2026-11-23 | 42.7 | 55.8 / 55.2 / 52.4 | 59.5 / 59.2 | 1904 / 2347 / 2106 / 2368 | 20236 MiB |
+| **2026-11-24** | **47.8** | **62.2 / 59.3 / 62.9** | **64.9 / 65.1** | 1939 / 2272 / 2231 / 2366 | 20236 MiB |
+| Change | +12 % | +11 / +7 / +20 % | +9 / +10 % | within the noise | |
+
+The chat and depth tests vary with the draft acceptance (36-45 % in these runs); the edit test (98 % acceptance) is the
+most stable: +8-10 %. Prefill does not use the changed code paths. No quality test was needed: the kernel's output is
+the same (6.7e-8 relative difference to the old kernel in the offline benchmark, as between two runs of the old one,
+whose threads sum in varying order), the prefetch changes only when the weights are read, and the sampler keeps the
+same tokens.
+
+Tried, not better (offline benchmark unless noted):
+
+- **Slices of an expert** as separate work items, for a better load balance (13 experts per layer on 8 threads): with
+  the int8 patterns of a layer's activations computed once per layer, a slice costs no more compute (-4 % from the
+  cache), but 5 column slices halved the bandwidth from RAM with 8 threads, as each thread reads 512 of every 2560
+  bytes of a row and the hardware prefetchers read the neighbouring slices' lines. With plenty of experts per layer
+  (no balance problem), the kernel reaches 61-63 GB/s, so the balance costs at most ~10 % anyway.
+- **A row-streaming loop order** (each packed row read contiguously, the sums in L1): 10 instead of 17 GB/s with one
+  thread from RAM.
+- **Longer prefetch distances** (2-3 groups ahead), `prefetcht0` instead of `t1`, prefetches spread over the loop:
+  62-63 GB/s vs 62. Plain loads with the same access pattern (800 KB at random 2.5 MB slots) read 71 GB/s, so the
+  kernel's loop leaves ~15 %; one thread computes at 17 GB/s from RAM, 25 from the cache, and reads at 28-30.
+- **12 or 16 pool threads** (with the new kernel): the same as 8.
+- **`torch.compile`** (`--compilation-config '{"mode":3,...}'` instead of the runtime's mode 0): fails at startup
+  ("auto_functionalized was not removed"). The GPU's work per layer is mostly weight reads near the bandwidth
+  anyway (int8 `_skinny_dot` at ~830 GB/s, Marlin).
+
+Not done:
+
+- **An int8 lm_head** (-0.7 ms per step, ~1.5 %, and ~0.3 GB of VRAM): the MTP drafter builds its reduced draft
+  vocabulary from the target's lm_head, which the runtime requires to be unquantized, so it would need a separate
+  BF16 copy of the draft rows and a quality test. The draft head (3 x 0.38 ms) likewise.
+- **Loader threads**: a second core of each CCX that reads the next experts with plain loads (which reach the RAM's
+  71 GB/s) into the shared L3 while the pool thread computes from the cache, for the ~15 % that the kernel's loop
+  leaves. It would take 8 more cores from the serving processes.
+
+### Ideas outside the containers (for review)
+
+These would change the host's configuration, so they are not implemented:
+
+1. **Faster RAM**: DDR4-2666 in 4 channels reads 71 GB/s; the Threadripper 3970X supports DDR4-3200 (and the Infinity
+   Fabric clock follows the memory clock up to 1600 MHz). If the modules allow it (BIOS: DOCP/XMP or manual timings),
+   +20 % bandwidth would shorten the CPU part (~60 % of a step) nearly proportionally: perhaps +10 % decode. Check the
+   stability with a memory test first, then rerun [`cpu_moe_bench/run.sh`](cpu_moe_bench/run.sh) and retune the
+   thread count.
+2. **L3 cache allocation for the pool cores** (`resctrl`; the CPU has `cat_l3`): the pool uses one core of each 4-core
+   CCX, and the serving processes and the desktop on the other three share and evict the CCX's 16 MB of L3 that holds
+   the prefetched experts. Reserving most of the L3 ways for the pool cores (e.g. 12 of 16) might keep more of them;
+   needs `mount -t resctrl` and a group with the pool CPUs (root).
+3. **The CPU frequency policy** `performance` (or the energy-performance preference `performance`) instead of
+   `powersave` / `balance_performance`: the pool threads alternate between spinning and short bursts of work every
+   ~0.2 ms, and each layer waits for the slowest of 8 threads.
+4. **Isolating the pool CPUs** (1, 5, ..., 29) from the scheduler and timer interrupts (`isolcpus=`, `nohz_full=`,
+   `irqaffinity=` on the kernel command line): an interrupted pool thread delays the whole layer. The container's
+   cpusets would then need the isolated CPUs explicitly (they are already pinned).
+5. **Huge pages for the expert arena** at boot (`hugepagesz=1G hugepages=58`): transparent huge pages covered all of
+   it now (57.9 GB of `AnonHugePages`), but on 2026-10-14 only 23.6 of 56 GiB after days of uptime, as the RAM was
+   fragmented. Reserving them would make it independent of the uptime, but takes the RAM from everything else.
+6. **The Radeon VII's power profile** (`high`, see above): ~15 % shorter worker latency, which is not on the critical
+   path now (0.3 ms of waiting per step).
+
 ## Measurements (2026-10-13, agx-z2e)
 
 RTX 3090 and Threadripper 3970X (32 cores, Zen 2), with the settings of [`docker-compose.yml`](docker-compose.yml)
@@ -247,3 +371,20 @@ balance (10-40 % slower in all modes, also in the server), int8 groups of 64 or 
 1.4e-2 and 1.6e-2), a prefetch distance of 16 instead of 6 rows (in the server). With faster RAM, the INT8 kernel
 should scale furthest: with 8 threads it is at 82 % of the measured bandwidth, and it is far from its compute limit.
 
+
+Since 2026-11-24 (see [CPU kernel and prefetch](#cpu-kernel-and-prefetch-2026-11-24)), the benchmark can also replay
+the server's real routing. Record a decode trace with the server (`QWEN38_DECODE_TRACE=/path/trace.bin` in the
+environment and the directory mounted; 184 bytes per layer request, ~55 MB for the chat, depth and edit tests), then:
+
+```sh
+python3 cpu_moe_bench/analyze_trace.py trace.bin --skip-out skip.bin   # time per step, tokens per expert, reuse
+# the kernel of the image (as in run.sh) and its decode path on the real routing of 24 layers (31 GB of RAM):
+g++ -std=c++20 -O3 -mavx2 -mfma -mf16c -mtune=znver2 -pthread -DPF_ROWS=6 -Icpu_moe_bench/stub \
+  -DKERNEL='"/path/cpu_moe.cpp"' cpu_moe_bench/bench.cpp -o bench
+QWEN38_CPU_EXPERTS_INT8=1 QWEN38_CPU_EXPERTS_PREFETCH=1 BENCH_E=512 BENCH_L=24 BENCH_SKIP=skip.bin \
+  BENCH_REPLAY=trace.bin ./bench 1,5,9,13,17,21,25,29 4 7 1500
+```
+
+The replay spins out the traced GPU time between the layers, so that the prefetch has the same idle time as in the
+server. Per layer, it measured ~12 % less CPU time than the server (24 layers: 14.1 ms; the server's 48: 32.0 ms), as
+the server's pool shares the CCXs with the serving processes; the differences between kernel versions carried over.

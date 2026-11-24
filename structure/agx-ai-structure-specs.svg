@@ -169,7 +169,7 @@
 <text x="925" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">RTX 3090 (24 GB)</text>
 <text x="925" y="689" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-27B<tspan font-weight="normal"> (128 | 1713)</tspan></text>
 <text x="925" y="707" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Terminal-RSI-27B<tspan font-weight="normal"> (133 | 1830)</tspan></text>
-<text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (56 | 1904)</tspan></text>
+<text x="925" y="725" font-size="14" font-weight="bold" fill="#30a2ff" text-anchor="middle">Qwen3.8-Flash-Next<tspan font-weight="normal"> (62 | 1939)</tspan></text>
 <text x="925" y="743" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 31B QAT<tspan font-weight="normal"> (77 | 1060)</tspan></text>
 <text x="925" y="761" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Radeon VII (16 GB)</text>
 <text x="925" y="779" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (142 | 1280)</tspan></text>

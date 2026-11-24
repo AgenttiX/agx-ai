@@ -94,3 +94,18 @@ diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next
  
          self.use_deepstack = (
              not self.language_model_only
+diff -ru a/usr/local/lib/python3.12/dist-packages/vllm/v1/sample/ops/topk_topp_sampler.py b/usr/local/lib/python3.12/dist-packages/vllm/v1/sample/ops/topk_topp_sampler.py
+--- a/usr/local/lib/python3.12/dist-packages/vllm/v1/sample/ops/topk_topp_sampler.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/v1/sample/ops/topk_topp_sampler.py
+@@ -357,7 +357,10 @@
+             return apply_top_k_top_p_triton(logits, k, p)
+         return apply_top_k_top_p_pytorch(logits, k, p, allow_cpu_sync=True)
+ 
+-    if HAS_TRITON and logits.shape[0] >= 8:
++    # agx-ai: the Triton kernel from 2 rows on (was 8): the rejection sampler of MTP 3 filters the target's 4 rows of
++    # 248320 logits in every decode step, which took 919 us with the full sort and 248 us with Triton on an RTX 3090
++    # (top_k 20, top_p 0.95; the same tokens kept).
++    if HAS_TRITON and logits.shape[0] >= 2:
+         return apply_top_k_top_p_triton(logits, k, p)
+ 
+     # Use pytorch sort implementation for small batch sizes.

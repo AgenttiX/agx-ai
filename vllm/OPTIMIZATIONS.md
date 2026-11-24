@@ -137,6 +137,9 @@ What has given the largest gains, roughly in order:
   batch sizes that occur: `max-num-seqs` x (1 + drafted tokens). [1] for one sequence without speculative decoding,
   [1, 2, 3] for MTP 2, [1, 2, 3, 4, 6, 8, 9, 12] for 4 sequences with MTP 2. Eager mode is ~2x slower (7.4 vs
   15.3 t/s).
+- The Flash-Next runtime does not compile (`mode: 3` fails at startup with "auto_functionalized was not removed"),
+  so it runs with `mode: 0`; its GPU part per layer is mostly weight reads near the bandwidth (int8 `_skinny_dot`,
+  int4 Marlin) anyway.
 - Keep the compile caches on a volume (`TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, the `vllm-cache` volume):
   gfx906 first start ~6 min, later 1.5-3 min. `TORCHINDUCTOR_COMPILE_THREADS=1` when the RAM is nearly all pinned.
 
@@ -186,6 +189,11 @@ What has given the largest gains, roughly in order:
   nvidia/Qwen3.5-4B-Qwen3.8-27B-Draft): the draft config is rewritten into an MTP head, and once that is skipped, the
   v2 runner's draft speculator does not keep the draft's Gated DeltaNet state (acceptance 1-12 %); the v1 runner
   rejects M-RoPE drafts. See [`../vllm-rtx3090`](../vllm-rtx3090/README.md#external-draft-model-qwen35-4b-qwen38-27b-draft-2026-11-23).
+- **The rejection sampler sorts the vocabulary for top-k/top-p** when fewer than 8 rows are verified (vLLM 0.31-0.33:
+  `apply_top_k_top_p` uses its Triton kernel only from 8 rows): with MTP 3 (4 rows of 248320 logits, top_k 20,
+  top_p 0.95) 919 µs per step on an RTX 3090, with the Triton kernel 248 µs and the same tokens kept. flash-next
+  lowers the threshold to 2 rows (`flash-next.patch`): -0.6 ms per decode step. Check it in a profile of the step's
+  tail (`--profiler-config '{"profiler":"torch","torch_profiler_dir":...}'`, `POST /start_profile`).
 - Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with
   repeated text gives ~98 % acceptance.
 
@@ -219,6 +227,23 @@ What has given the largest gains, roughly in order:
   the Radeon VII's experts first) and with the experts ranked by their **measured** decode use
   (`QWEN38_EXPERT_USAGE`; the runtime's static ranking put only 11.8 % of the routed experts on the GPU's 24 hot
   ones, the measured one 24.8 %). Two GPUs of different vendors cooperate through a host-memory protocol, not NCCL.
+- **CPU expert kernel on Zen 2** (flash-next, 2026-11-24, `cpu-moe-opt.patch`): find the bottleneck with a decode
+  trace first (`QWEN38_DECODE_TRACE`, `cpu_moe_bench/analyze_trace.py` and the replay mode of `cpu_moe_bench`): the
+  CPU part was ~60 % of a step and the RAM was idle while the GPU computed (~0.2 ms between the layers, ~40 %).
+  - **Loads, not prefetch instructions, to fill the L3 cache:** on Zen 2, lines brought in by
+    `prefetcht0/t2/nta` are not kept in the L3 when the L2 evicts them (a 2.4 MB read afterwards: ~30 GB/s, as
+    from RAM; after plain loads: ~114 GB/s). With loads, the idle pool threads read the experts that the next layer
+    used in the previous step (`QWEN38_CPU_EXPERTS_PREFETCH=1`, ~45 % of them are used again) and compute them first:
+    -9 % CPU time per step. More than 1 per thread did not fit in the gap.
+  - **int8 GEMV with AVX2:** sum the `vpmaddubsw` products of 4 rows in int16 (exact for 4-bit weights and int8
+    activations), and keep the accumulators of 4 tokens in registers (8 columns at a time, with an empty `asm`
+    barrier so that GCC does not hoist all products and spill them): 4-token experts 7.0 -> 9.0 GB/s per core,
+    -5.5 % CPU time; bit-exact. `-mtune=znver2` (portable, unlike `-march=znver2`, which gave the same) another
+    ~2 %; clang 21 and GCC 15 were not faster than the image's GCC 13.
+  - Not better: column slices of an expert for load balance (strided rows halve the RAM bandwidth with 8 threads,
+    as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
+    distances, 12-16 threads. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same
+    access pattern.
 - **Embedding model in RAM** (rtx-a4000): `offload-backend: prefetch`, `offload-group-size: 1`,
   `offload-num-in-group: 1`, `offload-prefetch-step: 2` (step 1/2/3: 5895/7153/7560 t/s).
 
