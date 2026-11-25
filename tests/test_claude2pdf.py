@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -87,7 +88,10 @@ def options(level: str = "results", **kw: Any) -> argparse.Namespace:
 
 def test_project_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(session, "PROJECTS_DIR", tmp_path)
-    assert session.project_dir(Path("/home/a.b/my_repo")) == tmp_path / "-home-a-b-my-repo"
+    if sys.platform == "win32":
+        assert session.project_dir(Path("C:/Users/a.b/my_repo")) == tmp_path / "C--Users-a-b-my-repo"
+    else:
+        assert session.project_dir(Path("/home/a.b/my_repo")) == tmp_path / "-home-a-b-my-repo"
 
 
 def test_active_branch_and_events(jsonl: Path) -> None:

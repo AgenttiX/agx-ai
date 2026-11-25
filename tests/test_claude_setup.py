@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agx_ai.claude import setup as claude_setup
+from tests.conftest import requires_symlinks
 
 
 def test_local_instructions() -> None:
@@ -37,6 +38,7 @@ def make_repo(repo: Path) -> None:
         (repo / "agents" / name / "repo-item" / "file.md").write_text("repo\n")
 
 
+@requires_symlinks
 def test_configure(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     claude = tmp_path / "claude"
@@ -72,6 +74,7 @@ def test_configure(tmp_path: Path) -> None:
     assert not (claude / "settings-old-3.json").exists()
 
 
+@requires_symlinks
 def test_configure_without_local_instructions(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     claude = tmp_path / "claude"

@@ -1,6 +1,9 @@
 """Tests of agx_ai.benchmark.temps with a fake hwmon tree."""
 
 from pathlib import Path
+import sys
+
+import pytest
 
 from agx_ai.benchmark import temps
 
@@ -17,6 +20,7 @@ def _hwmon(root: Path, n: int, name: str, device: Path, sensors: dict[str, tuple
             (dev / f"{key}_label").write_text(label + "\n")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="hwmon is Linux-specific")
 def test_hwmon_sensors_and_summary(tmp_path: Path) -> None:
     root = tmp_path / "hwmon"
     _hwmon(root, 0, "amdgpu", tmp_path / "pci" / "0000:4f:00.0", {"temp1": ("edge", 40000), "temp3": ("mem", 45500)})

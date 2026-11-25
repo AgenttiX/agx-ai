@@ -11,6 +11,7 @@ from types import ModuleType
 import pytest
 
 from agx_ai.hostname import REPO_DIR
+from tests.conftest import requires_symlinks
 
 _spec = importlib.util.spec_from_file_location("graft_mtp", REPO_DIR / "vllm" / "graft_mtp.py")
 assert _spec is not None
@@ -48,6 +49,7 @@ def make_checkpoint(path: Path, shards: dict[str, dict[str, bytes]]) -> None:
     (path / "config.json").write_text("{}")
 
 
+@requires_symlinks
 def test_graft(tmp_path: Path) -> None:
     make_checkpoint(tmp_path / "target", {"a.safetensors": {"model.w": b"\x01\x02"}})
     make_checkpoint(tmp_path / "base", {

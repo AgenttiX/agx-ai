@@ -65,7 +65,7 @@ def _args(**kwargs: object) -> argparse.Namespace:
 
 
 def test_docker_prefix() -> None:
-    assert bench_container.docker_prefix(_args(exe=Path("/opt/llama"))) == ["/opt/llama"]
+    assert bench_container.docker_prefix(_args(exe=Path("/opt/llama"))) == [str(Path("/opt/llama"))]
     assert bench_container.docker_prefix(_args()) == ["docker", "exec", "llama-cpp"]
     cmd = bench_container.docker_prefix(_args(image="img:tag", env=["A=1"], docker_arg=["--gpus=all"]))
     assert cmd[:2] == ["docker", "run"]

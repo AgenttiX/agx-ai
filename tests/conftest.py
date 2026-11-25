@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import socket
+import tempfile
 from typing import Any
 import urllib.parse
 
@@ -22,6 +23,19 @@ import pytest
 from agx_ai.benchmark import bench_http
 from agx_ai.hostname import REPO_DIR
 from tests.fake_server import FakeServer
+
+
+def _can_symlink() -> bool:
+    """Whether symlinks can be created (on Windows this requires Developer Mode or administrator privileges)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            (Path(tmp) / "link").symlink_to(Path(tmp))
+        except OSError:
+            return False
+    return True
+
+
+requires_symlinks: pytest.MarkDecorator = pytest.mark.skipif(not _can_symlink(), reason="symlinks are not available")
 
 DEFAULT_URLS: str = ",".join(f"http://localhost:{port}" for port in range(9931, 9936))
 ENV_FILE: Path = REPO_DIR / "llama-cpp" / "llama-cpp.env"

@@ -144,6 +144,8 @@ exclude_lines = [
 show_missing = true
 
 [tool.pyrefly]
+# Some of the scripts use Linux-only APIs (e.g. AF_UNIX and os.pwrite), and the Docker images are Linux-based.
+python-platform = "linux"
 project-includes = [
     "agents",
     "agx_ai",
