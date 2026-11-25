@@ -426,9 +426,10 @@ def build(specs: bool) -> str:
                 [(llama, gemma_moe, "6.7", "80")], ["kubuntu.svg"], [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("laptop", 654, spec("Windows laptop"),
                 [spec("Core i7-1260P, 32 GB RAM"), pub("T550 Laptop GPU (4 GB)")],
-                # llama-cpp-t550/README.md, natively on Windows: 26B-A4B chat (the generation test was not valid),
-                # E4B; 4096-token prompts
-                [(llama, gemma_moe, "7.9", "92"), (llama, "Gemma 4 E4B", "31", "144")], ["windows.svg"],
+                # llama-cpp-t550/README.md: 26B-A4B natively on Windows with b11262 (chat; the generation test was not
+                # valid); E4B with b12242 in Docker (2026-11-25, as fast as b12250 natively), generation test;
+                # 4096-token prompts
+                [(llama, gemma_moe, "7.9", "92"), (llama, "Gemma 4 E4B", "35", "253")], ["windows.svg"],
                 [(llama, "llama.cpp", "CUDA + CPU")]),
         Machine("desktop", 925, spec("agx-z2e"),
                 [spec("Threadripper 3970X, 128 GB RAM"), pub("RTX 3090 (24 GB)")],

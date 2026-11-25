@@ -9,10 +9,10 @@ The benchmark results of this computer are saved with the hostname `t550` (`--ho
 Two models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
 the loaded one):
 
-- `google/gemma-4-e4b-qat`, loaded on request: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
+- `google/gemma-4-e4b-qat`, the default model, loaded at startup: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
   entirely on the GPU, with its MTP drafter, flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot
   and the vision/audio encoder (mmproj) on the CPU.
-- `google/gemma-4-26b-a4b-qat`, the default model, loaded at startup: Gemma 4 26B-A4B QAT
+- `google/gemma-4-26b-a4b-qat`, loaded on request: Gemma 4 26B-A4B QAT
   (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`), with the MoE experts in RAM and everything else on the GPU, MTP,
   q8_0 K and V caches, `ctx-size = 73728`, a single slot and the vision encoder on the CPU (see
   [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
@@ -21,6 +21,83 @@ the loaded one):
 which is faster and has room for the 26B-A4B's vision encoder. Where Docker/WSL 2 needs different settings, the
 Docker/WSL 2 settings are kept in the preset as comments, marked "Docker/WSL 2"; uncomment them (and comment out the
 native ones next to them) to use the preset with Docker.
+
+## Summary (2026-11-25)
+
+Natively on Windows with llama.cpp b12250 (CUDA 12.4 build), GPU power limit 20 W; Docker with
+`server-cuda13-b12242`. tg = generation, pp = prompt processing; "chat" = the chat test of
+[`bench_http.py`](../agx_ai/benchmark/README.md), the realistic generation speed.
+
+| Model | Context | VRAM (peak) | RAM (llama-server) | tg: chat / at 16k / at 32k | pp: 4096 tokens / at 16k / at 32k | Notes |
+|---|---|---|---|---|---|---|
+| Gemma 4 E4B QAT UD-Q4_K_XL, MTP 2 | 69632 | 3883 MiB | ~4.2 GB | 27.8 (native), 32.9 (Docker) / 26.9 (Docker) / 19.3 t/s | 241 (`llama bench`), 253 (Docker) / 215 (Docker) / 180 t/s | Docker is as fast as native; builds after b12250 generate up to 29 % slower at long contexts (see [below](#llamacpp-update-2026-11-25)) |
+| Gemma 4 26B-A4B QAT UD-Q4_K_XL, MTP 2, experts in RAM | 73728 | 3867 MiB | ~16.2 GB | 6.2 (7.9 with b11262 and more free RAM on 2026-09-30) / 6.0 / - t/s | 87 / 82 / - t/s | RAM-bound: keep ~2 GB free for the page cache (see [below](#gemma-4-26b-a4b-qat-with-b12250-natively-2026-11-25)); 4-5 times slower than the E4B, but much stronger; in Docker only without the vision encoder (RAM of the WSL 2 VM) |
+
+## llama.cpp update (2026-11-25)
+
+Updated from b11262 (native, CUDA 12.4) and b11151 (Docker) to **b12250** (native) and **b12242** (Docker,
+`ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242`, the newest image at or before b12250). Both are now pinned:
+[`docker-compose.yml`](docker-compose.yml) names the image tag, and `%LOCALAPPDATA%\llama.cpp\current.txt` the native
+build (`..\llama-cpp-windows\install-llama-cpp.ps1 -Build b12250 -Backend cuda-12.4`). The newest build, b12686, is
+faster for prompts too but slower for generation at long contexts:
+
+| Gemma 4 E4B QAT, production preset, native | b11262 | **b12250** | b12686 |
+|---|---|---|---|
+| Chat (MTP) | 24.9 t/s | **27.8 t/s** | 21.0-32.0 t/s |
+| 32k-token code context: pp / tg (MTP) | 94.8 / 19.1 t/s | **180.4 / 19.3 t/s** | 142.2 / 13.6 t/s |
+| 64k-token code context: pp / tg (MTP) | (b11151 in Docker: 81 / 16.7 t/s) | | 108.6 / 11.6 t/s |
+| `llama bench` pp4096 (`-fa 1 -ub 256`) | 137-145 t/s | 241 t/s | 230-247 t/s |
+| `llama bench` tg64 at depth 0 / 16384, ratio (without MTP) | 0.79, 0.79 | 0.78 | 0.71-0.72 |
+| Peak VRAM | 3861 MiB | 3883 MiB | 3879 MiB |
+
+- **Prompt processing is ~70-90 % faster since b12100** (`llama bench` pp4096: b11900 145 t/s, b12100 249 t/s). The
+  likely cause is the fused FFN gate/up matmuls + GLU in MMQ
+  ([ggml-org/llama.cpp#29948](https://github.com/ggml-org/llama.cpp/pull/29948), 2026-10-25): Gemma's gated GELU
+  FFN no longer needs separate gate and up matmuls and a separate GLU kernel. On this GPU, 67 % of the prompt time is
+  in the quantized matmuls (MMQ with dp4a, as TU117 has no tensor cores) and 25-30 % in flash attention at 16k tokens
+  of context (Nsight Systems).
+- **Generation at long contexts got slower after b12250** (b12400 and b12686 measured): through the server with MTP
+  29 % at 32k tokens (13.6 vs 19.1 t/s) and 30 % at 64k tokens; without MTP (`llama bench -d 32768`) 16 %. At depth
+  0 all builds generate equally fast (23-24 t/s without MTP). The Turing configurations of the flash-attention and
+  MMVQ kernels did not change between these builds, and the commit could not be narrowed down further on this
+  laptop (see the measurement noise below). b12250 has the faster prompts without this regression.
+- **ubatch** (b12686, `llama bench` pp4096): 128 / 256 / 512 / 1024 = 227 / 231 / 227 / 226 t/s, so the
+  `ubatch-size = 256` that MTP needs costs nothing.
+- **Docker** with b12242 (16k-token context: pp 215 t/s, tg 26.9 t/s; chat 32.9 t/s; 4096-token prompt 253 t/s;
+  peak VRAM 3895 MiB) is as fast as native b12250. The image now sets `LLAMA_ARG_PORT=8080`, which overrides
+  `port = 9931` of `config.ini`, so [`docker-compose.yml`](docker-compose.yml) sets `LLAMA_ARG_PORT` back.
+- The CUDA 13.5 build of b12211 and later (the default of `install-llama-cpp.ps1`) still fails with the driver
+  596.52 (CUDA 13.2): `the provided PTX was compiled with an unsupported toolchain`. Use `-Backend cuda-12.4`.
+
+### Can the kernels be optimized for this GPU?
+
+- **Native Turing kernels would not help.** The Windows CUDA 12.4 build and the Docker CUDA 13 image both contain
+  Turing only as compute_75 PTX (native SASS only for sm_86, sm_89 and newer; `cuobjdump --list-elf`/`--list-ptx`).
+  The driver JIT-compiles this PTX, so the Turing code paths are already used (the MMVQ Turing parameter table, the
+  MMA flash-attention kernels), and the result is cached. A build with `CMAKE_CUDA_ARCHITECTURES=75-real` would only
+  save the JIT at the first start.
+- **Generation is close to the memory bandwidth.** The GDDR6 runs at 12 Gbps on a 64-bit bus (96 GB/s, also at the
+  20 W limit). The E4B reads ~2.5 GB of GPU weights per token, so the ceiling is ~38 t/s without MTP, and
+  `llama bench` reaches 23-24 t/s (~63 %). The remaining time per token includes the per-layer embeddings, which
+  Gemma 4 E-models compute on the CPU (a busy CPU slowed generation from 23 to 15 t/s), and small kernels.
+- **Prompt processing is compute-bound** on the dp4a MMQ kernels at the 20 W power limit (the GPU runs at
+  ~1.5-1.8 GHz and reports the software power cap during prompts). TU117 has no tensor cores, so the int8/FP16 MMA
+  paths of newer GPUs do not apply. The largest gain, the fused gate/up MMQ, came with the update.
+- **The remaining kernel-level opportunity** is the flash-attention decode path at long contexts (the regression
+  above shows that it is sensitive to the kernel changes): with the 512-wide global-attention heads, it uses the
+  MMA kernel, which on TU117 runs on the FP16 units instead of tensor cores. Changing it means patching and building
+  llama.cpp (no MSVC on this computer; a Docker build would work), which was not attempted.
+
+### Measurement noise on this laptop
+
+The GPU's clock follows the shared CPU/GPU power budget and the temperature: `llama bench` tg at depth 0 varied
+between 15 and 24 t/s for the same build within an hour, and the chat test between 21 and 32 t/s. Compare builds
+in alternating order, with the ratio of tg at depth to tg at depth 0 from the same run, and confirm with the server
+benchmark (which repeats each request). Stop other llama.cpp processes first: a leftover server makes everything
+4 times slower without an error. At the end of the session on 2026-11-25, the GPU ran at only ~510 MHz at 18.7 W
+with the software power cap active (`clocks_event_reasons.active` 0x4 in `nvidia-smi`), on mains power, and the
+E4B generated only 18-19 t/s in chat, so that run was discarded. Check the clocks with
+`nvidia-smi --query-gpu=power.draw,clocks.sm,clocks_event_reasons.active --format=csv` before benchmarking.
 
 ## Hardware and software
 
@@ -32,7 +109,7 @@ native ones next to them) to use the preset with Docker.
 | iGPU | Intel Iris Xe Graphics (96 EU, shares the system RAM), drives the display |
 | dGPU | NVIDIA T550 Laptop GPU: Turing TU117 (sm_75, no tensor cores), 4 GB GDDR6 (64-bit), PCIe link x4 (nvidia-smi: gen 4, max width x16), driver 596.52 (CUDA 13.2) |
 | dGPU power limit | 30 W (default and maximum). On 2026-09-27 and -28 the platform capped it at 20 W ("Current Power Limit" in `nvidia-smi -q -d POWER`, while "Requested Power Limit" was 30 W), which made the GPU ~35 % slower (see the results of 2026-09-27 below). |
-| llama.cpp | `ghcr.io/ggml-org/llama.cpp:server-cuda13`, build b11151 |
+| llama.cpp | Natively: b12250, CUDA 12.4 build (since 2026-11-25; b11262 before). Docker: `ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242` (since 2026-11-25; b11151 before) |
 
 ## Gemma 4 E4B QAT: results
 
@@ -40,7 +117,7 @@ Measured with [`agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/README.md) 
 `benchmark/results/t550.jsonl`), llama.cpp build b11151.
 tg = token generation, pp = prompt processing, acc = accepted MTP draft tokens.
 
-### Gemma 4 E4B QAT UD-Q4_K_XL, ctx 69632, f16 KV cache, MTP `spec-draft-n-max = 2` (current, 2026-09-28)
+### Gemma 4 E4B QAT UD-Q4_K_XL, ctx 69632, f16 KV cache, MTP `spec-draft-n-max = 2` (2026-09-28, build b11151 in Docker; for the current builds see the [summary](#summary-2026-11-25))
 
 GPU power limit 20 W (see above). "Chat" = 12 chat prompts of up to 512 tokens,
 "16k/64k context" = questions about 16k/64k tokens of Python code, up to 512 generated tokens.
@@ -304,7 +381,7 @@ as Docker. This removes the 15.5 GiB memory limit of the WSL 2 VM and the slow f
 
 ```powershell
 docker compose stop                                   # in this directory: the GPU and port 9931 are needed
-..\llama-cpp-windows\install-llama-cpp.ps1 -Backend cuda-12.4
+..\llama-cpp-windows\install-llama-cpp.ps1 -Build b12250 -Backend cuda-12.4   # see "llama.cpp update" above
 .\windows\start.ps1                                    # runs in the foreground, Ctrl+C stops it
 ..\llama-cpp-windows\stop-llama-server.ps1           # or stop it from another window
 ```
@@ -358,6 +435,34 @@ Other settings, natively (chat with 6 requests, prompt processing with 4096 toke
 | **`threads = 8`, memory-mapped weights** (the preset) | 7.9 t/s | 92 t/s | |
 | `threads = 12` / `16` | 7.7 / 7.2 t/s | 90 / 82 t/s | as in WSL 2, 8 threads are the best |
 | `load-mode = none` | 8.6 t/s | 95 t/s | the experts are copied to pinned host memory (13.2 GiB of "shared GPU memory"), which Windows cannot page out and which counts against the commit limit: 41.2 of 42.3 GB were committed (the page file had to grow). Too close to the limit for other programs, so not used. |
+
+### Gemma 4 26B-A4B QAT with b12250, natively (2026-11-25)
+
+The same preset, GPU power limit 20 W, with Docker Desktop's idle WSL 2 VM (1.9 GB) and the usual background apps
+running:
+
+| Test | b12250 | b11262 (2026-09-30) |
+|---|---|---|
+| Chat (6 requests) | 6.2 t/s (5.6-7.5), acc 70 % | 7.9 t/s (6.2-10.0), acc 71 % |
+| 16k context: pp / tg | **82.1** / 6.0 t/s | 75.5 / 8.0 t/s |
+| Prompt processing, 4096 tokens | 86.8 t/s | 91.8 t/s |
+| Peak GPU memory | 3867 MiB | 3833 MiB |
+
+RAM was the limit in these runs: the llama-server process had a 16.2 GB working set, 6.8 GB of it private memory
+(the rest is the memory-mapped experts), Windows had only 0.5-0.6 GB available, and pages were read from the disk
+(~60/s) during generation, i.e. some experts were re-read. The private memory was the same with b11262 (6.4 GB
+while loading), so it is not new with the build. Right after the b12250 run, b11262 under the same conditions was
+no faster: chat 6.4 t/s (5.3-7.9), acc 71 %, and a 4096-token prompt at 67.4 t/s, i.e. b12250 processes prompts
+~29 % faster (the gate/up fusion in MMQ also covers the shared FFN and the expert offload) and generates as fast.
+The lower speeds than on 2026-09-30 come from the RAM, not from the build.
+
+To give the 26B-A4B its full speed natively, keep ~2 GB free for the page cache: close the background apps
+([`free-ram.ps1`](free-ram.ps1)) and Docker Desktop, or, after using the Docker configuration, at least drop the
+page cache of its WSL 2 VM, which keeps the E4B's files (7.1 GB after the Docker E4B benchmarks):
+
+```powershell
+docker run --rm --privileged --entrypoint sh ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242 -c "sync; echo 3 > /proc/sys/vm/drop_caches"
+```
 
 ## Other findings
 

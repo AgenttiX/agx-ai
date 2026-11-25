@@ -3,12 +3,15 @@
 # and the VRAM budget, context size probes and speed results in README.md.
 services:
   llama-cpp:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
+    # Pinned, as builds change the compute buffers, which can break the tight VRAM budget (see README.md).
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242
     container_name: llama-cpp
     env_file:
       - path: ../llama-cpp/llama-cpp.env
         # required: false
     environment:
+      # The image sets LLAMA_ARG_PORT=8080, which would override the port of config.ini.
+      LLAMA_ARG_PORT: "9931"
       # The image requires CUDA >= 13.4, but the driver 596.52 provides CUDA 13.2.
       # The CUDA 13.4 runtime works with it thanks to CUDA minor version compatibility.
       NVIDIA_DISABLE_REQUIRE: "1"

@@ -99,7 +99,8 @@ What has given the largest gains, roughly in order:
 
 - The ubatch size is a trade between pp and VRAM (compute buffers): rtx3090 dense models ub 1024 = +1-5 % pp for
   +240-480 MiB, so they use 512; the MoE Gemma 4 26B-A4B gains +22-34 % from 2048 for ~870 MiB, so it uses 2048;
-  radeon-vii Gemma 256/512/1024 = 1133/1501/1851 t/s; t550 26B 1024 = +30 % over 512, 2048 no faster. MoE models and
+  radeon-vii Gemma 256/512/1024 = 1133/1501/1851 t/s; t550 26B 1024 = +30 % over 512, 2048 no faster; t550 E4B
+  (b12686, everything on the GPU) ub 128/256/512/1024 = 227/231/227/226 t/s, i.e. flat. MoE models and
   configurations with experts on the CPU gain the most.
 - Lowering the ubatch is a way to free VRAM (radeon-vii Qwen: ub 256 = -116 MiB, 1024 = +250 MiB vs 512).
 - **Gemma vision encodes an image in one ubatch**, so the ubatch caps the image tokens (ub 512: 512 instead of
@@ -268,6 +269,21 @@ What has given the largest gains, roughly in order:
   Check the release tags of `mixa3607/llama.cpp-gfx906` with a MoE model before updating (radeon-vii).
 - Pin build tags and measure updates A/B in alternating order: compute buffers change between builds (b11176 needed
   3.2 GiB vs 2.0 GiB for Flash-Next; b11552 peaked lower for Gemma), which can break a tight context.
+- **Measure the update at depth and through the server with MTP, not only `llama bench` at depth 0.** On the T550
+  (Turing without tensor cores, t550), b12100-b12250 processed prompts ~70-90 % faster than b11262 for Gemma 4 E4B
+  (pp4096 145 -> 249 t/s, from the fused FFN gate/up + GLU in MMQ, ggml-org/llama.cpp#29948, between b11900 and
+  b12100), but a build after b12250 (b12686 still has it) generated 29 % slower at 32k context with MTP (13.6 vs
+  19.1 t/s) and 16 % slower without MTP at 32k (`llama bench -d 32768`), while depth 0 was unchanged. b12250 keeps
+  both the prompt speed and the old generation speed, so the T550 is pinned to it. For Gemma 4 26B-A4B with the
+  experts in RAM (op offload), b12250 processed 4096-token prompts 29 % faster than b11262 and generated as fast.
+- **Bisecting on a laptop:** the GPU clock follows the shared CPU/GPU power budget (tg at depth 0 varied 15-24 t/s
+  between runs of the same build), so single `llama bench` runs cannot resolve a 5-10 % change. Compare the ratio of
+  tg at depth to tg at depth 0 within one run, and confirm with the server benchmark. Old build releases are
+  downloadable for a few weeks (b11262 was still there 8 weeks later), so a bisect can use the release binaries.
+- **Turing (sm_75) kernels are JIT-compiled from PTX** in both the Windows CUDA 12.4 builds and the Docker CUDA 13
+  images (native SASS only for sm_86, sm_89 and newer; `cuobjdump --list-elf`/`--list-ptx` on `ggml-cuda.dll` or
+  `libggml-cuda.so`). The PTX is compute_75, so the Turing code paths (MMVQ Turing table, MMA flash attention) are
+  used; a native sm_75 build would only save the first-start JIT, which the CUDA cache already avoids.
 - CUDA images: `NVIDIA_DISABLE_REQUIRE=1` if the image needs a newer CUDA than the driver; the images set
   `LLAMA_ARG_PORT=8080`, which overrides `config.ini`. Pascal/Turing: keep a `cuda-cache` volume with
   `CUDA_CACHE_MAXSIZE=4G` (JIT; restart 343 -> 121 s). Windows: the CUDA 12.4 build for Turing with an older driver;
@@ -300,6 +316,12 @@ ggml-org/llama.cpp#24427 (rtx3090, radeon-vii).
   [`../nvidia-limit`](../nvidia-limit).
 - Laptops: check the actual power limit (`nvidia-smi -q -d POWER`; the T550 was capped at 20 W instead of 30 W, -35 %)
   and close background apps ([`../llama-cpp-t550/free-ram.ps1`](../llama-cpp-t550/free-ram.ps1)).
+- **Gemma 4 E-models run their per-layer embeddings on the CPU** even with `n-gpu-layers = all`, so a busy CPU
+  slows down generation of a model that is otherwise entirely on the GPU (T550 E4B: 15 instead of 23 t/s while a
+  download was being unpacked).
+- **Docker Desktop's WSL 2 VM keeps the page cache of the models after the container stops** (7.1 GB on the T550),
+  which Windows cannot use. Before running a large model natively, drop it:
+  `docker run --rm --privileged --entrypoint sh <image> -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`.
 
 ## Methodology
 

@@ -150,7 +150,7 @@
 <text x="654" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core i7-1260P, 32 GB RAM</text>
 <text x="654" y="671" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">T550 Laptop GPU (4 GB)</text>
 <text x="654" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (7.9 | 92)</tspan></text>
-<text x="654" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (31 | 144)</tspan></text>
+<text x="654" y="707" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (35 | 253)</tspan></text>
 <rect x="552.416" y="799" width="203.167" height="30" rx="15" fill="#ffffff" stroke="#ff8236" stroke-width="1.5"/>
 <use href="#logo-llama-cpp" x="558.416" y="803" width="22" height="22"/>
 <text x="586.416" y="819" font-size="14" fill="#1f2933"><tspan font-weight="bold">llama.cpp</tspan> <tspan fill="#52606d">CUDA + CPU</tspan></text>
