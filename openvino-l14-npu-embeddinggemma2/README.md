@@ -2,16 +2,30 @@
 
 Serves the text embeddings of [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)
 on the NPU of the ThinkPad L14 Gen 5 with OpenVINO Model Server (OVMS).
-There is no OpenVINO version of the model from Google or Intel, so [convert.py](convert.py) exports the text model
-from Google's weights to OpenVINO IR in a container ([Dockerfile](Dockerfile)).
+There is no OpenVINO version of the model from Google or Intel,
+so [convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py) exports the text model from Google's weights
+to OpenVINO IR in a container ([../openvino-npu-convert](../openvino-npu-convert/README.md)).
 The vision and audio encoders are not exported.
 
+| Model | Context | NPU memory | RAM | 100-token texts | 500-token texts | Notes |
+|---|---|---|---|---|---|---|
+| EmbeddingGemma 2, FP32 IR compiled in FP16 ([convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py)) | 512 tokens per input | shared RAM | 1.8 GiB | 692 t/s | 3518 t/s | 0.15 s per input of any length, as the NPU pads every input to 512 tokens |
+
+- 12 % faster than the previous export (FP16 IR with the default attention masks, 618 and 3133 t/s),
+  and closer to the reference (cosine similarity 0.99999 instead of 0.99997), see [Performance](#performance).
+- Faster than the CPU of this laptop for document chunks (927 t/s with dynamic shapes),
+  but slower for short queries (0.12 s), and it leaves the CPU free.
+  [../vllm-zen2-embeddinggemma2](../vllm-zen2-embeddinggemma2) on a Threadripper 3970X is faster (4650-5000 t/s).
+
 ## Hardware and software
+- Computer: Lenovo ThinkPad L14 Gen 5 (Intel)
 - OS: Ubuntu 26.04.1 LTS (Kubuntu), kernel 7.0.0
 - CPU: Intel Core Ultra 5 125U (Meteor Lake, 2 P-cores with HT + 8 E-cores + 2 LP E-cores)
 - RAM: 32 GB (2 x 16 GB DDR5-5600 SO-DIMM), shared by the CPU, the iGPU and the NPU
 - NPU: Intel AI Boost (Meteor Lake NPU 3720), kernel driver intel_vpu, user-mode driver 1.38.0 in the OVMS image
 - GPU: Intel Graphics (Meteor Lake iGPU, Xe-LPG architecture, 4 Xe cores), no dedicated VRAM (uses the shared RAM)
+- OVMS 2026.5.0 (weekly build of 2026-11-19, the same as in [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
+  OpenVINO 2026.4.1 and transformers 5.24.1 in the converter
 
 ## Usage
 ```sh
@@ -20,9 +34,10 @@ docker compose up -d
 ```
 - On the first start, the `convert` container downloads the model files (1.5 GB) to the Hugging Face cache of the host
   (`~/.cache/huggingface/hub`, of which only the `hub` directory is mounted),
-  exports the text model to the Docker volume `openvino-l14-npu-embeddinggemma2_models` (0.6 GB) and exits.
-  OVMS starts after it and compiles the model for the NPU in ~10 s (cached in the same volume, 0.5 GB).
-  Later starts skip the export, as long as the revision and the library versions are the same (`export.json`).
+  exports the text model to the Docker volume `openvino-l14-npu-embeddinggemma2_models` (1.1 GB) and exits (~1 min).
+  OVMS starts after it and compiles the model for the NPU in ~15 s (cached in the same volume, 0.5 GB).
+  Later starts skip the export, as long as the revision, the export settings and the library versions are the same
+  (`export.json`).
 - The API is OpenAI-compatible at http://localhost:9935/v3/embeddings (also `/v1/embeddings`).
   The model id is `google/embeddinggemma-2-npu`. The embeddings have 768 dimensions and are normalized.
   Truncating them to 512, 256 or 128 dimensions (Matryoshka) has to be done by the client (and renormalized),
@@ -32,25 +47,30 @@ docker compose up -d
   `--truncate true` would truncate them instead.
 - Use the task prefixes of the [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes),
   e.g. `task: search result | query: {query}` for queries and `title: none | text: {document}` for documents.
-- The container uses ~2 GB of RAM. It could run at the same time as the previous third-party server of
-  [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b) on the NPU (tested), but they share the NPU (see below).
+- The container uses 1.8 GiB of RAM. It can run at the same time as [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)
+  (tested), but they share the NPU (see below).
 
-The converter image is built by
-[deploy-docker-embeddinggemma2-ov-convert.yml](../.github/workflows/deploy-docker-embeddinggemma2-ov-convert.yml).
-To build it locally instead, run:
-```sh
-docker build -t ghcr.io/agenttix/agx-ai/embeddinggemma2-ov-convert:latest .
-```
-The Python dependencies are locked in [uv.lock](uv.lock). To update it, run in Ubuntu 26.04 with its system Python
-(see [pyproject.toml](pyproject.toml)):
-```sh
-uv lock
-```
-The OpenVINO version of the converter should match that of the OVMS image in [docker-compose.yml](docker-compose.yml).
+The converter image, which is shared with [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b),
+is described in [../openvino-npu-convert](../openvino-npu-convert/README.md).
+The exported revision is set in the `command` of the `convert` service in [docker-compose.yml](docker-compose.yml).
 
 ## Performance
-Measured on 2026-10-14 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/bench_http.py)
-`--tests embedding` (results in `../benchmark/results/agx-l14-kubuntu.jsonl`), OVMS 2026.4.1:
+Measured on 2026-11-25 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchmark/bench_http.py)
+`--tests embedding --embed-texts 16` (results in `../benchmark/results/agx-l14-kubuntu.jsonl`), `--max_length 512`.
+The accuracy is the cosine similarity to the embeddings of transformers in FP32 on the CPU (mean pooling and
+normalization like sentence-transformers) for 28 texts of 22-493 tokens (15 queries and 13 documents),
+an ad-hoc check that is not in the repository:
+
+| Export, OVMS | 100-token texts | 500-token texts | Single text | Cosine similarity min / mean | RAM |
+|---|---|---|---|---|---|
+| **FP32 IR, additive masks, 2026.5 weekly (this)** | **692 t/s** | **3518 t/s** | 0.15 s | 0.99999 / 1.00000 | 1.8 GiB |
+| FP16 IR, additive masks, 2026.5 weekly | 628 t/s | 3186 t/s | 0.16 s | 0.99997 / 0.99999 | 2.2 GiB |
+| FP16 IR (previous export), 2026.5 weekly | 618 t/s | 3131 t/s | 0.16 s | 0.99997 / 0.99999 | |
+| FP16 IR (previous export), 2026.4.1 | 618 t/s | 3133 t/s | 0.16 s | 0.99997 / 0.99999 | 2 GiB |
+| FP16 IR (previous), INT8 weights (NNCF `INT8_SYM`) | 625 t/s | 3157 t/s | 0.16 s | 0.99967 / 0.99982 | |
+| FP16 IR (previous), INT8 weights and activations (NNCF PTQ, 96 calibration texts) | 676 t/s | 3418 t/s | 0.15 s | 0.99597 / 0.99816 | |
+
+Measured on 2026-10-14 with OVMS 2026.4.1 and the previous export:
 
 | Device, `--max_length` | 100-token texts | 500-token texts | Single text |
 |------------------------|-----------------|-----------------|-------------|
@@ -59,18 +79,35 @@ Measured on 2026-10-14 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchm
 | CPU (dynamic shapes)   | 837 t/s         | 927 t/s         | 0.12-0.78 s |
 
 - The NPU runs a static graph, so every input is padded to `--max_length`, and each input takes the same time
-  regardless of its length. With 512, the NPU is 3.3x faster than the CPU for document chunks,
-  but slower than the CPU for short queries, and it leaves the CPU free.
-- With Gemma 4 E4B generating on the NPU at the same time (the previous third-party server of
-  [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
-  the embeddings ran at 2063 t/s (500-token texts), and the generation of one of the requests slowed from 8.3 to 7.0 t/s.
-- The embeddings match sentence-transformers (float32 on the CPU) with a cosine similarity of 0.99999-1.00000
-  (inputs of 15-289 tokens, on the NPU and the CPU), and the tokenizer gives the same token IDs.
+  regardless of its length.
+- The NPU is saturated by one request: the inputs of a request are run one by one, and 2 or 4 parallel requests
+  did not increase the throughput (6.3 inputs/s with the previous export), neither with
+  `PERFORMANCE_HINT` `THROUGHPUT`.
+- The INT8 quantization of the activations was 9 % faster, but changed the top result for 1 of the 15 queries,
+  so it was not used. The INT8 weights did not help, as the model is not limited by the weights on the NPU.
+- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
+  the embeddings ran at 1869 t/s (500-token texts), and with embeddings computed continuously,
+  the generation slowed from 8.3 to 3.9 t/s.
 
 ## Notes
-- The export ([convert.py](convert.py)) wraps the text model of `EmbeddingGemma2Model`, which includes the projection
+- The export ([convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py)) wraps the text model of `EmbeddingGemma2Model`, which includes the projection
   to 768 dimensions, and outputs the per-token embeddings. OVMS does the mean pooling and the normalization
   (`--pooling MEAN`), like the sentence-transformers configuration of the model (`modules.json`).
+- Optimizations of the export, found by profiling the model on the NPU (`PERF_COUNT`) with a static 1 x 512 shape:
+  - The IR is saved with FP32 weights (`compress_to_fp16=False`, 1.1 GB instead of 0.6 GB).
+    With FP16 weights, the decompression nodes of the weights stopped the constant folding after OVMS reshaped
+    the model to the static shape, so e.g. the rotary embeddings (`Sin` and `Cos`) were computed on the slow SHAVE
+    cores on every inference. The NPU compiles the model in FP16 anyway, and the result is also more accurate.
+  - The attention masks are given to the model as additive float masks: the padding as a vector over the keys
+    and the sliding window as a constant band. The default masks of transformers are boolean 512 x 512 masks built
+    at run time (`BitwiseAnd` and `Select` on the SHAVE cores). The window of 512 covers all 512 tokens,
+    so here both masks are the padding mask. This made the inference 2 % faster.
+  - A static IR (1 x 512, constants folded at the conversion) was as fast as the FP32 IR,
+    but OVMS pads the inputs only for a dynamic model, and failed with it.
+  - Did not help: replacing the `Power` of the RMSNorms with `Multiply` and `Sqrt`,
+    and the NPU options `NPU_TURBO`, `NPU_TILES`, `NPU_DPU_GROUPS`, `optimization-level=3` and the performance hints.
+    The plugin configuration of OVMS (`--plugin_config`) is also given to the CPU plugin (tokenizer),
+    which rejects the NPU-specific options.
 - The text config inherits `max_position_embeddings` 262144 from Gemma 4, which OVMS uses as the input limit,
   so the export sets it to 8192, the context length on the model card.
 - OVMS handles the NPU in two ways:
@@ -79,11 +116,12 @@ Measured on 2026-10-14 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchm
   - `--max_length` 1024 or more: the model is compiled with the NPUW LLM pipeline (`NPUW_TEXT_EMBED`).
     The NPU plugin of OpenVINO 2026.4 then took the expand and reshape of the grouped-query attention for a KV cache,
     handled the model as a causal decoder and failed to compile it ("Failed to check SDPA nodes").
-    The export therefore repeats the key/value heads with a Gather (`repeat_kv` in [convert.py](convert.py)),
+    The export therefore repeats the key/value heads with a Gather (`repeat_kv` in [convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py)),
     after which 2048 and 8192 compile (31 s and 381 s, 13 GB of RAM for 8192) and work for single inputs,
     but requests with several inputs fail in OVMS: its CPU post-processing for the NPU gets the hidden states
     padded to `max_length` but the unpadded attention masks ("Input shape dimension equal 5 cannot be broadcasted
     to 2048"). As most clients send batches, this is not usable until OVMS fixes it.
+    The OVMS 2026.5 weekly build of 2026-11-19 still has this bug.
 - llama.cpp ([ggml-org/embeddinggemma-2-GGUF](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF), build 11610,
   `server-openvino` image, `GGML_OPENVINO_DEVICE=NPU`): the model loads in 20 s, but the NPU graph is compiled for the
   first input length (the warm-up, or the first request with `--no-warmup`), and every input of another length fails

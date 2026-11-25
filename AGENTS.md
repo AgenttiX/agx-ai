@@ -58,6 +58,7 @@ abbreviated as `agx` in the hostnames.
 - Run the unit tests: `uv run pytest` (add `--run-slow` for the slow tests, such as LaTeX builds)
 - Run all lints and type checks: `./lint.sh`
   - Run this after creating or modifying Python code.
-  - This runs `ruff check`, `pyrefly check` and `pyrefly coverage check`.
+  - This runs `ruff check`, `pyrefly check` and `pyrefly coverage check`,
+    with the `openvino` extra installed for the converters in `./agx_ai/openvino/`.
     All checks are run even if some of them fail. The exit code is 0 if all checks pass,
     the exit code of the failed check if exactly one check fails, and 100 if multiple checks fail.

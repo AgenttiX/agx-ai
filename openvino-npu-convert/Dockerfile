@@ -2,8 +2,10 @@
 # check=error=true
 # https://docs.docker.com/build/checks/#fail-build-on-check-violations
 
-# Converter that prepares Gemma 4 E4B with symmetric INT4 weights for OpenVINO Model Server on the Intel NPU.
-# See README.md for the usage and convert.py for the details.
+# Converters that prepare models for OpenVINO Model Server (OVMS) on the Intel NPU (../agx_ai/openvino).
+# The converter and its arguments are given in the docker-compose.yml files of the configurations, see README.md.
+# The build context is the root of the repository, and Dockerfile.dockerignore limits it to the needed files:
+# docker build -f openvino-npu-convert/Dockerfile -t ghcr.io/agenttix/agx-ai/openvino-npu-convert:latest .
 
 # Ubuntu 26.04 includes Python 3.14.
 ARG UBUNTU_IMAGE="ubuntu:26.04"
@@ -15,10 +17,6 @@ ARG UV_IMAGE="ghcr.io/astral-sh/uv:0.13"
 # The Python libraries are installed in a virtual environment,
 # as the system Python of Ubuntu is externally managed (PEP 668).
 ARG VENV_PATH="/opt/venv"
-
-# The converted commits of OpenVINO/gemma-4-E4B-it-int4-ov and OpenVINO/gemma-4-E4B-it-fp16-ov.
-ARG INT4_REVISION="c157bc8d31bae5041874d4378667bc19ae0ee5c6"
-ARG FP16_REVISION="2331737b18db63cb3c7141b8996139834fcde055"
 
 
 # ---
@@ -58,22 +56,22 @@ RUN \
     && apt-get install -y --no-install-recommends ca-certificates python3
 
 # The dependencies are installed from the lock file.
+# The PyTorch CPU index is restricted to torch in pyproject.toml.
+# The OpenVINO version of the converter should match the OVMS images (see pyproject.toml).
 RUN \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-${TARGETARCH} \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=openvino-npu-convert/pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=openvino-npu-convert/uv.lock,target=uv.lock \
     uv sync --locked --no-install-project
 
 
 # ---
-# Final stage: contains only Python, the virtual environment and the converter
+# Final stage: contains only Python, the virtual environment and the converters
 # ---
 FROM ${UBUNTU_IMAGE}
 
 ARG TARGETARCH
 ARG VENV_PATH
-ARG INT4_REVISION
-ARG FP16_REVISION
 
 ENV VIRTUAL_ENV="${VENV_PATH}"
 ENV PATH="${VENV_PATH}/bin:${PATH}"
@@ -81,8 +79,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONUTF8=1
 # The container is run as the host user, which has no home directory in the image.
 ENV HOME=/tmp
-ENV INT4_REVISION="${INT4_REVISION}"
-ENV FP16_REVISION="${FP16_REVISION}"
+# The converters are run as modules of agx_ai, e.g. "python -m agx_ai.openvino.convert_gemma4".
+ENV PYTHONPATH=/app
 
 # Python has to be installed, as the virtual environment links to the system interpreter.
 # ca-certificates is needed for downloading the model files, as huggingface_hub uses the system certificates.
@@ -94,10 +92,12 @@ RUN \
     && apt-get install -y --no-install-recommends ca-certificates python3
 
 COPY --from=builder ${VENV_PATH} ${VENV_PATH}
-COPY convert.py /app/convert.py
+# Only the converters of agx_ai are copied, as they do not depend on the rest of it.
+COPY agx_ai/__init__.py /app/agx_ai/__init__.py
+COPY agx_ai/openvino/*.py /app/agx_ai/openvino/
 # A new named volume gets the permissions of this directory, which is writable by any user (like /tmp),
 # so that the user can be set in docker-compose.yml, and OVMS can write its compilation cache to the same volume.
 RUN mkdir -m 1777 /models
 
-# The shell form expands the revisions, and exec replaces the shell with Python.
-ENTRYPOINT ["sh", "-c", "exec python /app/convert.py /models/gemma-4-E4B-it-int4-sym-ov --int4-revision \"${INT4_REVISION}\" --fp16-revision \"${FP16_REVISION}\""]
+# The converter and its arguments are given as the command in the docker-compose.yml files.
+CMD ["python", "-m", "agx_ai.openvino.convert_gemma4", "--help"]

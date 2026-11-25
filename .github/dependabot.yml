@@ -16,11 +16,10 @@ updates:
           - "minor"
           - "patch"
 
-  # The converters are a separate entry, as the ignore rules apply to all the directories of an entry.
+  # The OpenVINO converter is a separate entry, as the ignore rules apply to all the directories of an entry.
   - package-ecosystem: "uv"
     directories:
-      - "/openvino-l14-npu-e4b"
-      - "/openvino-l14-npu-embeddinggemma2"
+      - "/openvino-npu-convert"
     schedule:
       interval: "weekly"
     groups:
@@ -28,7 +27,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # The OpenVINO version of the converters has to match the OVMS image in docker-compose.yml,
+    # The OpenVINO version of the converter should match the OVMS images in the docker-compose.yml files,
     # which Dependabot does not update, so these are updated manually together with it.
     ignore:
       - dependency-name: "openvino"
@@ -37,8 +36,7 @@ updates:
   # The base images in the Dockerfiles
   - package-ecosystem: "docker"
     directories:
-      - "/openvino-l14-npu-e4b"
-      - "/openvino-l14-npu-embeddinggemma2"
+      - "/openvino-npu-convert"
       - "/ssh"
       - "/vllm"
       - "/vllm-radeon-vii"

@@ -55,9 +55,10 @@ run() {
   echo
 }
 
-run uv run pyrefly check
-run uv run pyrefly coverage check
-run uv run ruff check
+# The openvino extra provides the dependencies of the converters in agx_ai/openvino for the type checks.
+run uv run --extra openvino pyrefly check
+run uv run --extra openvino pyrefly coverage check
+run uv run --extra openvino ruff check
 if [ "${FAST}" = false ]; then
   run uv run python -m pttools.docs.lint
 fi

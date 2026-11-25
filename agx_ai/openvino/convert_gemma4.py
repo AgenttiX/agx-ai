@@ -9,12 +9,11 @@ the vision encoder and the configuration), which OVMS runs on the CPU.
 
 The model files are downloaded to the Hugging Face cache. The conversion is skipped if the output directory already
 contains a conversion of the same revisions with the same settings and library versions.
-Usage: convert.py OUTPUT_DIR --int4-revision COMMIT --fp16-revision COMMIT
+Usage: python -m agx_ai.openvino.convert_gemma4 OUTPUT_DIR --int4-revision COMMIT --fp16-revision COMMIT
 """
 
 import argparse
 import importlib.metadata
-import json
 from pathlib import Path
 import shutil
 
@@ -22,13 +21,14 @@ from huggingface_hub import snapshot_download
 import nncf
 import openvino as ov
 
+from agx_ai.openvino.export import convert_once
+
 INT4_REPO = "OpenVINO/gemma-4-E4B-it-int4-ov"
 FP16_REPO = "OpenVINO/gemma-4-E4B-it-fp16-ov"
 LANGUAGE_MODEL = "openvino_language_model"
 # Channel-wise INT4 (group size -1) decodes 20 % faster on the NPU, but made clearly more arithmetic mistakes
-# (data-free and with AWQ and scale estimation), so the group size of 128 is used (see README.md).
+# (data-free and with AWQ and scale estimation), so the group size of 128 is used (see openvino-l14-npu-e4b/README.md).
 GROUP_SIZE = 128
-MARKER = "export.json"
 
 
 def convert(output: Path, int4_revision: str, fp16_revision: str) -> None:
@@ -57,29 +57,13 @@ def main() -> None:
     parser.add_argument("--int4-revision", required=True, help=f"Commit of {INT4_REPO}")
     parser.add_argument("--fp16-revision", required=True, help=f"Commit of {FP16_REPO}")
     args = parser.parse_args()
-    output: Path = args.output
 
     info = {
         "repos": {INT4_REPO: args.int4_revision, FP16_REPO: args.fp16_revision},
         "weights": {"mode": "int4_sym", "group_size": GROUP_SIZE, "ratio": 1.0},
         "versions": {name: importlib.metadata.version(name) for name in ("nncf", "openvino")},
     }
-    marker = output / MARKER
-    if marker.is_file() and json.loads(marker.read_text(encoding="utf-8")) == info:
-        print(f"{output} is up to date: {json.dumps(info)}", flush=True)
-        return
-
-    # Convert to a temporary directory and replace the old conversion only when the new one is complete,
-    # so that OVMS never sees a partial model.
-    tmp = output.with_name(output.name + ".tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True)
-    print(f"Converting {INT4_REPO} at {args.int4_revision} and {FP16_REPO} at {args.fp16_revision}", flush=True)
-    convert(tmp, args.int4_revision, args.fp16_revision)
-    (tmp / MARKER).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-    shutil.rmtree(output, ignore_errors=True)
-    tmp.rename(output)
-    print(f"Converted: {json.dumps(info)}", flush=True)
+    convert_once(args.output, info, lambda tmp: convert(tmp, args.int4_revision, args.fp16_revision))
 
 
 if __name__ == "__main__":

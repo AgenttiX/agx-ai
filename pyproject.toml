@@ -53,10 +53,22 @@ requires-python = ">= 3.14"
 dependencies = [
     "huggingface-hub >= 2.4.0",
     "matplotlib >= 3.11.2",
-    "numpy >= 2.5.4",
+    # nncf 3.4 (in the openvino extra) requires NumPy < 2.5, and the lock file is shared by all the extras.
+    "numpy >= 2.4.4",
     # As of 2026-05, Orjson does not yet support free-threading.
     "orjson >= 3.13.0",
     "pandas >= 3.1.0"
+]
+
+# The dependencies of the OpenVINO converters (agx_ai.openvino), which are run in the converter container
+# (openvino-npu-convert, with exact versions). Install them with "uv sync --extra openvino" for linting and type checks.
+[project.optional-dependencies]
+openvino = [
+    "nncf >= 3.4.0",
+    "openvino >= 2026.4.1",
+    "openvino-tokenizers >= 2026.4.1.0",
+    "torch >= 2.15.0",
+    "transformers >= 5.24.1",
 ]
 
 [project.scripts]
@@ -84,6 +96,15 @@ dev = [
     # For checking the packages built with "uv build"
     "twine >= 7.0.0",
 ]
+
+# Only torch comes from the PyTorch CPU index (for the openvino extra), and everything else from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [tool.uv]
 # "uv sync" installs the full development environment, including the tools for building the documentation.
@@ -149,6 +170,12 @@ project-excludes = [
     "**/*venv/**",
     "**/.[!/.]*"
 ]
+
+# The scripts of the vLLM configurations run in their containers with other versions of PyTorch and transformers
+# than those of the openvino extra, so these are not type-checked against the host versions.
+[[tool.pyrefly.sub-config]]
+matches = "vllm*/**"
+replace-imports-with-any = ["torch", "torch.*", "transformers", "transformers.*"]
 
 [tool.pytest.ini_options]
 # On clusters "--numprocesses=auto" creates processes according to the total number of CPU cores

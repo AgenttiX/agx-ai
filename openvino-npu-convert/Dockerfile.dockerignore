@@ -1,0 +1,6 @@
+# The build context is the root of the repository (see Dockerfile), of which only these files are needed.
+*
+!agx_ai/__init__.py
+!agx_ai/openvino/*.py
+!openvino-npu-convert/pyproject.toml
+!openvino-npu-convert/uv.lock

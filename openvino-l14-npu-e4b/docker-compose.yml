@@ -2,8 +2,15 @@
 services:
   # Converts the model to symmetric INT4 on the first start (and after updates of the converter), then exits.
   convert:
-    image: ghcr.io/agenttix/agx-ai/gemma4-ov-convert:latest
+    image: ghcr.io/agenttix/agx-ai/openvino-npu-convert:latest
     container_name: gemma4-convert
+    # The converted commits of OpenVINO/gemma-4-E4B-it-int4-ov and OpenVINO/gemma-4-E4B-it-fp16-ov.
+    # See agx_ai/openvino/convert_gemma4.py.
+    command: [
+      "python", "-m", "agx_ai.openvino.convert_gemma4", "/models/gemma-4-E4B-it-int4-sym-ov",
+      "--int4-revision", "c157bc8d31bae5041874d4378667bc19ae0ee5c6",
+      "--fp16-revision", "2331737b18db63cb3c7141b8996139834fcde055",
+    ]
     environment:
       # The model files are downloaded to the Hugging Face cache of the host.
       # Only the hub directory is mounted, so that e.g. a token in ~/.cache/huggingface is not visible.
@@ -47,7 +54,7 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:9934:8000"
-    # The converted model and the compilation cache are writable by any user, see the Dockerfile.
+    # The converted model and the compilation cache are writable by any user, see ../openvino-npu-convert/Dockerfile.
     user: "1000:1000"
     volumes:
       - models:/models

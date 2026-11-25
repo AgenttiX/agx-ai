@@ -1,0 +1,35 @@
+# Python dependencies of the converter container that prepares models for OpenVINO Model Server on the Intel NPU
+# (see Dockerfile and ../agx_ai/openvino). The same dependencies are in the "openvino" extra of ../pyproject.toml,
+# so that the converters can be linted and type-checked on the host.
+# Update the lock file with "uv lock" in Ubuntu 26.04 with its system Python (see README.md).
+[project]
+name = "openvino-npu-convert"
+version = "0.2.0"
+description = "Converters of models to OpenVINO IR for OpenVINO Model Server on the Intel NPU"
+# Ubuntu 26.04 includes Python 3.14.
+requires-python = "==3.14.*"
+# OpenVINO and openvino-tokenizers should match the OpenVINO version of the OVMS images in the docker-compose.yml files
+# (the IR is version-independent, but the tokenizer extensions are not).
+# Therefore, Dependabot ignores them (see ../.github/dependabot.yml), and they have to be updated manually
+# together with the OVMS images.
+dependencies = [
+    "huggingface-hub==2.4.0",
+    "nncf==3.4.0",
+    "openvino==2026.4.1",
+    "openvino-tokenizers==2026.4.1.0",
+    "torch==2.15.0",
+    "transformers==5.24.1",
+]
+
+# Only torch comes from the PyTorch CPU index, and everything else from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+# The converters are copied to the image as modules of agx_ai, not installed as a package.
+package = false

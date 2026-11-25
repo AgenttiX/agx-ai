@@ -2,12 +2,12 @@
 
 Runs Gemma 4 E4B on the NPU of the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U, Meteor Lake NPU 3720)
 with the stock OpenVINO Model Server (OVMS).
-The official OpenVINO model does not compile for this NPU, so [convert.py](convert.py) recompresses its language model
-to symmetric INT4 in a container ([Dockerfile](Dockerfile)), and two NPU settings work around compiler bugs (see below).
+The official OpenVINO model does not compile for this NPU, so [convert_gemma4.py](../agx_ai/openvino/convert_gemma4.py) recompresses its language model
+to symmetric INT4 in a container ([../openvino-npu-convert](../openvino-npu-convert)), and two NPU settings work around compiler bugs (see below).
 
 | Model | Context | NPU memory | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|
-| Gemma 4 E4B, INT4_SYM group 128 ([convert.py](convert.py)) | prompt 1024 + answer | shared RAM | 6 GB RSS | 9.0–9.6 t/s | 3.3 s for any prompt up to 1024 tokens (235 t/s at 778 tokens) | image: 6.0–6.4 s to the first token |
+| Gemma 4 E4B, INT4_SYM group 128 ([convert_gemma4.py](../agx_ai/openvino/convert_gemma4.py)) | prompt 1024 + answer | shared RAM | 6 GB RSS | 9.0–9.6 t/s | 3.3 s for any prompt up to 1024 tokens (235 t/s at 778 tokens) | image: 6.0–6.4 s to the first token |
 
 - The language model runs on the NPU, and the tokenizer, the text and per-layer embeddings and the vision encoder
   on the CPU (OVMS's split for the NPU).
@@ -53,20 +53,14 @@ docker compose up -d
   Two images in one request worked too.
 - Prompts are limited to 1024 tokens, and the answer can continue for at least 128 tokens after that.
 - The server uses 6 GB of RAM (RSS, 10 GB at the peak of the first start).
+  It can run at the same time as [../openvino-l14-npu-embeddinggemma2](../openvino-l14-npu-embeddinggemma2),
+  but they share the NPU: with embeddings computed continuously, the generation slows from 8.3 to 3.9 t/s.
   Do not run this at the same time as [../llama-cpp-l14](../llama-cpp-l14)
   or [../openvino-l14](../openvino-l14), as the RAM would run out.
 
-The converter image is built by
-[deploy-docker-gemma4-ov-convert.yml](../.github/workflows/deploy-docker-gemma4-ov-convert.yml).
-To build it locally instead, run:
-```sh
-docker build -t ghcr.io/agenttix/agx-ai/gemma4-ov-convert:latest .
-```
-The Python dependencies are locked in [uv.lock](uv.lock). To update it, run in Ubuntu 26.04 with its system Python
-(see [pyproject.toml](pyproject.toml)):
-```sh
-uv lock
-```
+The converter image, which is shared with [../openvino-l14-npu-embeddinggemma2](../openvino-l14-npu-embeddinggemma2),
+is described in [../openvino-npu-convert](../openvino-npu-convert/README.md).
+The converted revisions are set in the `command` of the `convert` service in [docker-compose.yml](docker-compose.yml).
 
 ## Performance
 Measured on 2026-11-25 with [`agx_ai/benchmark/chat_stream.py`](../agx_ai/benchmark/chat_stream.py) `--no-thinking`
@@ -99,7 +93,7 @@ on NPU 3720 (Meteor Lake). The NPU plugin of OpenVINO (NPUW) has Gemma 4 support
 - [OpenVINO/gemma-4-E4B-it-int4-ov](https://huggingface.co/OpenVINO/gemma-4-E4B-it-int4-ov) has asymmetric INT4
   weights (group size 64, AWQ), and the NPU compiler rejects them ("Unsupported DequantizeOp configuration ... u4").
   OVMS 2026.4.1 (NPU driver 1.35) compiled it for over 30 min without finishing, and the 2026.5 weekly failed in 1 min.
-  Hence [convert.py](convert.py) compresses the FP16 language model to symmetric INT4 (OpenVINO does not
+  Hence [convert_gemma4.py](../agx_ai/openvino/convert_gemma4.py) compresses the FP16 language model to symmetric INT4 (OpenVINO does not
   publish an NPU-specific `-cw-ov` version of E4B, only of E2B).
 - With the default `NPUW_LLM_GENERATE_HINT` (`FAST_COMPILE`), NPUW compiles the generation model as folded,
   repeated layer subgraphs (`NPUW_UNFOLD_IREQS`), which output garbage on this NPU.

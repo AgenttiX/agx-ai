@@ -2,8 +2,13 @@
 services:
   # Exports the text model to OpenVINO IR on the first start (and after updates of the converter), then exits.
   convert:
-    image: ghcr.io/agenttix/agx-ai/embeddinggemma2-ov-convert:latest
+    image: ghcr.io/agenttix/agx-ai/openvino-npu-convert:latest
     container_name: embeddinggemma2-convert
+    # The converted commit of google/embeddinggemma-2. See agx_ai/openvino/convert_embeddinggemma2.py.
+    command: [
+      "python", "-m", "agx_ai.openvino.convert_embeddinggemma2", "/models/embeddinggemma-2",
+      "--revision", "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    ]
     environment:
       # The model files are downloaded to the Hugging Face cache of the host.
       # Only the hub directory is mounted, so that e.g. a token in ~/.cache/huggingface is not visible.
@@ -15,7 +20,9 @@ services:
       - models:/models
 
   ovms-embeddinggemma2:
-    image: openvino/model_server:2026.4.1-gpu
+    # 2026.5.0 (weekly build of 2026-11-19), the same as in ../openvino-l14-npu-e4b.
+    # The embeddings are as fast as with 2026.4.1 (see README.md).
+    image: openvino/model_server@sha256:6c496c2e4c0110d4544c5f09139625637fd34dde5ba8064553443e6321ab1da4
     container_name: ovms-embeddinggemma2
     command: [
       "--rest_port", "8000",
@@ -25,7 +32,7 @@ services:
       "--target_device", "NPU",
       # The model has no pooling configuration for OVMS, and sentence-transformers uses mean pooling.
       "--pooling", "MEAN",
-      # The NPU runs a static graph, so every input is padded to this length (0.16 s per input).
+      # The NPU runs a static graph, so every input is padded to this length (0.15 s per input).
       # Inputs longer than this are rejected. 1023 is the maximum for this static graph, but 5x slower,
       # and longer lengths fail with batches of several inputs (see README.md).
       "--max_length", "512",
@@ -43,7 +50,7 @@ services:
     restart: unless-stopped
     ports:
       - "9935:8000"
-    # The converted model and the compilation cache are writable by any user, see the Dockerfile.
+    # The converted model and the compilation cache are writable by any user, see ../openvino-npu-convert/Dockerfile.
     user: "1000:1000"
     volumes:
       - models:/models
@@ -54,5 +61,6 @@ services:
       retries: 3
 
 volumes:
-  # The converted model (0.6 GB) and the NPU compilation cache (0.5 GB).
+  # The converted model (1.1 GB, FP32 weights, see agx_ai/openvino/convert_embeddinggemma2.py)
+  # and the NPU compilation cache (0.5 GB).
   models:
