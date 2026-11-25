@@ -1,11 +1,12 @@
 r"""Benchmark of a chat server over its OpenAI-compatible API: time to the first token, generation, images, answers.
 
-Works with any server with a streamed ``/v1/chat/completions`` endpoint: llama.cpp, vLLM and the Gemma 4 NPU server
-of ``openvino-l14-npu-e4b``, for which it was written. The requests are streamed and timed on the client, so the
-numbers include the HTTP overhead. The NPU server reuses the KV cache of the previous conversation, so each prompt
-starts with a random nonce. The generation speed uses the completion tokens reported in ``usage`` (else one token
-per streamed chunk). The answers to short questions with an unambiguous answer are checked as well; use
-``--no-thinking`` for thinking models, as the answers have only 32 tokens.
+Works with any server with a streamed ``/v1/chat/completions`` endpoint: llama.cpp, vLLM, OpenVINO Model Server
+(``openvino-l14-npu-e4b``) and the third-party Gemma 4 NPU server that was used there before, for which it was
+written. The requests are streamed and timed on the client, so the numbers include the HTTP overhead. Some servers
+reuse the KV cache of the previous conversation, so each prompt starts with a random nonce. The generation speed uses
+the completion tokens reported in ``usage`` (else one token per streamed chunk). The answers to short questions with
+an unambiguous answer are checked as well; use ``--no-thinking`` for thinking models, as the answers have only 32
+tokens.
 
 Examples:
     uv run -m agx_ai.benchmark.chat_stream --url http://localhost:9934 --json results.json
@@ -120,6 +121,16 @@ def nonce() -> str:
     return f"[{uuid.uuid4().hex[:8]}] "
 
 
+def ask_short(client: ChatClient, question: str) -> str:
+    """The reply to a short question, or an empty string if the model ended its turn without any text."""
+    try:
+        return client.stream(question, 32)["text"].strip()
+    except RuntimeError as error:
+        if str(error) != "No tokens were generated":
+            raise
+        return ""
+
+
 def gradient_png(width: int = 640, height: int = 480) -> str:
     """Return a synthetic gradient PNG image as a data URL."""
     rows = (
@@ -195,7 +206,7 @@ def main(argv: list[str] | None = None) -> None:
 
     answers: list[dict[str, Any]] = []
     for question, expected in QUESTIONS:
-        reply = client.stream(question, 32)["text"].strip()
+        reply = ask_short(client, question)
         answers.append({"question": question, "reply": reply, "correct": expected.lower() in reply.lower()})
     print(f"Correct answers: {sum(bool(a['correct']) for a in answers)}/{len(answers)}")
     for answer in answers:

@@ -32,8 +32,8 @@ docker compose up -d
   `--truncate true` would truncate them instead.
 - Use the task prefixes of the [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes),
   e.g. `task: search result | query: {query}` for queries and `title: none | text: {document}` for documents.
-- The container uses ~2 GB of RAM. It can run at the same time as [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)
-  on the NPU (tested), but they share the NPU (see below).
+- The container uses ~2 GB of RAM. It could run at the same time as the previous third-party server of
+  [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b) on the NPU (tested), but they share the NPU (see below).
 
 The converter image is built by
 [deploy-docker-embeddinggemma2-ov-convert.yml](../.github/workflows/deploy-docker-embeddinggemma2-ov-convert.yml).
@@ -61,7 +61,8 @@ Measured on 2026-10-14 with [../agx_ai/benchmark/bench_http.py](../agx_ai/benchm
 - The NPU runs a static graph, so every input is padded to `--max_length`, and each input takes the same time
   regardless of its length. With 512, the NPU is 3.3x faster than the CPU for document chunks,
   but slower than the CPU for short queries, and it leaves the CPU free.
-- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
+- With Gemma 4 E4B generating on the NPU at the same time (the previous third-party server of
+  [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
   the embeddings ran at 2063 t/s (500-token texts), and the generation of one of the requests slowed from 8.3 to 7.0 t/s.
 - The embeddings match sentence-transformers (float32 on the CPU) with a cosine similarity of 0.99999-1.00000
   (inputs of 15-289 tokens, on the NPU and the CPU), and the tokenizer gives the same token IDs.

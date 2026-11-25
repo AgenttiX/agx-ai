@@ -7,7 +7,6 @@ updates:
   - package-ecosystem: "uv"
     directories:
       - "/"
-      - "/openvino-l14-npu-e4b"
     schedule:
       interval: "weekly"
     # Combine the minor and patch updates of each directory into a single pull request.
@@ -17,9 +16,11 @@ updates:
           - "minor"
           - "patch"
 
-  # The converter is a separate entry, as the ignore rules apply to all the directories of an entry.
+  # The converters are a separate entry, as the ignore rules apply to all the directories of an entry.
   - package-ecosystem: "uv"
-    directory: "/openvino-l14-npu-embeddinggemma2"
+    directories:
+      - "/openvino-l14-npu-e4b"
+      - "/openvino-l14-npu-embeddinggemma2"
     schedule:
       interval: "weekly"
     groups:
@@ -27,7 +28,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # The OpenVINO version of the converter has to match the OVMS image in docker-compose.yml,
+    # The OpenVINO version of the converters has to match the OVMS image in docker-compose.yml,
     # which Dependabot does not update, so these are updated manually together with it.
     ignore:
       - dependency-name: "openvino"

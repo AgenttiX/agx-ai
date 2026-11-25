@@ -51,9 +51,9 @@ Phi-3.5 and Mistral were run with an earlier, lenient version of the quality che
 - For comparison, llama.cpp on the CPU generates 16 t/s with Qwen3-4B Q4_K_M,
   and the NPU is several times slower than the CPU with llama.cpp's OpenVINO backend.
   The NPU's advantage is that it leaves the CPU and iGPU free.
-- Gemma 4 does not run on the NPU with llama.cpp or OVMS.
-  The third-party server ryugyosoft/gemma-4-E4B-it-npu runs it with rewritten model graphs at 8.1-8.6 t/s,
-  but with a 1024-token context, see [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b).
+- Gemma 4 E4B runs on the NPU with OVMS at 9.0-9.6 t/s, but only with a symmetric INT4 conversion,
+  NPU settings that work around compiler bugs, and a 1024-token prompt limit,
+  see [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b). It does not run on the NPU with llama.cpp.
 
 ## Settings
 - `GENERATE_HINT=BEST_PERF` made decoding slower (6.0 vs 8.7 t/s), and `NPUW_LLM_PREFILL_CHUNK_SIZE=256` crashed OVMS.

@@ -417,9 +417,9 @@ def build(specs: bool) -> str:
         Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
                 # llama-cpp-l14/README.md: 26B-A4B without MTP and checkpoints, chat with a 3.5k-token prompt;
                 # E4B in the final configuration, chat with a 3.5k-token prompt;
-                # openvino-l14-npu-e4b/README.md: E4B on the NPU, 684-token prompt
+                # openvino-l14-npu-e4b/README.md: E4B on the NPU with OVMS, 778-token prompt
                 [(llama, gemma_moe, "8.9", "106"), (llama, "Gemma 4 E4B", "7.8", "155"),
-                 ("openvino.svg", "Gemma 4 E4B", "8.1–8.6", "185")], ["kubuntu.svg"],
+                 ("openvino.svg", "Gemma 4 E4B", "9.0–9.6", "235")], ["kubuntu.svg"],
                 [(llama, "llama.cpp", "Vulkan, iGPU"), ("openvino.svg", "OpenVINO", "NPU")]),
         Machine("laptop", 402, pub("ThinkPad T480"), [spec("Core i7-8550U, 32 GB RAM"), pub("GeForce MX150 (2 GB)")],
                 # llama-cpp-t480/README.md: 4096-token prompt

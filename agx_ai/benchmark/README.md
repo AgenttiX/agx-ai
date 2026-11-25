@@ -8,7 +8,7 @@ llama.cpp and vLLM servers.
 | [`bench_http`](bench_http.py) | llama.cpp, vLLM; OpenVINO Model Server for embeddings |
 | [`quality_http`](quality_http.py) | llama.cpp, vLLM |
 | [`embedding_retrieval_eval`](embedding_retrieval_eval.py) | llama.cpp, vLLM |
-| [`chat_stream`](chat_stream.py) | any OpenAI-compatible chat server, e.g. llama.cpp, vLLM and the OpenVINO NPU server of [`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b) |
+| [`chat_stream`](chat_stream.py) | any OpenAI-compatible chat server, e.g. llama.cpp, vLLM and OpenVINO Model Server ([`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b)) |
 | [`llama_cpp.bench_container`](llama_cpp/bench_container.py), [`llama_cpp.kld`](llama_cpp/kld.py), [`llama_cpp.test_server`](llama_cpp/test_server.py) | llama.cpp |
 | [`vllm.test_server`](vllm/test_server.py), [`vllm.prefix_return`](vllm/prefix_return.py), [`vllm.concurrent_agents`](vllm/concurrent_agents.py) | vLLM |
 
@@ -109,8 +109,9 @@ uv run -m agx_ai.benchmark.bench_http --url http://localhost:9935 --tests embedd
 Streamed chat requests timed on the client: the time to the first token and the generation speed for a short and a
 long prompt and a prompt with an image, and the answers to eight short questions with an unambiguous answer. It needs
 nothing from the server but `/v1/chat/completions`, so it also works with servers that have no tokenizer endpoints,
-such as the NPU server of [`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b), for which it was written. For
-thinking models, use `--no-thinking`, as the answers have only 32 tokens.
+such as OpenVINO Model Server ([`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b)) and the third-party NPU
+server that was used there before, for which it was written. For thinking models, use `--no-thinking`, as the answers
+have only 32 tokens. An answer that ends without any text counts as wrong.
 
 ```sh
 uv run -m agx_ai.benchmark.chat_stream --url http://localhost:9934 --json /tmp/results.json

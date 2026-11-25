@@ -44,7 +44,7 @@ These are the configurations that run the local LLMs.
 - [OpenVINO](https://github.com/openvinotoolkit/openvino)
   - [ThinkPad L14 Gen 5 NPU (Intel Core Ultra 5 125U, Meteor Lake NPU 3720)](openvino-l14/README.md)
   - [ThinkPad L14 Gen 5 NPU: EmbeddingGemma 2 with OpenVINO](openvino-l14-npu-embeddinggemma2/README.md)
-  - [ThinkPad L14 Gen 5 NPU: Gemma 4 E4B with a third-party server](openvino-l14-npu-e4b/README.md)
+  - [ThinkPad L14 Gen 5 NPU: Gemma 4 E4B with OpenVINO](openvino-l14-npu-e4b/README.md)
 - [vLLM](https://vllm.ai/)
   - [Optimizations tried in this repository](vllm/OPTIMIZATIONS.md) (Claude Code skill: `/optimize-vllm`)
   - [AMD Radeon VII (16 GB): custom ROCm container](vllm-radeon-vii/README.md)

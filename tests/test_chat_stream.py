@@ -58,6 +58,19 @@ def test_no_tokens() -> None:
         chat_stream.ChatClient(fake.url).stream("hello", 0)
 
 
+def test_ask_short_without_tokens() -> None:
+    """An answer that ends without any text counts as an empty reply instead of aborting the run."""
+    with FakeServer("vllm") as fake:
+        client = chat_stream.ChatClient(fake.url)
+        assert chat_stream.ask_short(client, "hello") == "".join(REPLY).strip()
+
+        def no_tokens(*_: object) -> dict[str, object]:
+            raise RuntimeError("No tokens were generated")
+
+        client.stream = no_tokens  # type: ignore[method-assign]
+        assert chat_stream.ask_short(client, "hello") == ""
+
+
 def test_main(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     output = tmp_path / "results.json"
     with FakeServer("vllm") as fake:

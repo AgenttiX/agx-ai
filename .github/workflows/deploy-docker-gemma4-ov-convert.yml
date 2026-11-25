@@ -1,10 +1,10 @@
-name: Publish Gemma 4 NPU Docker image
+name: Publish Gemma 4 OpenVINO converter Docker image
 on:
   push:
     branches: [main]
     paths:
       - "openvino-l14-npu-e4b/**"
-      - ".github/workflows/deploy-docker-gemma4-npu.yml"
+      - ".github/workflows/deploy-docker-gemma4-ov-convert.yml"
   workflow_dispatch:
 jobs:
   push_to_registry:
@@ -23,14 +23,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # QEMU is not needed, as the image is built only for x86-64 (the Intel NPU driver is available only for it).
+      # QEMU is not needed, as the image is built only for x86-64 (like the NPU setup it is used with).
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}/gemma4-npu
+          images: ghcr.io/${{ github.repository }}/gemma4-ov-convert
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
@@ -53,6 +53,6 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest@v4
         with:
-          subject-name: ghcr.io/${{ github.repository }}/gemma4-npu
+          subject-name: ghcr.io/${{ github.repository }}/gemma4-ov-convert
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true

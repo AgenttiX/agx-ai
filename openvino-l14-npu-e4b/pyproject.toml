@@ -1,39 +1,19 @@
-# Python dependencies of the ryugyosoft/gemma-4-E4B-it-npu server (see Dockerfile).
+# Python dependencies of the converter that prepares Gemma 4 E4B for OVMS on the NPU (see Dockerfile and convert.py).
 # Update the lock file with "uv lock" in Ubuntu 26.04 with its system Python (see README.md).
 [project]
-name = "gemma4-npu"
+name = "gemma4-ov-convert"
 version = "0.1.0"
-description = "Container for the ryugyosoft/gemma-4-E4B-it-npu server"
+description = "Converter of Gemma 4 E4B to symmetric INT4 OpenVINO IR for OpenVINO Model Server on the Intel NPU"
 # Ubuntu 26.04 includes Python 3.14.
 requires-python = "==3.14.*"
-# Upstream requirements.txt: openvino>=2026.5.0b1 (nightly), transformers==5.5.4.
-# The OpenVINO release from PyPI is used instead of a nightly, as 2026.5.0.dev20261013 was not faster
-# and gave the same answers (tested on 2026-10-14, see README.md).
-# PyTorch is used only by the image processor of transformers (resizing the input image), so the CPU build suffices.
+# The IR is version-independent, so OpenVINO does not have to match the OVMS image exactly,
+# but it is updated together with it (see ../.github/dependabot.yml).
 dependencies = [
-    "fastapi",
     "huggingface-hub",
-    "numpy>=1.26",
+    "nncf==3.4.0",
     "openvino==2026.4.1",
-    "pillow",
-    "torch==2.15.0",
-    "torchvision==0.29.2",
-    "transformers==5.22.1",
-    "uvicorn",
 ]
 
-# The upstream requirements.txt uses --extra-index-url, which lets a package with the same name on PyPI take
-# precedence (dependency confusion). Here the extra index is explicit, i.e. used only for the packages listed
-# in tool.uv.sources, and everything else comes from PyPI.
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchvision = { index = "pytorch-cpu" }
-
 [tool.uv]
-# The server is run from the downloaded source files, not installed as a package.
+# The converter is run as a script, not installed as a package.
 package = false
