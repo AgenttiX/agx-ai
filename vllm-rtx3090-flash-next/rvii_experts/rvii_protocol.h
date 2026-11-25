@@ -63,3 +63,30 @@ struct RviiReqHead {
 #define RVII_RESP_OFFSET 131072
 #define RVII_RESP_Y 64       // float y[T][H] at resp + 64
 #define RVII_SHM_BYTES (RVII_RESP_OFFSET + RVII_RESP_Y + RVII_MAXT * RVII_H * 4 + 4096)
+
+// ---- Prefill (2026-11-25): a second segment, between the RTX 3090 (stream_v2.py, rvii_prefill.py) and the worker.
+// In a prefill chunk, the RTX 3090 streams the cold experts from RAM; the worker computes some of its experts instead
+// (those set in the mask), and the RTX 3090 streams only the others. Per MoE layer, the RTX 3090 copies the routing
+// and x into the segment (DMA) and publishes seq; the worker computes y and writes it and then the response seq; the
+// RTX 3090 waits for it on the GPU and adds y to its FP32 accumulator. The worker is ready when the main segment's
+// header says so (ready, heartbeat).
+#define RVII_PF_SHM_NAME "/qwen38-rvii-pf"
+#define RVII_PF_MAGIC 0x4650494956523351ULL  // "Q3RVIIPF" in little endian
+#define RVII_PF_VERSION 1
+#define RVII_PF_MAXT 8192    // tokens per prefill chunk (the runtime's max_num_batched_tokens)
+#define RVII_PF_TOPK 10
+struct RviiPfHeader {      // at offset 0
+  uint64_t magic;          // RVII_PF_MAGIC, written by the worker when it creates the segment
+  uint32_t version;        // RVII_PF_VERSION
+  uint32_t maxt, topk;     // RVII_PF_MAXT, RVII_PF_TOPK
+};
+#define RVII_PF_REQ 64       // request: int64 seq, then int32 T, int32 layer (the RTX 3090 writes T and layer first)
+#define RVII_PF_RESP 128     // response: int64 seq (the worker writes y first)
+// uint8 mask[L][E] at 4096: 1 = the worker computes this expert in prefill (it must be in the map). Written by the
+// RTX 3090 between prefill chunks.
+#define RVII_PF_MASK 4096
+#define RVII_PF_IDS 32768                                              // int32 ids[T][TOPK]
+#define RVII_PF_W (RVII_PF_IDS + 4 * RVII_PF_MAXT * RVII_PF_TOPK)      // float w[T][TOPK]
+#define RVII_PF_X (RVII_PF_W + 4 * RVII_PF_MAXT * RVII_PF_TOPK)        // bf16 x[T][H]
+#define RVII_PF_Y (RVII_PF_X + 2 * RVII_PF_MAXT * RVII_H)              // bf16 y[T][H]: the masked experts' sum
+#define RVII_PF_SHM_BYTES (RVII_PF_Y + 2 * RVII_PF_MAXT * RVII_H)

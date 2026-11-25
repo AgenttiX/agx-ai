@@ -1,0 +1,160 @@
+--- a/usr/local/bin/qwen38-serve
++++ b/usr/local/bin/qwen38-serve
+@@ -11,6 +11,12 @@
+ model=${1:-/model}
+ mtp_model=${2:-"$model/runtime/mtp-int4-g32"}
+ rankings=/opt/qwen38-3090/configs/static_hot_cache_rankings.json
++# agx-ai: the ranking of the Radeon VII worker's automatic re-ranking (rvii_experts/rerank.py), once it exists: the
++# hot experts of this start follow the measured use.
++if [[ -n "${QWEN38_RANKINGS_AUTO:-}" && -s "$QWEN38_RANKINGS_AUTO" ]]; then
++  rankings=$QWEN38_RANKINGS_AUTO
++  echo "expert rankings: $rankings" >&2
++fi
+ 
+ [[ -f "$model/model.safetensors.index.json" ]] || { echo "model checkpoint not found at $model" >&2; exit 2; }
+ # agx-ai: the MTP draft is only needed with MTP_DEPTH > 0 (vllm-rtx3070 has no VRAM for it).
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/bridge_cuda.cu
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/bridge_cuda.cu
+@@ -129,8 +129,65 @@
+     asm volatile("st.release.sys.global.b64 [%0], %1;" ::"l"(hint), "l"(seq) : "memory");
+   }
+ }
++// agx-ai: Radeon VII prefill (rvii_prefill.py, rvii_protocol.h): the request's T and layer, then its seq, after the
++// DMAs of its data on the same stream; on the compute stream, a wait for the worker's response (with a timeout, after
++// which *ok = 0 and the host's timeout counter is incremented) and the add of its y (BF16, in host memory).
++__global__ void pf_publish_kernel(char* req, long long seq, int T, int layer) {
++  *reinterpret_cast<volatile int*>(req + 8) = T;
++  *reinterpret_cast<volatile int*>(req + 12) = layer;
++  __threadfence_system();
++  asm volatile("st.release.sys.global.b64 [%0], %1;" ::"l"(req), "l"(seq) : "memory");
++}
++
++__global__ void pf_wait_kernel(const char* resp, long long seq, long long timeout_ns, int* ok, int* timeouts) {
++  unsigned long long t0, t;
++  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0));
++  long long v;
++  for (;;) {
++    asm volatile("ld.acquire.sys.global.b64 %0, [%1];" : "=l"(v) : "l"(resp) : "memory");
++    if (v == seq) { *ok = 1; return; }
++    __nanosleep(2000);
++    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
++    if (static_cast<long long>(t - t0) > timeout_ns) {
++      *ok = 0;
++      *reinterpret_cast<volatile int*>(timeouts) += 1;
++      __threadfence_system();
++      return;
++    }
++  }
++}
++
++__global__ void pf_add_kernel(float* __restrict__ acc, long long n4, const uint2* y, const int* ok) {
++  if (!*ok) return;
++  for (long long i = blockIdx.x * static_cast<long long>(blockDim.x) + threadIdx.x; i < n4;
++       i += static_cast<long long>(gridDim.x) * blockDim.x) {
++    const uint2 v = __ldcv(y + i);  // 4 BF16
++    float4 a = reinterpret_cast<float4*>(acc)[i];
++    a.x += __uint_as_float(v.x << 16); a.y += __uint_as_float(v.x & 0xFFFF0000u);
++    a.z += __uint_as_float(v.y << 16); a.w += __uint_as_float(v.y & 0xFFFF0000u);
++    reinterpret_cast<float4*>(acc)[i] = a;
++  }
++}
+ }  // namespace
+ 
++void rvii_pf_publish(int64_t req_addr, int64_t seq, int64_t T, int64_t layer) {
++  pf_publish_kernel<<<1, 1, 0, c10::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<char*>(req_addr), seq,
++                                                                     static_cast<int>(T), static_cast<int>(layer));
++}
++
++void rvii_pf_wait_add(torch::Tensor acc, int64_t resp_addr, int64_t y_addr, int64_t seq, int64_t timeout_ns,
++                      torch::Tensor ok, int64_t timeouts_addr) {
++  TORCH_CHECK(acc.dtype() == torch::kFloat32 && acc.is_contiguous() && acc.numel() % 4 == 0);
++  TORCH_CHECK(ok.dtype() == torch::kInt32 && ok.is_cuda());
++  auto stream = c10::cuda::getCurrentCUDAStream();
++  int* okp = ok.data_ptr<int32_t>();
++  pf_wait_kernel<<<1, 1, 0, stream>>>(reinterpret_cast<const char*>(resp_addr), seq, timeout_ns, okp,
++                                      reinterpret_cast<int*>(timeouts_addr));
++  const long long n4 = acc.numel() / 4;
++  pf_add_kernel<<<static_cast<int>(std::min<long long>(1312, (n4 + 255) / 256)), 256, 0, stream>>>(
++      acc.data_ptr<float>(), n4, reinterpret_cast<const uint2*>(y_addr), okp);
++}
++
+ void bridge_hint(torch::Tensor ids, int64_t hint_addr, torch::Tensor counter, int64_t layer) {
+   TORCH_CHECK(ids.is_contiguous() && ids.dim() == 2 && ids.size(1) == TOPK && ids.size(0) <= MAXT,
+               "hint: ids [T <= 4, 10]");
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
+@@ -116,6 +116,12 @@
+         self.skip = torch.zeros(L, E, dtype=torch.uint8)
+         for l, ids in _HOT.items():
+             self.skip[l, ids] = 1
++        # agx-ai: the hot experts, for the Radeon VII worker's automatic re-ranking (rvii_experts/rerank.py)
++        try:
++            self.skip.numpy().tofile("/dev/shm/qwen38-hot.bin.tmp")
++            os.replace("/dev/shm/qwen38-hot.bin.tmp", "/dev/shm/qwen38-hot.bin")
++        except OSError as e:
++            logger.warning("CPU experts: cannot write /dev/shm/qwen38-hot.bin: %s", e)
+         self.req = torch.zeros(L * REQ_BYTES, dtype=torch.uint8).pin_memory()
+         self.resp = torch.zeros(L * RESP_BYTES, dtype=torch.uint8).pin_memory()
+         self.req_addr, self.resp_addr = self.req.data_ptr(), self.resp.data_ptr()
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
+@@ -1585,6 +1585,9 @@
+                        int64_t layer, bool bump);
+ void bridge_wait_add_f32(torch::Tensor acc, int64_t resp_addr, torch::Tensor counter, int64_t layer);
+ void bridge_hint(torch::Tensor ids, int64_t hint_addr, torch::Tensor counter, int64_t layer);  // agx-ai
++void rvii_pf_publish(int64_t req_addr, int64_t seq, int64_t T, int64_t layer);  // agx-ai: Radeon VII prefill
++void rvii_pf_wait_add(torch::Tensor acc, int64_t resp_addr, int64_t y_addr, int64_t seq, int64_t timeout_ns,
++                      torch::Tensor ok, int64_t timeouts_addr);
+ #endif
+ 
+ double bench_expert(torch::Tensor table, int64_t layer, int64_t expert, int64_t T, int64_t reps) {
+@@ -1674,6 +1677,8 @@
+   m.def("bridge_wait_add", &bridge_wait_add);
+   m.def("bridge_submit_big", &bridge_submit_big);
+   m.def("bridge_hint", &bridge_hint);
++  m.def("rvii_pf_publish", &rvii_pf_publish);
++  m.def("rvii_pf_wait_add", &rvii_pf_wait_add);
+   m.def("bridge_wait_add_f32", &bridge_wait_add_f32);
+ #endif
+ }
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/stream_v2.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/stream_v2.py
+@@ -325,11 +325,16 @@
+         host.fill(-1)
+         slot_of = self.store.slot_of.numpy().copy()
+         counts = _usage.keep_sets() if _usage is not None else None
++        # agx-ai: the Radeon VII worker's experts for this step (not streamed), if it is used (rvii_prefill.py)
++        from . import rvii_prefill
++        rvii = rvii_prefill.plan()
+         self.items = []
+         row = 0
+         for index in self.order:
+             entry = _layers[index]
+             cold = self.store.cold_all[index]
++            if rvii is not None:
++                cold = [e for e in cold if e not in rvii[index]]
+             so = slot_of[index]
+             arena = sorted((int(so[e]), e) for e in cold if so[e] >= 0)
+             tail = [e for e in cold if so[e] < 0]
+@@ -616,6 +621,10 @@
+         state.plan()
+     groups = entry.groups
+     prof = _prof
++    from . import rvii_prefill
++    rvii = rvii_prefill.active()
++    if rvii:
++        rvii_prefill.submit(index, x, topk_ids, topk_weights)  # agx-ai: the Radeon VII's share of this layer
+     # Start this layer's first DMAs before the hot GEMM so they overlap it.
+     state.issue(groups[0].pos)
+     state.issue(groups[0].pos + 1)
+@@ -668,6 +677,10 @@
+             prof.mark("cold")
+         _run_experts(staged, x, topk_ids, topk_weights, w13h, w2h, state.emap_dev[entry.tail_row], acc,
+                      activation)
++    if rvii:
++        if prof:
++            prof.mark("rvii")
++        rvii_prefill.wait_add(acc)
+     if prof:
+         prof.mark("reduce")
+     out = acc.to(x.dtype)

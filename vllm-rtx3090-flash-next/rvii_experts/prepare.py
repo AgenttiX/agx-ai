@@ -17,6 +17,7 @@ import json
 import mmap
 import os
 from pathlib import Path
+import shutil
 import sys
 import time
 
@@ -111,14 +112,20 @@ def main() -> None:
     p.add_argument("--hot", type=int, default=int(os.environ.get("RVII_HOT", "24")))
     p.add_argument("--per-layer", type=int, required=True, help="N: experts per layer")
     p.add_argument("--out", type=Path, default=os.environ.get("RVII_CACHE", "/root/.cache/vllm-models/flash-next-rvii"))
+    p.add_argument("--dir", type=Path, help="write the cache into this directory (replacing it) instead of under --out")
     p.add_argument("--jobs", type=int, default=8, help="processes")
     a = p.parse_args()
     model_dir: Path = a.model_dir or find_model_dir()
-    digest = hashlib.sha256(a.rankings.read_bytes()).hexdigest()[:8]
-    out = a.out / f"hot{a.hot}-n{a.per_layer}-{digest}"
-    if (out / "meta.json").exists():
-        print(f"prepare: {out} exists")
-        return
+    if a.dir:
+        out = a.dir
+        if out.exists():
+            shutil.rmtree(out)
+    else:
+        digest = hashlib.sha256(a.rankings.read_bytes()).hexdigest()[:8]
+        out = a.out / f"hot{a.hot}-n{a.per_layer}-{digest}"
+        if (out / "meta.json").exists():
+            print(f"prepare: {out} exists")
+            return
     with a.rankings.open() as f:
         ranks = {int(k): v for k, v in json.load(f).items()}
     with (model_dir / "model.safetensors.index.json").open() as f:

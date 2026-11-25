@@ -238,6 +238,20 @@ What has given the largest gains, roughly in order:
   the Radeon VII's experts first) and with the experts ranked by their **measured** decode use
   (`QWEN38_EXPERT_USAGE`; the runtime's static ranking put only 11.8 % of the routed experts on the GPU's 24 hot
   ones, the measured one 24.8 %). Two GPUs of different vendors cooperate through a host-memory protocol, not NCCL.
+  - **The second GPU in prefill too** (2026-11-25, `QWEN38_RVII_PREFILL=112`, `rvii_prefill.py`): prefill streams
+    every cold expert to the RTX 3090 in each chunk, and the PCIe copy is the bottleneck; the Radeon VII computes 112
+    of its experts per layer instead, so they are not streamed (the GPU sends x and the routing to host memory and
+    waits for the partial sum on the GPU, without host round trips). +12.5 % prompt processing at 32k. The other GPU
+    must not become the critical path: balance the number of experts (96 and 135 were slower than 112), send the
+    partial sums in BF16 (as precise as the main GPU's own per-expert BF16 outputs; FP32 took PCIe bandwidth from the
+    stream), and write the kernels for the hardware: rocBLAS reached only ~7 TFLOPS on gfx906 at expert sizes, an
+    own kernel (int4 weights converted to FP16 in registers, `v_dot2_f32_f16`, activations as scalar loads, 8 tokens
+    per wave for occupancy) 10-13.
+  - **Re-rank the placement automatically** (2026-11-25, `RVII_AUTO_RERANK=1`, `rvii_experts/rerank.py`): the
+    runtime counts the decode requests per expert all the time (`QWEN38_EXPERT_USAGE` in `/dev/shm`, negligible cost);
+    the worker's supervisor decays them (72-hour half-life), and when another set would serve 2 % more of the
+    requests, repacks the second GPU's experts in the background and restarts its worker while the server is idle
+    (2-20 s of CPU-only cold experts). The main GPU's hot set follows at its next start (`QWEN38_RANKINGS_AUTO`).
 - **CPU expert kernel on Zen 2** (flash-next, 2026-11-24, `cpu-moe-opt.patch`): find the bottleneck with a decode
   trace first (`QWEN38_DECODE_TRACE`, `cpu_moe_bench/analyze_trace.py` and the replay mode of `cpu_moe_bench`): the
   CPU part was ~60 % of a step and the RAM was idle while the GPU computed (~0.2 ms between the layers, ~40 %).

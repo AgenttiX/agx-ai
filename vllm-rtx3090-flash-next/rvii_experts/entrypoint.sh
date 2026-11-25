@@ -4,6 +4,7 @@
 #   RVII_PER_LAYER  experts per layer in the Radeon VII's VRAM, default: as many as fit (RVII_VRAM_MIB, if set,
 #                   else the free VRAM minus RVII_RESERVE_MIB, default 640)
 #   RVII_CACHE      the cache directory, default /root/.cache/vllm-models/flash-next-rvii
+#   RVII_AUTO_RERANK=1  re-rank the experts from their measured use (rerank.py, which runs the worker)
 set -e
 HOT="${RVII_HOT:-24}"
 CACHE="${RVII_CACHE:-/root/.cache/vllm-models/flash-next-rvii}"
@@ -17,6 +18,9 @@ if [ -z "$N" ]; then
   fi
 fi
 RANKINGS="${RVII_RANKINGS:-/opt/rvii/rankings.json}"
+if [ "${RVII_AUTO_RERANK:-0}" = 1 ]; then
+  exec python /opt/rvii/rerank.py --hot "$HOT" --per-layer "$N" --cache "$CACHE" --rankings "$RANKINGS"
+fi
 # The cache of a ranking file is keyed by its hash, as in prepare.py.
 DIR="$CACHE/hot$HOT-n$N-$(sha256sum "$RANKINGS" | cut -c1-8)"
 if [ ! -f "$DIR/meta.json" ]; then

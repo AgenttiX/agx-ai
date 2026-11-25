@@ -105,6 +105,15 @@ services:
       # The Radeon VII answers within ~16 us after the CPU has computed its own experts (99th percentile): if it has
       # not answered 2 ms after that (default 20 ms), the CPU computes its experts for that layer.
       QWEN38_RVII_TIMEOUT_US: "2000"
+      # In prefill chunks (more than 384 tokens), the Radeon VII computes the 112 least used of its experts of each
+      # layer, and the RTX 3090 streams only the other cold experts from RAM (rvii_prefill.py): +12.5 % prompt
+      # processing at 32k tokens (README.md, Radeon VII in prefill). 96 and 135 were slower (the Radeon VII and the
+      # RTX 3090 are balanced at ~112).
+      QWEN38_RVII_PREFILL: "112"
+      # The decode requests of each expert, for the Radeon VII worker's automatic re-ranking (rvii_experts/rerank.py,
+      # in the rvii-experts service below), and its ranking for the hot experts of the next start, once it exists.
+      QWEN38_EXPERT_USAGE: /dev/shm/qwen38-usage.bin
+      QWEN38_RANKINGS_AUTO: /models/flash-next-rvii-measured/hot24-n135-auto/rankings.json
       # Log CPU and GPU decode step times every N steps (0 = off).
       QWEN38_CPU_EXPERTS_STATS: "0"
       # Image and video input with the vision tower on the CPU (README.md): 32 threads were the
@@ -159,8 +168,14 @@ services:
     environment:
       # The RTX 3090 keeps the first QWEN38_HOT_ONLY experts of each layer.
       RVII_HOT: "24"
+      RVII_PER_LAYER: "135"
       RVII_RANKINGS: /opt/rvii/rankings-measured.json
       RVII_CACHE: /root/.cache/vllm-models/flash-next-rvii-measured
+      # Re-rank the worker's experts from their measured use (rerank.py, rvii_experts/README.md#automatic-re-ranking):
+      # starts from RVII_RANKINGS, and when a new set of 135 experts per layer would serve 2 % more of the recent
+      # decode requests, repacks its cache (in hot24-n135-auto/ of RVII_CACHE) and restarts the worker on it while the
+      # runtime is idle. 0 = the fixed ranking of RVII_RANKINGS.
+      RVII_AUTO_RERANK: "1"
     devices:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri

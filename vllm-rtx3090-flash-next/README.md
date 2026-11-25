@@ -76,6 +76,11 @@ input and a faster CPU expert kernel:
   the optional removal of the refusal direction (`QWEN38_ABLITERATION`), see [Abliteration](#abliteration-2026-11-24).
 - [`rvii-moe.patch`](rvii-moe.patch) and [`rvii_experts/`](rvii_experts/README.md): cold experts on the Radeon VII
   (2026-11-23), see [Radeon VII experts](#radeon-vii-experts-2026-11-23).
+- [`rvii_prefill.py`](rvii_prefill.py) and [`rvii-prefill.patch`](rvii-prefill.patch) (2026-11-25, after
+  `cpu-moe-opt.patch`): the Radeon VII computes some of its experts in prefill chunks (`QWEN38_RVII_PREFILL`; the
+  bridge kernels and the hooks in `stream_v2.py`), the runtime publishes its hot experts and counts the decode
+  requests for the worker's automatic re-ranking, and starts with the worker's ranking (`QWEN38_RANKINGS_AUTO`), see
+  [Radeon VII in prefill and automatic re-ranking](#radeon-vii-in-prefill-and-automatic-re-ranking-2026-11-25).
 - Tools: [`test_server.sh`](test_server.sh) starts a test server as in the compose file with another image or
   settings, [`kernel_bench/`](kernel_bench/README.md) has microbenchmarks of the RTX 3090's kernels, and
   [`isolate_cpus.py`](isolate_cpus.py) is a prototype (for review, not installed) that reserves the pool's cores
@@ -634,6 +639,94 @@ controls, without thinking, up to 400 tokens, refusals detected by phrase and re
 The same 7 of 8 and 0 of 8 as the 2x RTX 3090 runtime measured. The speed is the same within the noise (each
 residual write costs a 2560-wide dot product and a rank-1 update per token, in the CUDA graph). Both runs with the
 RAM at DDR4-3466 (set in the BIOS on 2026-11-24; before: DDR4-2666, 70 t/s in edits).
+
+## Radeon VII in prefill and automatic re-ranking (2026-11-25)
+
+### The Radeon VII in prefill
+
+In a prefill chunk of more than 384 tokens, the runtime streams every cold expert (488 per layer, 1.2 GB) from RAM to
+the RTX 3090 and converts it there (`stream_v2.py`), while the Radeon VII, which holds 135 of them, was idle. The
+runtime's profile of a chunk of 8192 tokens (`QWEN38_STREAM_PROFILE=1`, a 32k-token prompt) shows the copy as the
+bottleneck: 3.53 s per chunk, of which the copy engine is busy 2.37 s (~24 GB/s), the GPU computes the attention and
+the other layers between the MoE layers 1.5 s, the cold GEMMs 0.84 s, the conversion 0.42 s, and waits for the copies
+0.65 s.
+
+With `QWEN38_RVII_PREFILL=N` ([`rvii_prefill.py`](rvii_prefill.py), [`rvii-prefill.patch`](rvii-prefill.patch)), the
+Radeon VII computes the N least used of its experts of each layer, and the RTX 3090 does not stream them. Per MoE
+layer, the RTX 3090 copies x and the routing into the worker's second shared-memory segment (DMA on a side stream,
+while it computes its hot experts), streams and computes the other cold experts, and before the layer's reduction
+waits on the GPU (a kernel that polls host memory) for the worker's partial sum (BF16) and adds it to its FP32
+accumulator. Chunks of up to 384 tokens (computed by the CPU) are unchanged. The worker's side and its kernels are in
+[`rvii_experts/README.md`](rvii_experts/README.md#prefill); with all 135 experts and the routing of a real prompt,
+it takes ~30 ms per layer of 8192 tokens, of which ~10 ms are the transfers of x and y.
+
+The prompt test at 32k tokens (`--tests prompt --prompt-tokens 32000 --repeat 2`) and the profile of a chunk of 8192
+tokens:
+
+| `QWEN38_RVII_PREFILL` | Prompt t/s | s per chunk | Copy busy | Cold GEMMs + conversion | Waiting for the copies / for the Radeon VII |
+|---|---|---|---|---|---|
+| 0 (before) | 2195 | 3.53 | 2.37 s | 1.26 s | 0.65 / - s |
+| 64 (rocBLAS on the Radeon VII, FP32 y) | 2255 | 3.42 | 2.21 s | 1.08 s | 0.44 / 0.27 s |
+| 96 | 2441 | 3.16 | 1.99 s | 0.95 s | 0.43 / 0.16 s |
+| **112 (current)** | **2470** | **3.13** | 1.90 s | 0.92 s | 0.36 / 0.26 s |
+| 135 (all) | 2415 | 3.22 | 1.78 s | 0.88 s | 0.28 / 0.47 s |
+
+With more experts, the RTX 3090 copies and computes less but waits longer for the Radeon VII; 112 balances them
+(+12.5 %). The first version, with rocBLAS's FP16 GEMMs and the partial sums in FP32, gained only 3 %: rocBLAS reached
+~7 TFLOPS at the experts' sizes, and the FP32 partial sums (84 MB per layer) took PCIe bandwidth from the stream; in
+BF16 they are as precise as the RTX 3090's own path, which rounds each expert's output to BF16.
+
+The full benchmark (as before, with abliteration; the RAM at DDR4-3466 since 2026-11-24, so the decode speeds are not
+comparable with the last full benchmark at DDR4-2666) and the prompt processing of the images of 2026-11-24 with the
+same RAM:
+
+| | Chat | Gen. 6.4k / 32k / 100k | Edit (short / after 32k) | Prompt 6.4k / 32k / 100k / 260k | Image 1280x960 | Peak VRAM |
+|---|---|---|---|---|---|---|
+| 2026-11-24 c (DDR4-2666) | 54.3 | 67.9 / 69.4 / 69.4 | 69.8 / 70.5 | 1877 / 2251 / 2239 / 2376 | 8.1 s | 19600 MiB |
+| Before, DDR4-3466 (the images of 2026-11-24; the prompts at 32k and 260k with `QWEN38_RVII_PREFILL=0`) | 60.4 | 72.4 / - / - | 81.0 / - | 1840 / 2195 / - / 2376 | | |
+| **2026-11-25 (current)** | **61.7** | **73.8 / 71.2 / 73.9** | **82.0 / 82.2** | **2105 / 2545 / 2557 / 2639** | 7.5 s | 19984 MiB |
+
+The decode paths did not change: an A/B with chat, depth 6.4k and the short edit gave 60.4 / 72.4 / 81.0 t/s with the
+images of 2026-11-24 and 60.7 / 70.8 / 81.5 with the new ones, so the faster decode comes from the RAM (the earlier
+checks after the overclock, 56.3 in chats and 74-75 in edits, were lower, perhaps from other load). The prompt
+processing gained +11-29 % (the 6.4k prompt of the A/B: 1840 vs 2380 t/s; 260k: 2376 vs 2639; the 32k values of the
+table are from different tests, the prompt test and the depth test). The RTX 3090's peak VRAM is ~380 MiB higher
+(not investigated; the side stream's copies have their own allocations), the Radeon VII's ~190 MiB (the prefill
+buffers, 168 MB); both are within their margins (21.5 of 24 GiB with the desktop, 15.9 of 16 GiB).
+
+Quality: the retrieval test without MTP (88 questions at 8k and 32k tokens, as for the int8 lm_head), against
+`QWEN38_RVII_PREFILL=0`:
+
+| Run | Correct | Same answers | Mean KL divergence | 99 % | First token | Top-token flips | Test time |
+|---|---|---|---|---|---|---|---|
+| `QWEN38_RVII_PREFILL=0` (reference) | 83/88 | | | | | | 265 s |
+| **112** | 83/88 | 86/88 | 0.00184 | 0.049 | 0.0109 | 2 of 571 | 214 s |
+| 0 again (noise floor) | 82/88 | 85/88 | 0.00271 | 0.077 | 0.0168 | 3 of 567 | 264 s |
+
+The divergence is below the noise floor: the worker's FP16 activations are at least as precise as the RTX 3090's
+BF16 ones. (The test time, mostly the prefill of the 8k- and 32k-token prompts, is 19 % shorter.)
+
+### Automatic re-ranking
+
+The experts of the RTX 3090 (24 per layer) and of the Radeon VII (135) were chosen from the usage measured on
+2026-11-23 and fixed. Now (`RVII_AUTO_RERANK=1` in the `rvii-experts` service, details in
+[`rvii_experts/README.md`](rvii_experts/README.md#automatic-re-ranking)):
+
+- the runtime counts the decode requests of each expert all the time (`QWEN38_EXPERT_USAGE=/dev/shm/qwen38-usage.bin`,
+  the counter that [`docker-compose.usage.yml`](docker-compose.usage.yml) enabled for collections; no measurable
+  cost) and publishes its hot experts (`/dev/shm/qwen38-hot.bin`);
+- [`rvii_experts/rerank.py`](rvii_experts/rerank.py), which now runs the worker, accumulates the counts with a
+  72-hour half-life and every 10 min ranks the experts by their recent use (mixed with the general collection at
+  20 %). When another set of 135 experts per layer would serve at least 2 % more of the decode requests, it packs
+  them in the background and restarts the worker on them once the runtime has been idle for 2 min (2-20 s, while
+  the CPU computes the worker's experts);
+- the runtime takes its 24 hot experts from the re-ranked ranking at its next start (`QWEN38_RANKINGS_AUTO`, written
+  by `rerank.py` into `~/.cache/vllm-models/flash-next-rvii-measured/hot24-n135-auto/rankings.json`; until it
+  exists, `rankings-measured.json` as before), and the worker re-ranks for the new hot set.
+
+The first layout is that of `rankings-measured.json`, so nothing changes until the use differs. With the measured mix,
+the gain is none; with use far from it (other languages or kinds of text), up to ~10 % in decode was estimated (the
+measured ranking gained 24-28 % over the static one in code). `RVII_AUTO_RERANK=0` keeps the fixed placement.
 
 ## Measurements (2026-10-13, agx-z2e)
 

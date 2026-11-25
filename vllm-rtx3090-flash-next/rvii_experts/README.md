@@ -13,6 +13,8 @@ request of the CPU pool, in parallel with the CPU computing the rest, over the s
 | Latency, 4 tokens and 8 experts | 71 µs median, 91 µs p99 (from the request's seq to the response's seq, see below) |
 | Error | max \|y - ref\| / max \|ref\| ≈ 1e-5 against an FP64 reference (the CPU pool: 1e-7 in FP32, 1e-2 with int8 activations) |
 | CPU | one core spins while requests come; when idle for 100 ms, a poll every 100 µs (~3 % of a core), and after 2 s every 1 ms |
+| Prefill (2026-11-25) | in prefill chunks, the RTX 3090 sends the routing and x of each layer, and the worker computes the masked ones of its experts (the runtime's `QWEN38_RVII_PREFILL`: the 112 least used of each layer): 42 ms for all 135 experts and 8192 tokens with routing drawn from decode (41k token-expert pairs), 30 ms in a real prompt; see [Prefill](#prefill) |
+| Re-ranking (2026-11-25) | with `RVII_AUTO_RERANK=1`, [`rerank.py`](rerank.py) runs the worker and re-ranks its experts from their measured use; see [Automatic re-ranking](#automatic-re-ranking) |
 
 Files:
 
@@ -24,6 +26,9 @@ Files:
   zero points are 8 (the checkpoint stores them as `qzeros` = `0x77777777`, i.e. 7 + 1 in the GPTQ v1 format).
 - [`rvii_worker.hip`](rvii_worker.hip): the worker (HIP, gfx906).
 - [`bench_rvii.py`](bench_rvii.py): a test and benchmark client that plays the CPU side.
+- [`bench_prefill.py`](bench_prefill.py): a test and benchmark client of the prefill path that plays the RTX 3090's
+  side (routing drawn from [`usage/general.bin`](usage/general.bin)).
+- [`rerank.py`](rerank.py): the automatic re-ranking (`RVII_AUTO_RERANK=1`), which runs the worker.
 - [`rank_experts.py`](rank_experts.py): builds a ranking from measured expert usage, e.g. for particular topics
   (see [Choosing the experts](#choosing-the-experts)); [`usage/general.bin`](usage/general.bin) holds the counts
   of `rankings-measured.json`.
@@ -52,22 +57,30 @@ then the worker loads them into VRAM (4-8 s) and sets `ready = 1`. Settings (env
 - `RVII_CACHE` (default `/root/.cache/vllm-models/flash-next-rvii`).
 - `RVII_DOWN_UNITS_PER_WAVE` (default 2): (expert, group) units per wave of the down projection (1-4 performed the
   same).
+- `RVII_AUTO_RERANK=1`: re-rank the experts from their use ([Automatic re-ranking](#automatic-re-ranking)).
+- `RVII_PF_STATS=N`: log the mean time of the prefill requests every N requests.
 
-The worker exits cleanly on SIGTERM (`docker stop`): `ready = 0` and the segment is removed. If it crashes,
-`ready` stays 1, so the CPU side has to check `heartbeat` (incremented every 20 ms) or `worker_pid`.
+The worker exits cleanly on SIGTERM (`docker stop`): `ready = 0` at once, then it serves the requests that still come
+until none has come for a second (a prefill chunk in progress on the RTX 3090 is finished), and the segments are
+removed. If it crashes, `ready` stays 1, so the CPU side has to check `heartbeat` (incremented every 20 ms) or
+`worker_pid`.
 
 Test and benchmark (with the worker running):
 
 ```sh
 docker run --rm --ipc host -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro --entrypoint python \
   ghcr.io/agenttix/agx-ai/flash-next-rvii-experts:latest /opt/rvii/bench_rvii.py
+docker run --rm --ipc host -v ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro --entrypoint python \
+  ghcr.io/agenttix/agx-ai/flash-next-rvii-experts:latest /opt/rvii/bench_prefill.py
 ```
+
+Both send requests of their own: stop the runtime first, or their sequence numbers collide with its.
 
 ## Choosing the experts
 
 The ranking file decides the placement: for each layer, the experts in order of use. The runtime keeps ranks 0-23 on
-the RTX 3090 (`QWEN38_HOT_ONLY`), this worker ranks 24-158, and the CPU computes the rest. The placement is fixed while
-the containers run.
+the RTX 3090 (`QWEN38_HOT_ONLY`), this worker ranks 24-158, and the CPU computes the rest. Without the
+[automatic re-ranking](#automatic-re-ranking), the placement is fixed while the containers run.
 
 [`rankings-measured.json`](rankings-measured.json) is [`usage/general.bin`](usage/general.bin) (4.9 M decode
 requests on chat, raw generation, 16k and 64k tokens of code and retrieval questions, 2026-11-23) ranked by
@@ -94,6 +107,42 @@ Experts specialize by kind of token (code syntax, prose, language) as much as by
 better than subjects within them. In the measurements of [the runtime's README](../README.md#radeon-vii-experts-2026-11-23),
 the measured ranking gained 24-28 % in the code tests, of the same kind as part of the collection, and nothing in chats,
 which were in neither.
+
+## Automatic re-ranking
+
+With `RVII_AUTO_RERANK=1` (2026-11-25, set in [`../docker-compose.yml`](../docker-compose.yml)), the entrypoint runs
+[`rerank.py`](rerank.py), which runs the worker as its child process on a cache of its own, `hot{HOT}-n{N}-auto/` in
+`RVII_CACHE` (packed from `RVII_RANKINGS` at the first start), and:
+
+- reads the runtime's decode usage counts every 10 min (`QWEN38_EXPERT_USAGE=/dev/shm/qwen38-usage.bin` in the
+  runtime: cumulative since its start, rewritten every 256 decode steps) and accumulates them with an exponential
+  decay (half-life `RVII_RERANK_HALF_LIFE_H`, default 72 hours), kept in `usage-state.npz` across restarts;
+- every `RVII_RERANK_INTERVAL_S` (default 600), and at once when the RTX 3090's hot experts change (the runtime writes
+  them to `/dev/shm/qwen38-hot.bin` at its start), ranks the experts of each layer by their recent use mixed with the
+  general collection (`usage/general.bin`, weight `RVII_RERANK_PRIOR`, default 0.2), and writes the ranking to
+  `rankings.json` in the cache directory;
+- if the N best-ranked experts that the RTX 3090 does not keep would serve at least `RVII_RERANK_MIN_GAIN` (default
+  0.02, i.e. 2 % of all decode requests) more than the worker's current ones, and at least
+  `RVII_RERANK_MIN_REQUESTS` (default 2e7, ~10000 decode steps) were counted, packs them into a new cache
+  (`prepare.py --dir`, at the lowest priority, ~30 s) and, once the runtime has sent no request for
+  `RVII_RERANK_IDLE_S` (default 120 s), stops the worker and starts it on the new cache (2 s from the page cache,
+  ~10-20 s from the disk; meanwhile the CPU computes the worker's experts, and prefill streams them).
+
+The runtime uses `rankings.json` for its own 24 hot experts at its next start (`QWEN38_RANKINGS_AUTO`, see
+[`../rvii-prefill.patch`](../rvii-prefill.patch)); the worker then re-ranks for the new hot set. The cache keeps the
+worker's experts in rank order within each layer, as `prepare.py` packs them, so the runtime's prefill still gives the
+least used of them to the worker (see [Prefill](#prefill)).
+
+The worker of the new layout loads its experts in its own process, so the decode and prefill protocols are unchanged:
+the runtime sees the worker go (`ready = 0`, drained as at `docker stop`) and come back with a new pid and map, and
+maps the new prefill segment. The automatic cache takes another ~16 GB of disk (and ~16 GB more while a new layout is
+packed), next to the hash-named cache of `RVII_RANKINGS`.
+
+Tested (2026-11-25) with a synthetic usage file that gave the use of ranks 100-158 to ranks 159-218 of each layer and
+short intervals: the worker would serve 49.5 % instead of 44.7 % of the requests, so a new layout (2254 experts
+changed) was packed, and the worker restarted on it after 10 s without requests (loaded in 2.7 s); `bench_rvii.py`
+and `bench_prefill.py` then checked its results against the FP64 reference (decode 1.0e-5, prefill 3.2e-3, as
+before), and a `docker stop` took 3.8 s with the counts saved.
 
 ## How it works
 
@@ -146,3 +195,45 @@ Tried and dropped:
   reads and flags costs about as much as a launch), and it keeps the GPU busy while decoding.
 - Gate/up workgroups that compute all 20 groups of their columns (no cross-workgroup sum): slower (more VGPRs, lower
   occupancy).
+
+## Prefill
+
+In a prefill chunk of more than 384 tokens (`QWEN38_CPU_PREFILL_MAX`), the runtime streams the cold experts of every
+layer from RAM to the RTX 3090 (`stream_v2.py`), and the PCIe copy is its bottleneck (2.37 of 3.5 s per chunk of 8192
+tokens, 2026-11-25). With `QWEN38_RVII_PREFILL=N` (the runtime's [`../rvii_prefill.py`](../rvii_prefill.py)), the
+worker computes the N least used of its experts of each layer (its highest slots, minus any hot ones) instead, and the
+runtime does not stream them. Per MoE layer, over the second segment of [`rvii_protocol.h`](rvii_protocol.h)
+(`/dev/shm/qwen38-rvii-pf`, 85 MB):
+
+1. the RTX 3090 copies the routing (ids, weights) and x (BF16) into the segment (DMA on a side stream, while it
+   computes its hot experts) and publishes seq;
+2. the worker sorts the (expert, token) pairs of the masked experts by expert (a counting sort on the CPU), copies x
+   into VRAM, converts it to FP16, computes the experts (below), converts y to BF16 (as the RTX 3090 rounds each
+   expert's output) and copies it into the segment, and answers;
+3. the RTX 3090 waits for the answer on the GPU before the layer's reduction (a kernel that polls the segment, with a
+   10-s timeout) and adds y to its FP32 accumulator.
+
+The kernels (FP16 activations, FP32 accumulation with `v_dot2_f32_f16`; the int4 weights converted in registers to
+FP16, scaled by their group's scale): gate/up in one launch for all pairs, a wave per (expert, 64 columns, 8 tokens),
+each lane a column with both its gate and up weights, the activations as wave-uniform scalar loads (SGPR operands),
+SiLU(gate) * up to FP16; down in one launch per expert (its tokens are distinct, so the adds to y need no atomics),
+a wave per (64 hidden columns, 8 tokens). Error against the FP64 reference: 3e-3 of the output's range (the BF16 y;
+4e-4 before the rounding).
+
+Measured with [`bench_prefill.py`](bench_prefill.py) (8192 tokens, routing drawn from the decode usage; the time from
+the request's seq to the response's seq):
+
+| Version | 135 experts (41k pairs) | 96 (24k) | 64 (14k) |
+|---|---|---|---|
+| rocBLAS FP16 GEMMs (dequantized weights per expert, FP32 y) | 69 ms | 48 ms | 33 ms |
+| first own kernel (16 tokens per wave, a group's sums in temporaries; 169 VGPRs) | 86 ms | 56 ms | 36 ms |
+| scaled FP16 weights (no temporaries; 119 VGPRs, 2 waves per SIMD) | 51 ms | | 24 ms |
+| **gate/up 8 tokens and 4 packed rows per step, down 8 tokens (61 and 52 VGPRs)** | **42 ms** | **28 ms** | **20 ms** |
+
+Of the 42 ms: x in 3.4 ms, gate/up ~21 ms (13 TFLOPS), down ~14 ms (9.6 TFLOPS), y out 3.1 ms. rocBLAS reached only
+~7 TFLOPS at the experts' sizes (M = 64-1024 tokens; 19 TFLOPS at 8192). Larger token tiles (12-32 per wave) spilled
+SGPRs (the compiler hoists the activations of all tokens) and were slower; so were x and y over PCIe by the kernels
+instead of copies (+2 ms), and the chunk in 2-4 parts of tokens so that the transfers overlap with the computation
+(+2 to +13 ms: the experts' tiles get smaller). The routing of real prompts is less concentrated on these experts than
+that of decode: with all 135 masked, a 32k-token prompt gave them ~27k pairs per layer (~100 of the experts were
+used), 30 ms. The end-to-end results are in [the runtime's README](../README.md#radeon-vii-in-prefill-and-automatic-re-ranking-2026-11-25).

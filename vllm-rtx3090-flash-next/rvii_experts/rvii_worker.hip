@@ -424,7 +424,192 @@ __global__ void __launch_bounds__(256) k_req(const Args a) {
   }
 }
 
+// ---------------------------------------------------------------- prefill (RVII_PF_* of rvii_protocol.h)
+// A chunk of up to RVII_PF_MAXT tokens; the (expert, token) pairs of the masked experts, grouped by expert. FP16
+// activations with FP32 accumulation (v_dot2_f32_f16), the int4 weights converted to FP16 in registers (q - 8 is
+// exact in FP16; the group's scale is applied to each group's FP32 sum):
+//   x:   x (BF16, copied into y's memory first) to FP16 x16[T][H] in pair order: in each 8 k, the dwords hold the pairs
+//        (k, k + 4) for k = 0..3, as the conversion of a packed int32 of weights yields them;
+//   gate/up: one launch for all pairs of a batch: a wave per (expert, 64 columns, up to PF_TT tokens); lane = column,
+//        with both its gate and up weights; the activations are wave-uniform (scalar loads, SGPR operands). Writes
+//        SiLU(gate) * up in FP16 (clamped to its range) to act[pair][I] in pair order;
+//   down: one launch per expert (its tokens are distinct, so the adds to y do not race): a wave per (64 hidden
+//        columns, up to PF_TT tokens), adds wt * the output to y[tok] (FP32);
+//   out: y to BF16 (round to nearest even, as the RTX 3090 rounds each expert's output) into the act buffer, which
+//        is copied into the shared memory.
+// (Tried: x and y over PCIe by the kernels instead of copies, 2 ms slower; the chunk in 2-4 parts of tokens, so that
+// the transfers overlap with the computation, 2-11 ms slower per layer, as the experts' tiles get smaller.)
+#ifndef PF_TT_GU
+#define PF_TT_GU 8
+#endif
+#ifndef PF_TT_DN
+#define PF_TT_DN 8
+#endif
+#ifndef PF_GU_ROWS
+#define PF_GU_ROWS 4
+#endif
+#ifndef PF_DN_ROWS
+#define PF_DN_ROWS 8
+#endif
+constexpr int PF_TT = PF_TT_GU;           // tokens per wave of gate/up
+constexpr int PF_TD = PF_TT_DN;           // tokens per wave of down
+constexpr int PF_PAIRS = 32768;           // pairs per batch: act[PF_PAIRS][I] FP16 = 40 MiB = the BF16 y of 8192 tokens
+typedef _Float16 half2_t __attribute__((ext_vector_type(2)));
+
+// The 8 int4 weights of a packed int32 (k = 0..7, low nibble first) as FP16 pairs (k, k + 4) of (q - 8).
+__device__ __forceinline__ void cvt8(uint32_t q, half2_t* o) {
+  const half2_t bias = {_Float16(-1032.f), _Float16(-1032.f)};
+#pragma unroll
+  for (int p = 0; p < 4; ++p) o[p] = __builtin_bit_cast(half2_t, ((q >> (4 * p)) & 0x000F000Fu) | 0x64006400u) + bias;
+}
+__device__ __forceinline__ float dot2(half2_t a, uint32_t b, float c) {
+  return __builtin_amdgcn_fdot2(a, __builtin_bit_cast(half2_t, b), c, false);
+}
+__device__ __forceinline__ int pair_pos(int k) { return (k & ~7) + 2 * (k & 3) + ((k >> 2) & 1); }
+
+// xb (BF16 [T][H]) to x16 (FP16, pair order); a thread per 8 values.
+__global__ void __launch_bounds__(256) k_pf_x16(const uint16_t* __restrict__ xb, int T, uint32_t* __restrict__ x16) {
+  const int t = blockIdx.x * 256 + threadIdx.x;
+  if (t >= T * (H / 8)) return;
+  const u32x4 v = reinterpret_cast<const u32x4*>(xb)[t];
+  const uint32_t w[4] = {v.x, v.y, v.z, v.w};
+  float f[8];
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    f[2 * j] = __uint_as_float(w[j] << 16);
+    f[2 * j + 1] = __uint_as_float(w[j] & 0xFFFF0000u);
+  }
+  u32x4 o;
+  uint32_t* op = reinterpret_cast<uint32_t*>(&o);
+#pragma unroll
+  for (int p = 0; p < 4; ++p) {
+    const half2_t h = {_Float16(f[p]), _Float16(f[p + 4])};
+    op[p] = __builtin_bit_cast(uint32_t, h);
+  }
+  reinterpret_cast<u32x4*>(x16)[t] = o;
+}
+
+struct PfItem {
+  int slot, pair, n, cb, arow;  // expert slot, first pair, pairs (<= PF_TT), 64-column block, its row of act
+};
+
+__device__ __forceinline__ _Float16 to_half_clamped(float v, unsigned* clamped) {
+  if (!(fabsf(v) <= 65504.f)) {
+    atomicAdd(clamped, 1u);
+    v = v != v ? 0.f : copysignf(65504.f, v);
+  }
+  return _Float16(v);
+}
+
+// The 8 int4 weights of a packed int32 scaled: FP16 pairs (k, k + 4) of (q - 8) * s (rounded to FP16).
+__device__ __forceinline__ void cvt8s(uint32_t q, half2_t s2, half2_t* o) {
+  cvt8(q, o);
+#pragma unroll
+  for (int p = 0; p < 4; ++p) o[p] *= s2;
+}
+
+template <int TT>
+__global__ void __launch_bounds__(64) k_pf_gu(const uint8_t* __restrict__ w, const uint32_t* __restrict__ x16,
+                                              const PfItem* __restrict__ items, const int* __restrict__ tok,
+                                              _Float16* __restrict__ act, unsigned* clamped) {
+  const PfItem it = items[blockIdx.x];
+  const int lane = threadIdx.x;
+  const uint8_t* ew = w + size_t(it.slot) * EXPERT_BYTES;
+  const int* tk = tok + it.pair;
+  float ag[TT], au[TT];
+#pragma unroll
+  for (int i = 0; i < TT; ++i) ag[i] = au[i] = 0.f;
+  for (int g = 0; g < 20; ++g) {
+    const u32x4* qw = reinterpret_cast<const u32x4*>(ew) + ((it.cb * 20 + g) * 8) * 64 + lane;
+    const uint32_t sc = reinterpret_cast<const uint32_t*>(ew + GU_W)[(it.cb * 20 + g) * 64 + lane];
+    const _Float16 sgh = __builtin_bit_cast(_Float16, uint16_t(sc)), suh = __builtin_bit_cast(_Float16, uint16_t(sc >> 16));
+    const half2_t sg = {sgh, sgh}, su = {suh, suh};
+#pragma unroll
+    for (int h = 0; h < 16 / PF_GU_ROWS; ++h) {  // PF_GU_ROWS packed rows (8 k each) at a time
+      half2_t wg[PF_GU_ROWS][4], wu[PF_GU_ROWS][4];
+#pragma unroll
+      for (int s = 0; s < PF_GU_ROWS / 2; ++s) {
+        const u32x4 q = __builtin_nontemporal_load(qw + (PF_GU_ROWS / 2 * h + s) * 64);
+        cvt8s(q.x, sg, wg[2 * s]); cvt8s(q.y, su, wu[2 * s]); cvt8s(q.z, sg, wg[2 * s + 1]); cvt8s(q.w, su, wu[2 * s + 1]);
+      }
+      const int k2 = (g * 128 + h * 8 * PF_GU_ROWS) / 2;  // dword offset of these k in a row of x16
+#pragma unroll
+      for (int i = 0; i < TT; ++i) {
+        if (i < it.n) {
+          const uint32_t* xp = x16 + size_t(tk[i]) * (H / 2) + k2;
+#pragma unroll
+          for (int r = 0; r < PF_GU_ROWS; ++r)
+#pragma unroll
+            for (int p = 0; p < 4; ++p) {
+              const uint32_t xv = xp[4 * r + p];
+              ag[i] = dot2(wg[r][p], xv, ag[i]);
+              au[i] = dot2(wu[r][p], xv, au[i]);
+            }
+        }
+      }
+    }
+  }
+  const int pos = pair_pos(it.cb * 64 + lane);
+#pragma unroll
+  for (int i = 0; i < TT; ++i)
+    if (i < it.n) act[size_t(it.arow + i) * I + pos] = to_half_clamped(ag[i] / (1.f + __expf(-ag[i])) * au[i], clamped);
+}
+
+// One expert: a wave per (64 hidden columns, up to TT of its n tokens).
+template <int TT>
+__global__ void __launch_bounds__(64) k_pf_dn(const uint8_t* __restrict__ ew, const uint32_t* __restrict__ act,
+                                              const int* __restrict__ tok, const float* __restrict__ wt, int n,
+                                              float* __restrict__ y) {
+  const int cb = blockIdx.x % 40, i0 = blockIdx.x / 40 * TT, lane = threadIdx.x;
+  const int m = min(TT, n - i0);
+  float acc[TT];
+#pragma unroll
+  for (int i = 0; i < TT; ++i) acc[i] = 0.f;
+  for (int g = 0; g < 5; ++g) {
+    const u32x4* qw = reinterpret_cast<const u32x4*>(ew + GU_W + GU_S) + ((cb * 5 + g) * 4) * 64 + lane;
+    const _Float16 sdh = reinterpret_cast<const _Float16*>(ew + GU_W + GU_S + DN_W)[(cb * 5 + g) * 64 + lane];
+    const half2_t sd = {sdh, sdh};
+#pragma unroll
+    for (int h = 0; h < 16 / PF_DN_ROWS; ++h) {  // PF_DN_ROWS packed rows at a time (a multiple of 4)
+      half2_t wd[PF_DN_ROWS][4];
+#pragma unroll
+      for (int s = 0; s < PF_DN_ROWS / 4; ++s) {
+        const u32x4 q = __builtin_nontemporal_load(qw + (PF_DN_ROWS / 4 * h + s) * 64);
+        cvt8s(q.x, sd, wd[4 * s]); cvt8s(q.y, sd, wd[4 * s + 1]); cvt8s(q.z, sd, wd[4 * s + 2]); cvt8s(q.w, sd, wd[4 * s + 3]);
+      }
+      const int k2 = (g * 128 + h * 8 * PF_DN_ROWS) / 2;
+#pragma unroll
+      for (int i = 0; i < TT; ++i) {
+        if (i < m) {
+          const uint32_t* ap = act + size_t(i0 + i) * (I / 2) + k2;
+#pragma unroll
+          for (int r = 0; r < PF_DN_ROWS; ++r)
+#pragma unroll
+            for (int p = 0; p < 4; ++p) acc[i] = dot2(wd[r][p], ap[4 * r + p], acc[i]);
+        }
+      }
+    }
+  }
+  const int c = cb * 64 + lane;
+#pragma unroll
+  for (int i = 0; i < TT; ++i)
+    if (i < m) y[size_t(tok[i0 + i]) * H + c] += wt[i0 + i] * acc[i];
+}
+
+// y (FP32) to BF16, round to nearest even; a thread per 4 values.
+__global__ void __launch_bounds__(256) k_pf_out(const float* __restrict__ y, int n4, uint2* __restrict__ yb) {
+  const int t = blockIdx.x * 256 + threadIdx.x;
+  if (t >= n4) return;
+  const float4 v = reinterpret_cast<const float4*>(y)[t];
+  auto bf = [](float f) {
+    const uint32_t u = __float_as_uint(f);
+    return (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+  };
+  yb[t] = make_uint2(bf(v.x) | (bf(v.y) << 16), bf(v.z) | (bf(v.w) << 16));
+}
+
 std::atomic<bool> g_stop{false};
+std::atomic<bool> g_done{false};  // the heartbeat runs until the requests are drained
 void on_signal(int) { g_stop.store(true); }
 
 double now_s() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -433,6 +618,168 @@ long env_long(const char* name, long def) {
   const char* v = getenv(name);
   return v && *v ? strtol(v, nullptr, 10) : def;
 }
+
+// The prefill segment and its buffers (see the prefill kernels above).
+struct Prefill {
+  uint8_t* shm = nullptr;        // the segment (host-registered)
+  const int16_t* map = nullptr;  // the main segment's map
+  const uint8_t* w = nullptr;    // expert slot 0 in VRAM
+  hipStream_t st{};
+  uint32_t* x16 = nullptr;       // [MAXT][H] FP16 in pair order
+  float* y = nullptr;            // [MAXT][H]; first the staging of x (BF16)
+  _Float16* act = nullptr;       // [PF_PAIRS][I]; last the staging of y (BF16)
+  int* tok = nullptr;            // [MAXT * TOPK] token of each pair, grouped by expert
+  float* wt = nullptr;           // their routing weights
+  PfItem* items = nullptr;       // gate/up work items
+  int* tok_h = nullptr;          // pinned staging of tok, wt and items
+  float* wt_h = nullptr;
+  PfItem* items_h = nullptr;
+  unsigned* clamped = nullptr;   // [1] in VRAM
+  int64_t last = 0;
+  long n_req = 0, n_bad = 0;
+  double busy_s = 0, t_stat = 0;
+  long stat_pairs = 0, stat_req = 0, stat_experts = 0, stat_tokens = 0;
+  int stats_every = int(env_long("RVII_PF_STATS", 0));  // log the mean time per request every N requests
+  static constexpr int MAX_ITEMS = 10 * (RVII_PF_MAXT * RVII_PF_TOPK / PF_TT + RVII_E);
+
+  int64_t* req_seq() const { return reinterpret_cast<int64_t*>(shm + RVII_PF_REQ); }
+  int64_t* resp_seq() const { return reinterpret_cast<int64_t*>(shm + RVII_PF_RESP); }
+
+  void init(const uint8_t* weights, const int16_t* m) {
+    w = weights;
+    map = m;
+    shm_unlink(RVII_PF_SHM_NAME);  // a segment left by a crashed worker: a new one (the GPU side remaps by pid)
+    const int fd = shm_open(RVII_PF_SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (fd < 0) { perror("rvii: shm_open prefill"); exit(1); }
+    fchmod(fd, 0666);
+    if (ftruncate(fd, RVII_PF_SHM_BYTES) != 0) { perror("rvii: ftruncate prefill"); exit(1); }
+    shm = static_cast<uint8_t*>(mmap(nullptr, RVII_PF_SHM_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+    if (shm == MAP_FAILED) { perror("rvii: mmap prefill"); exit(1); }
+    ::close(fd);
+    CK(hipHostRegister(shm, RVII_PF_SHM_BYTES, hipHostRegisterMapped));
+    CK(hipStreamCreateWithFlags(&st, hipStreamNonBlocking));
+    constexpr size_t P = size_t(RVII_PF_MAXT) * RVII_PF_TOPK;
+    static_assert(size_t(PF_PAIRS) * I >= size_t(RVII_PF_MAXT) * H, "act holds the BF16 y");
+    CK(hipMalloc(&x16, sizeof(uint16_t) * RVII_PF_MAXT * H));
+    CK(hipMalloc(&y, sizeof(float) * RVII_PF_MAXT * H));
+    CK(hipMalloc(&act, sizeof(_Float16) * PF_PAIRS * I));
+    CK(hipMalloc(&tok, sizeof(int) * P));
+    CK(hipMalloc(&wt, sizeof(float) * P));
+    CK(hipMalloc(&items, sizeof(PfItem) * MAX_ITEMS));
+    CK(hipHostMalloc(&tok_h, sizeof(int) * P));
+    CK(hipHostMalloc(&wt_h, sizeof(float) * P));
+    CK(hipHostMalloc(&items_h, sizeof(PfItem) * MAX_ITEMS));
+    CK(hipMalloc(&clamped, sizeof(unsigned)));
+    CK(hipMemset(clamped, 0, sizeof(unsigned)));
+    auto* hd = reinterpret_cast<RviiPfHeader*>(shm);
+    hd->version = RVII_PF_VERSION;
+    hd->maxt = RVII_PF_MAXT;
+    hd->topk = RVII_PF_TOPK;
+    std::atomic_thread_fence(std::memory_order_release);
+    reinterpret_cast<std::atomic<uint64_t>*>(&hd->magic)->store(RVII_PF_MAGIC, std::memory_order_release);
+  }
+
+  // Serves a request if there is one; returns whether it did.
+  bool poll() {
+    const int64_t seq = __atomic_load_n(req_seq(), __ATOMIC_ACQUIRE);
+    if (seq == last || seq == 0) return false;
+    last = seq;
+    const double t0 = now_s();
+    const int T = *reinterpret_cast<const int32_t*>(shm + RVII_PF_REQ + 8);
+    const int layer = *reinterpret_cast<const int32_t*>(shm + RVII_PF_REQ + 12);
+    if (T < 1 || T > RVII_PF_MAXT || layer < 0 || layer >= RVII_L) {
+      if (n_bad++ < 10) fprintf(stderr, "rvii: invalid prefill request seq %lld (T %d layer %d)\n", (long long)seq, T, layer);
+      std::memset(shm + RVII_PF_Y, 0, sizeof(uint16_t) * H * (T >= 1 && T <= RVII_PF_MAXT ? T : 0));
+      __atomic_store_n(resp_seq(), seq, __ATOMIC_RELEASE);
+      return true;
+    }
+    // The pairs of the masked experts, grouped by expert (a counting sort).
+    const int32_t* ids = reinterpret_cast<const int32_t*>(shm + RVII_PF_IDS);
+    const float* wts = reinterpret_cast<const float*>(shm + RVII_PF_W);
+    const uint8_t* mask = shm + RVII_PF_MASK + layer * RVII_E;
+    const int16_t* lmap = map + layer * RVII_E;
+    int start[RVII_E + 1] = {0};
+    const int n = T * RVII_PF_TOPK;
+    for (int i = 0; i < n; ++i) {
+      const int e = ids[i];
+      if (e >= 0 && e < RVII_E && mask[e] && lmap[e] >= 0) start[e + 1]++;
+    }
+    for (int e = 0; e < RVII_E; ++e) start[e + 1] += start[e];
+    const int pairs = start[RVII_E];
+    {
+      int pos[RVII_E];
+      std::memcpy(pos, start, sizeof(pos));
+      for (int i = 0; i < n; ++i) {
+        const int e = ids[i];
+        if (e >= 0 && e < RVII_E && mask[e] && lmap[e] >= 0) {
+          tok_h[pos[e]] = i / RVII_PF_TOPK;
+          wt_h[pos[e]++] = wts[i];
+        }
+      }
+    }
+    // x (BF16) into y's memory, then to FP16 in pair order.
+    if (pairs > 0) {
+      CK(hipMemcpyAsync(y, shm + RVII_PF_X, sizeof(uint16_t) * T * H, hipMemcpyHostToDevice, st));
+      CK(hipMemcpyAsync(tok, tok_h, sizeof(int) * pairs, hipMemcpyHostToDevice, st));
+      CK(hipMemcpyAsync(wt, wt_h, sizeof(float) * pairs, hipMemcpyHostToDevice, st));
+      k_pf_x16<<<(T * (H / 8) + 255) / 256, 256, 0, st>>>(reinterpret_cast<const uint16_t*>(y), T, x16);
+    }
+    CK(hipMemsetAsync(y, 0, sizeof(float) * T * H, st));
+    // Batches of experts with at most PF_PAIRS pairs: gate/up of the batch, then down per expert.
+    int experts = 0, nitems = 0;
+    for (int e0 = 0; e0 < RVII_E;) {
+      int e1 = e0;
+      while (e1 < RVII_E && (e1 == e0 || start[e1 + 1] - start[e0] <= PF_PAIRS)) ++e1;
+      const int pair0 = start[e0];
+      const int it0 = nitems;
+      for (int e = e0; e < e1; ++e)
+        for (int p = start[e]; p < start[e + 1]; p += PF_TT)
+          for (int cb = 0; cb < 10; ++cb)
+            items_h[nitems++] = PfItem{lmap[e], p, std::min(PF_TT, start[e + 1] - p), cb, p - pair0};
+      if (nitems > it0) {
+        CK(hipMemcpyAsync(items + it0, items_h + it0, sizeof(PfItem) * (nitems - it0), hipMemcpyHostToDevice, st));
+        k_pf_gu<PF_TT><<<nitems - it0, 64, 0, st>>>(w, x16, items + it0, tok, act, clamped);
+        for (int e = e0; e < e1; ++e) {
+          const int ne = start[e + 1] - start[e];
+          if (ne == 0) continue;
+          ++experts;
+          k_pf_dn<PF_TD><<<40 * ((ne + PF_TD - 1) / PF_TD), 64, 0, st>>>(
+              w + size_t(lmap[e]) * EXPERT_BYTES, reinterpret_cast<const uint32_t*>(act + size_t(start[e] - pair0) * I),
+              tok + start[e], wt + start[e], ne, y);
+        }
+      }
+      e0 = e1;
+    }
+    k_pf_out<<<(T * H / 4 + 255) / 256, 256, 0, st>>>(y, T * H / 4, reinterpret_cast<uint2*>(act));
+    CK(hipMemcpyAsync(shm + RVII_PF_Y, act, sizeof(uint16_t) * T * H, hipMemcpyDeviceToHost, st));
+    CK(hipStreamSynchronize(st));
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    __atomic_store_n(resp_seq(), seq, __ATOMIC_RELEASE);
+    const double dt = now_s() - t0;
+    busy_s += dt;
+    ++n_req;
+    stat_req++; stat_pairs += pairs; stat_experts += experts; stat_tokens += T; t_stat += dt;
+    if (stats_every > 0 && stat_req >= stats_every) {
+      unsigned cl = 0;
+      CK(hipMemcpy(&cl, clamped, sizeof(cl), hipMemcpyDeviceToHost));
+      fprintf(stderr, "rvii prefill: %ld requests, per request %.0f tokens, %.0f experts, %.0f pairs, %.2f ms; "
+                      "%u values clamped to FP16 (total)\n", stat_req, double(stat_tokens) / stat_req,
+              double(stat_experts) / stat_req, double(stat_pairs) / stat_req, t_stat / stat_req * 1e3, cl);
+      stat_req = stat_pairs = stat_experts = stat_tokens = 0;
+      t_stat = 0;
+    }
+    return true;
+  }
+
+  void close() {
+    if (!shm) return;
+    (void)hipStreamSynchronize(st);
+    (void)hipHostUnregister(shm);
+    munmap(shm, RVII_PF_SHM_BYTES);
+    shm_unlink(RVII_PF_SHM_NAME);
+    shm = nullptr;
+  }
+};
 
 }  // namespace
 
@@ -492,7 +839,7 @@ int main(int argc, char** argv) {
   std::atomic_thread_fence(std::memory_order_release);
   reinterpret_cast<std::atomic<uint64_t>*>(&hd->magic)->store(RVII_MAGIC, std::memory_order_release);
   std::thread hb([&] {
-    while (!g_stop.load()) {
+    while (!g_done.load()) {
       heartbeat->fetch_add(1, std::memory_order_relaxed);
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
@@ -537,7 +884,7 @@ int main(int argc, char** argv) {
     CK(hipStreamDestroy(cs));
     close(wf);
   }
-  if (g_stop.load()) { hb.join(); munmap(shm, RVII_SHM_BYTES); shm_unlink(RVII_SHM_NAME); return 0; }
+  if (g_stop.load()) { g_done.store(true); hb.join(); munmap(shm, RVII_SHM_BYTES); shm_unlink(RVII_SHM_NAME); return 0; }
 
   // Buffers, and the shared memory mapped into the GPU's address space (x is read and y written over PCIe).
   Args a{};
@@ -578,6 +925,8 @@ int main(int argc, char** argv) {
   CK(hipStreamCreateWithFlags(&st, hipStreamNonBlocking));
 
   for (int s = 0; s < nexp; ++s) map[slots[2 * s] * RVII_E + slots[2 * s + 1]] = int16_t(s);
+  Prefill pf;
+  pf.init(dw, map);
   int64_t last = 0;  // the last answered seq
   std::atomic_thread_fence(std::memory_order_release);
   ready->store(1, std::memory_order_release);
@@ -586,7 +935,19 @@ int main(int argc, char** argv) {
 
   double t_last = now_s();
   long n_req = 0, n_bad = 0;
-  while (!g_stop.load(std::memory_order_relaxed)) {
+  // On SIGTERM: ready = 0 at once (no new decode requests, no new prefill chunks), but requests are served until
+  // none has come for a second, so that a prefill chunk in progress on the RTX 3090 is finished.
+  bool draining = false;
+  for (;;) {
+    if (g_stop.load(std::memory_order_relaxed)) {
+      if (!draining) {
+        draining = true;
+        ready->store(0, std::memory_order_release);
+        t_last = now_s();
+      }
+      if (now_s() - t_last > 1.0) break;
+    }
+    if (pf.poll()) { t_last = now_s(); continue; }
     const int64_t seq = req_seq->load(std::memory_order_acquire);
     if (seq == last || seq == 0) {
       // Spin while active; when idle for more than 100 ms, poll every 100 us so as not to burn a core, and after 2 s,
@@ -671,8 +1032,11 @@ int main(int argc, char** argv) {
   }
   ready->store(0, std::memory_order_release);
   (void)hipStreamSynchronize(st);
+  g_done.store(true);
   hb.join();
-  fprintf(stderr, "rvii: exiting after %ld requests (%ld invalid)\n", n_req, n_bad);
+  fprintf(stderr, "rvii: exiting after %ld requests (%ld invalid) and %ld prefill requests (%.1f s, %ld invalid)\n",
+          n_req, n_bad, pf.n_req, pf.busy_s, pf.n_bad);
+  pf.close();
   (void)hipHostUnregister(shm);
   munmap(shm, RVII_SHM_BYTES);
   shm_unlink(RVII_SHM_NAME);
