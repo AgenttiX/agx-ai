@@ -1,7 +1,7 @@
-# OpenVINO Model Server with Qwen3-8B on the ThinkPad L14 Gen 5
+# OpenVINO Model Server with Qwen3.5-9B on the ThinkPad L14 Gen 5
 
-OpenVINO Model Server (OVMS) for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U), serving Qwen3-8B on the iGPU,
-or alternatively on the NPU (Meteor Lake NPU 3720).
+OpenVINO Model Server (OVMS) for the ThinkPad L14 Gen 5 (Intel Core Ultra 5 125U), serving Qwen3.5-9B on the iGPU,
+or alternatively Qwen3-8B on the NPU (Meteor Lake NPU 3720), which cannot run Qwen3.5.
 The llama.cpp server for the CPU and iGPU is in [../llama-cpp-l14](../llama-cpp-l14),
 Gemma 4 E4B (also with OVMS) in [../openvino-l14-e4b](../openvino-l14-e4b),
 and EmbeddingGemma 2 on the NPU in [../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2).
@@ -9,13 +9,16 @@ How the CPU, the iGPU and the NPU can be used together is investigated [below](#
 
 | Model | Device | Context | GPU/NPU memory | RAM | Generation | Prompt processing | Notes |
 |---|---|---|---|---|---|---|---|
-| Qwen3-8B, INT4 channel-wise ([OpenVINO/Qwen3-8B-int4-cw-ov](https://huggingface.co/OpenVINO/Qwen3-8B-int4-cw-ov)) | **iGPU (default)** | ~28k tokens (2 GB KV cache) | shared RAM | 10 GB | 13.8–14.0 t/s (chat test 13.5) | 0.5 s for short prompts, 4.8 s for 781 tokens, 91 t/s at 4.1k and 57 t/s at 8.5k tokens | |
-| the same | NPU (`ovms-qwen3-npu`) | prompt 8192 + answer | shared RAM | 13.6 GB | 7.3–8.0 t/s (chat test 7.3), 5.2 t/s after an 8k prompt | 5.4 s for any prompt up to 1k tokens, ~120 t/s at 8k | leaves the iGPU and the CPU free |
+| Qwen3.5-9B, INT4 asymmetric, group size 128 ([OpenVINO/Qwen3.5-9B-int4-ov](https://huggingface.co/OpenVINO/Qwen3.5-9B-int4-ov)) | **iGPU (default)** | 30k tokens tested (2 GB cache) | shared RAM | 7.6 GB | 12.2–12.7 t/s (chat test 12.1), 13.1 t/s after a 30k prompt | 0.55 s for short prompts, 4.6–5.0 s for 781 tokens, 149 t/s at 3.9k, 125 t/s at 8.1k and 65 t/s at 30k tokens | images too (3.2–4.3 s to the first token); 80/80 arithmetic |
+| Qwen3-8B, INT4 channel-wise ([OpenVINO/Qwen3-8B-int4-cw-ov](https://huggingface.co/OpenVINO/Qwen3-8B-int4-cw-ov)) | NPU (`ovms-qwen3-npu`) | prompt 8192 + answer | shared RAM | 13.6 GB | 7.3–8.0 t/s (chat test 7.3), 5.2 t/s after an 8k prompt | 5.4 s for any prompt up to 1k tokens, ~120 t/s at 8k | leaves the iGPU and the CPU free |
 
-- The iGPU generates 1.8x as fast as the NPU, and short prompts get the first token 10x sooner.
-  The NPU processes prompts of several thousand tokens faster (about 2x at 8k tokens), and leaves the iGPU free,
-  e.g. for [../llama-cpp-l14](../llama-cpp-l14).
-- The CPU generates at 8.5–8.9 t/s with OpenVINO, but takes 28 s for a 780-token prompt.
+- Qwen3.5-9B replaced Qwen3-8B on the iGPU on 2026-11-26. It generates 10 % slower (12.1 vs 13.5 t/s in the chat
+  test), but it is a newer and larger model that also reads images, uses less RAM (7.6 vs 10 GB), and processes long
+  prompts about twice as fast (26.5 vs 45 s at 4k tokens, 65 vs 150 s at 8k tokens): only 8 of its 32 layers use
+  full attention, the others linear attention (Gated DeltaNet) with a state of a fixed size.
+- The iGPU generates 1.7x as fast as the NPU, and short prompts get the first token 10x sooner.
+  The NPU leaves the iGPU free, e.g. for [../llama-cpp-l14](../llama-cpp-l14).
+- The CPU generates Qwen3-8B at 8.5–8.9 t/s with OpenVINO, but takes 28 s for a 780-token prompt.
 - llama.cpp on the CPU generates 16 t/s with Qwen3-4B Q4_K_M (see [the model comparison](#model-comparison-on-the-npu)).
 
 ## Hardware and software
@@ -33,48 +36,87 @@ How the CPU, the iGPU and the NPU can be used together is investigated [below](#
 ```sh
 docker compose up -d
 ```
-- The model is downloaded from Hugging Face to `/home/mika/.cache/ovms` on the first start.
+- The model is downloaded from Hugging Face to `/home/mika/.cache/ovms` on the first start (6.3 GB).
+  The first start compiles it for the iGPU in ~20 s (cached in `/home/mika/.cache/ovms/.ov_cache`, 5.8 GB),
+  later starts take 4 s.
 - The API is OpenAI-compatible at http://localhost:9933/v3 (also `/v1`, e.g. `/v1/chat/completions`).
-  The model id is `qwen/qwen3-8b` (`qwen/qwen3-8b-npu` on the NPU).
+  The model id is `qwen/qwen3.5-9b` (`qwen/qwen3-8b-npu` on the NPU).
 - The NPU variant is started instead with `docker compose up -d ovms-qwen3-npu` (stop the other one first, as they use
   the same port).
 - Thinking can be disabled per request with `"chat_template_kwargs": {"enable_thinking": false}`.
-  This is recommended for interactive use, as Qwen3 often thinks for over 1000 tokens.
-- Thinking and tool calls are returned in the separate `reasoning_content` and `tool_calls` fields (tested).
-- The server uses 10 GB of RAM on the iGPU (`free` before and after; `docker stats` shows 14.6 GB including the page
-  cache). Do not run this at the same time as [../llama-cpp-l14](../llama-cpp-l14) or
-  [../openvino-l14-e4b](../openvino-l14-e4b): together they exhausted the 32 GB of RAM and the kernel killed
-  the desktop session. It can run with [../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2)
-  on the NPU.
+  This is recommended for interactive use, as Qwen3 and Qwen3.5 often think for over 1000 tokens.
+- Thinking and tool calls are returned in the separate `reasoning_content` and `tool_calls` fields (tested with both
+  models; Qwen3.5 uses the `qwen3coder` tool parser, as its tool calls are in XML).
+- Images can be sent to Qwen3.5 as `image_url` content parts (base64 data URLs).
+- Qwen3.5 uses 7.6 GB of RAM (`free` before and after loading; `docker stats` shows 7.2 GB, and 12.2 GB including
+  the page cache after a 30k-token prompt). Qwen3-8B used 10 GB on the iGPU. Do not run this at the same time as
+  [../llama-cpp-l14](../llama-cpp-l14) or [../openvino-l14-e4b](../openvino-l14-e4b): Qwen3-8B and Gemma 4 E4B
+  together exhausted the 32 GB of RAM and the kernel killed the desktop session. It can run with
+  [../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2) on the NPU.
 
 ## iGPU settings
-Measured on 2026-11-25 with [`agx_ai/benchmark/chat_stream.py`](../agx_ai/benchmark/chat_stream.py) `--no-thinking`
+Measured on 2026-11-25 (Qwen3-8B) and 2026-11-26 (Qwen3.5-9B) with
+[`agx_ai/benchmark/chat_stream.py`](../agx_ai/benchmark/chat_stream.py) `--no-thinking`
 (short prompts and a 781-token prompt), the chat test of [`agx_ai/benchmark/bench_http.py`](../agx_ai/benchmark/bench_http.py)
 (`--tests chat --repeat 1`, six prompts with thinking, up to 512 tokens; results in
-`../benchmark/results/agx-l14-kubuntu.jsonl`) and an ad-hoc long-prompt test (a password hidden in a repeated text).
-- `--cache_size 2`: with the default dynamic KV cache, prompts of a few thousand tokens stalled: a 3.4k-token prompt
-  had not finished after 6 minutes, with one CPU thread at 100 % and the iGPU idle, both with continuous batching
-  and with the stateful pipeline (`--pipeline_type LM`). OpenVINO GenAI without OVMS processed a 4.5k-token prompt in
-  27 s on the same iGPU.
+`../benchmark/results/agx-l14-kubuntu.jsonl`), an ad-hoc long-prompt test (a password hidden in the middle of
+a repeated text, found in all of the tests), and 80 arithmetic questions with greedy decoding as a check of the output.
+- `--cache_size 2`: with the default dynamic KV cache, prompts of a few thousand tokens stalled with Qwen3-8B: a
+  3.4k-token prompt had not finished after 6 minutes, with one CPU thread at 100 % and the iGPU idle, both with
+  continuous batching and with the stateful pipeline (`--pipeline_type LM`). OpenVINO GenAI without OVMS processed
+  a 4.5k-token prompt in 27 s on the same iGPU. Qwen3.5 needs only 16 KiB of KV cache per token (8 layers with
+  4 KV heads of 256 dimensions at 8 bits), and the same budget also holds the linear-attention states
+  (~50 MB per sequence and per prefix-cache checkpoint), so 2 GB was enough for a 30k-token prompt.
 - `--max_num_batched_tokens 256`: the prompt is processed in chunks of this size. The i915 driver resets GPU jobs that
   do not finish in time (`/sys/class/drm/card1/engine/*/preempt_timeout_ms` 7500 and `heartbeat_interval_ms` 2500),
   and the kernel log showed "Fence expiration time out" for OVMS with longer jobs. With 512-token chunks, OVMS crashed
-  once with a "GPU hang" (`CL_OUT_OF_RESOURCES`) while the NPU was in use, and its prompt processing was not faster.
-  Gemma 4 E4B also hung once at a 16k-token prompt with 256-token chunks, so the context is not unlimited in practice.
-- The prompt processing slows down with the length of the context, from 185 t/s at 1.4k tokens to 57 t/s at 8.5k tokens.
+  once with a "GPU hang" (`CL_OUT_OF_RESOURCES`) with Qwen3-8B while the NPU was in use, and the prompt processing
+  was not faster with either model. Gemma 4 E4B also hung once at a 16k-token prompt with 256-token chunks;
+  Qwen3.5 processed a 30k-token prompt without problems.
+- Prefix caching is on by default. With Qwen3.5, the linear-attention states can be reused only from checkpoints:
+  the same 4.1k-token text with another question reused 2592 tokens, and the first token came after 11.9 s instead
+  of 28.7 s.
+- The prompt processing slows down with the length of the context: with Qwen3-8B from 185 t/s at 1.4k tokens to
+  57 t/s at 8.5k tokens, with Qwen3.5 from 149 t/s at 3.9k tokens to 65 t/s at 30k tokens.
 
-| Configuration | Generation (chat test) | Short prompt | 781 tokens | 4.1k tokens | 8.5k tokens |
-|---|---|---|---|---|---|
-| **iGPU, continuous batching, 256-token chunks (this)** | 13.8–14.0 t/s (13.5) | 0.5 s | 4.8 s | 45 s | 150 s |
-| iGPU, the same with 512-token chunks | 14.0–14.2 t/s (13.5) | 0.5 s | 4.9 s | 48 s | 160 s |
-| iGPU, 512-token chunks, draft model on the CPU (see below) | (13.5) | | | | |
-| iGPU, 512-token chunks, draft model on the iGPU | (12.7) | | | | |
-| iGPU, stateful pipeline (OpenVINO GenAI without OVMS) | 14.5 t/s | 0.4 s | 4.3 s | 27 s (4.5k) | |
-| NPU, `max_prompt_len` 4096 | 7.7–8.5 t/s (7.3) | 5.3 s | 5.3 s | | |
-| CPU (OpenVINO GenAI) | 8.5–8.9 t/s | 0.7–1.3 s | 28 s | | |
+| Configuration | Generation (chat test) | Short prompt | 781 tokens | 4.1k tokens | 8.5k tokens | Answers |
+|---|---|---|---|---|---|---|
+| **Qwen3.5-9B INT4, iGPU, continuous batching, 256-token chunks (this)** | 12.2–12.7 t/s (12.1) | 0.55 s | 4.6–5.0 s | 26.5 s (3.9k) | 65 s (8.1k), 141 s (15k), 470 s (30k) | 80/80 |
+| Qwen3.5-9B, the same with 512-token chunks | | | | 26.9 s (3.9k) | 65 s (8.1k) | |
+| Qwen3.5-9B with its MTP head as the draft model (see below) | 9.6–19 t/s, depending on the text | 0.6–0.75 s | 5.0 s | 28 s (3.9k) | out of memory | 5–78/80 |
+| Qwen3.5-9B NF4 ([OpenVINO/Qwen3.5-9B-nf4-ov](https://huggingface.co/OpenVINO/Qwen3.5-9B-nf4-ov)) | out of memory while loading | | | | | |
+| Qwen3-8B INT4 channel-wise, iGPU, 256-token chunks (until 2026-11-26) | 13.8–14.0 t/s (13.5) | 0.5 s | 4.8 s | 45 s | 150 s | |
+| Qwen3-8B, the same with 512-token chunks | 14.0–14.2 t/s (13.5) | 0.5 s | 4.9 s | 48 s | 160 s | |
+| Qwen3-8B, 512-token chunks, draft model on the CPU (see below) | (13.5) | | | | | |
+| Qwen3-8B, 512-token chunks, draft model on the iGPU | (12.7) | | | | | |
+| Qwen3-8B, stateful pipeline (OpenVINO GenAI without OVMS) | 14.5 t/s | 0.4 s | 4.3 s | 27 s (4.5k) | | |
+| Qwen3-8B, NPU, `max_prompt_len` 4096 | 7.7–8.5 t/s (7.3) | 5.3 s | 5.3 s | | | |
+| Qwen3-8B, CPU (OpenVINO GenAI) | 8.5–8.9 t/s | 0.7–1.3 s | 28 s | | | |
 
+## Qwen3.5-9B
+Tested on 2026-11-26 with the OVMS 2026.5 weekly build.
+- **The NF4 version** ([OpenVINO/Qwen3.5-9B-nf4-ov](https://huggingface.co/OpenVINO/Qwen3.5-9B-nf4-ov), channel-wise
+  NF4, made for the NPU) cannot be used on this laptop. On the iGPU, OVMS used over 20 GB of RAM while loading
+  (apparently the NF4 weights are expanded to FP16, as the INT4 version of the same size needs only 7.6 GB):
+  the first attempt exhausted the 32 GB of RAM and the kernel killed the desktop session, and the second was killed
+  at the `docker run --memory 20g` limit (the iGPU's buffers are not counted in the container's limit, so the limit
+  alone does not protect the desktop). On the NPU, the compilation failed immediately
+  (`ZE_RESULT_ERROR_INVALID_ARGUMENT` from `vclAllocatedExecutableCreate4`): according to the model card, the NPU
+  version is for the Core Ultra 200V and Series 3, and this is the previous generation (NPU 3720).
+  The INT4 version (asymmetric, group size 128) is the same format as the Gemma 4 E4B model that works well on this
+  iGPU.
+- **MTP speculative decoding**: the model has a multi-token prediction head (`openvino_mtp_model.xml`), which OVMS
+  uses as the draft model with `--draft_model_path` set to the model's own directory ("Draft model strategy: MTP").
+  It requires `--enable_prefix_caching false` and a smaller `--max_num_seqs` (e.g. 4; the default 256 reserves more
+  linear-attention states than the draft's cache can hold), and the number of draft tokens can be set per request
+  (`num_assistant_tokens`) or as a default in the model's `generation_config.json` (the default is 5, which was slower
+  than without MTP; 2 was the fastest). Code and long answers were generated up to 50 % faster, but the output is
+  wrong: with greedy decoding the answers differ from those without MTP ("322 + 68" = "400", "80 * 86" = "70480"),
+  and the number of correct answers to 80 arithmetic questions varied between server starts (5, 67 and 78/80,
+  compared to 80/80 without MTP). Also, the memory grew with long prompts until the container was killed at its
+  16 GB limit at an 8k-token prompt. So the MTP head is not used, and the chat test results with it were discarded.
 ## Using the CPU, the iGPU and the NPU together
-Investigated on 2026-11-25 with the OVMS 2026.5 weekly build. In short: no way of splitting one model between the
+Investigated on 2026-11-25 with the OVMS 2026.5 weekly build and Qwen3-8B (for Qwen3.5-9B, see [above](#qwen35-9b)). In short: no way of splitting one model between the
 devices made it faster, as all of them share the same memory bandwidth, and the speculative decoding with the NPU
 gives wrong output. The fastest way to use all of them is to run each model on the device that suits it best
 at the same time: the LLM on the iGPU and the embeddings on the NPU.

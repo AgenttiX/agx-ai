@@ -16,8 +16,8 @@ Everything is limited by the memory bandwidth, which the CPU, iGPU and NPU share
 so splitting a model between them does not add bandwidth,
 and mixing CPU and Vulkan in one model is very slow (see below).
 
-OpenVINO Model Server runs Qwen3-8B ([../openvino-l14](../openvino-l14)) and Gemma 4 E4B
-([../openvino-l14-e4b](../openvino-l14-e4b)) on the iGPU or the NPU,
+OpenVINO Model Server runs Qwen3.5-9B on the iGPU or Qwen3-8B on the NPU ([../openvino-l14](../openvino-l14)),
+Gemma 4 E4B on the iGPU or the NPU ([../openvino-l14-e4b](../openvino-l14-e4b)),
 and EmbeddingGemma 2 on the NPU ([../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2)).
 On the iGPU, OpenVINO generates Gemma 4 E4B 1.8x as fast as llama.cpp (14 vs 7.8 t/s), but it cannot run the 26B A4B
 (see [../openvino-l14/README.md](../openvino-l14/README.md#using-the-cpu-the-igpu-and-the-npu-together)).

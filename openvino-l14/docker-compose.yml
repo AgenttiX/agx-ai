@@ -1,30 +1,33 @@
-# OpenVINO Model Server (OVMS) for the ThinkPad L14 Gen 5 with Qwen3-8B on the iGPU (default) or on the NPU.
+# OpenVINO Model Server (OVMS) for the ThinkPad L14 Gen 5 with Qwen3.5-9B on the iGPU (default), or Qwen3-8B on the NPU.
 # See README.md for the usage, the measurements and the notes.
-# The iGPU generates 1.8x as fast as the NPU. The NPU variant (profile "npu") leaves the iGPU and the CPU free:
+# Qwen3.5 does not run on this NPU (3720). The NPU variant (profile "npu") leaves the iGPU and the CPU free:
 # docker compose up -d ovms-qwen3-npu
 services:
-  ovms-qwen3:
+  ovms-qwen35:
     # 2026.5.0 (weekly build of 2026-11-19), the same as in ../openvino-l14-e4b.
     image: openvino/model_server@sha256:6c496c2e4c0110d4544c5f09139625637fd34dde5ba8064553443e6321ab1da4
-    container_name: ovms-qwen3
+    container_name: ovms-qwen35
     command: [
       "--rest_port", "8000",
       "--model_repository_path", "/models",
-      # Downloaded from Hugging Face on the first start.
-      "--source_model", "OpenVINO/Qwen3-8B-int4-cw-ov",
-      "--model_name", "qwen/qwen3-8b",
+      # Downloaded from Hugging Face on the first start (6.3 GB, with the vision encoder).
+      # The NF4 version (OpenVINO/Qwen3.5-9B-nf4-ov) ran out of memory on the iGPU and does not compile on this NPU.
+      "--source_model", "OpenVINO/Qwen3.5-9B-int4-ov",
+      "--model_name", "qwen/qwen3.5-9b",
       "--target_device", "GPU",
       "--task", "text_generation",
       # Compiled GPU kernels, so that later starts are faster.
       "--cache_dir", "/models/.ov_cache",
-      # The KV cache (8-bit) is allocated at the start: 2 GB is ~28k tokens.
-      # With the default dynamic allocation, prompts of a few thousand tokens stalled.
+      # The KV cache is allocated at the start. Only 8 of the 32 layers have a KV cache (the others are linear
+      # attention), so 2 GB is enough for a 30k-token prompt, and it also holds the linear-attention states.
+      # With the default dynamic allocation, prompts of a few thousand tokens stalled (tested with Qwen3-8B).
       "--cache_size", "2",
       # The prompt is processed in chunks of this many tokens. Long GPU jobs are reset by the i915 driver
-      # ("GPU hang"), which crashed OVMS once with 512-token chunks while the NPU was in use.
+      # ("GPU hang"), which crashed OVMS once with 512-token chunks, which were not faster.
       "--max_num_batched_tokens", "256",
       "--reasoning_parser", "qwen3",
-      "--tool_parser", "hermes3",
+      "--tool_parser", "qwen3coder",
+      # Not used: the model's MTP head (--draft_model_path to the model directory) gave wrong answers, see README.md.
     ]
     devices:
       - /dev/dri:/dev/dri
@@ -43,8 +46,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 900s
 
-  # The previous configuration on the NPU. Start it instead of ovms-qwen3 (it uses the same port).
+  # Qwen3-8B on the NPU, the previous configuration. Start it instead of ovms-qwen35 (it uses the same port).
   ovms-qwen3-npu:
     profiles: [ "npu" ]
     image: openvino/model_server@sha256:6c496c2e4c0110d4544c5f09139625637fd34dde5ba8064553443e6321ab1da4

@@ -42,7 +42,7 @@ These are the configurations that run the local LLMs.
     Depending on the hardware, you may get multiple times the performance (tokens/s)
     using llama.cpp or vLLM with proper configuration.
 - [OpenVINO](https://github.com/openvinotoolkit/openvino)
-  - [ThinkPad L14 Gen 5 iGPU or NPU: Qwen3-8B (Intel Core Ultra 5 125U, Meteor Lake NPU 3720), and how to use the CPU, iGPU and NPU together](openvino-l14/README.md)
+  - [ThinkPad L14 Gen 5 iGPU or NPU: Qwen3.5-9B or Qwen3-8B with OpenVINO (Intel Core Ultra 5 125U, Meteor Lake NPU 3720), and how to use the CPU, iGPU and NPU together](openvino-l14/README.md)
   - [ThinkPad L14 Gen 5 NPU: EmbeddingGemma 2 with OpenVINO](openvino-l14-embeddinggemma2/README.md)
   - [ThinkPad L14 Gen 5 iGPU or NPU: Gemma 4 E4B with OpenVINO](openvino-l14-e4b/README.md)
   - [Converter container for the NPU configurations](openvino-npu-convert/README.md)
