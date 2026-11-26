@@ -205,6 +205,13 @@ What has given the largest gains, roughly in order:
   top_p 0.95) 919 µs per step on an RTX 3090, with the Triton kernel 248 µs and the same tokens kept. flash-next
   lowers the threshold to 2 rows (`flash-next.patch`): -0.6 ms per decode step. Check it in a profile of the step's
   tail (`--profiler-config '{"profiler":"torch","torch_profiler_dir":...}'`, `POST /start_profile`).
+- **The number of drafts with experts on the CPU** (flash-next, 2026-11-26, estimated from a decode trace): each
+  further token per step adds its own experts (~2.9 more CPU experts per layer in code edits, ~4 ms per step with
+  the draft), so it pays off only where the drafts are nearly always accepted: in edits (0.996 / 0.99 / 0.96 at
+  positions 1-3) 5 drafts would give an estimated +21 %, 7 +34 %; in chats (positions 1-3: ~0.5 / 0.3 / 0.2) 3 stays
+  the best (2 or 4: −0.5 / −3 %). vLLM has variable-K scheduling (`num_spec_tokens_to_schedule`), chosen by batch
+  size; an adaptive depth needs a choice by the recent acceptance. Read the per-position acceptance from vLLM's
+  `SpecDecoding metrics` log lines.
 - Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with
   repeated text gives ~98 % acceptance.
 
@@ -252,6 +259,9 @@ What has given the largest gains, roughly in order:
     the worker's supervisor decays them (72-hour half-life), and when another set would serve 2 % more of the
     requests, repacks the second GPU's experts in the background and restarts its worker while the server is idle
     (2-20 s of CPU-only cold experts). The main GPU's hot set follows at its next start (`QWEN38_RANKINGS_AUTO`).
+    **Benchmarks train it too:** after a day of mostly benchmark traffic, the code-edit test ran at 104.6 instead of
+    81.5 t/s, as the CPU got 14.2 instead of 21.9 experts per layer in it, while chats changed by +3 %. Compare
+    configurations with the same ranking, and expect real use to move it elsewhere.
 - **CPU expert kernel on Zen 2** (flash-next, 2026-11-24, `cpu-moe-opt.patch`): find the bottleneck with a decode
   trace first (`QWEN38_DECODE_TRACE`, `cpu_moe_bench/analyze_trace.py` and the replay mode of `cpu_moe_bench`): the
   CPU part was ~60 % of a step and the RAM was idle while the GPU computed (~0.2 ms between the layers, ~40 %).
@@ -275,7 +285,10 @@ What has given the largest gains, roughly in order:
     70 vs 50 % with 7 experts per layer).
   - Not better: column slices of an expert for load balance (strided rows halve the RAM bandwidth with 8 threads,
     as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
-    distances, 12-16 threads. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same
+    distances, 12-16 threads. Also (2026-11-26) splitting a layer's largest expert between two threads in
+    contiguous halves (gate/up by their inputs, down by its outputs): ±0.3 % to +5 % CPU time in the trace replay,
+    as the slowest thread waits for the RAM like the others, and a split half loses the expert's prefetch into one
+    CCX's L3. The kernel reaches 61-63 GB/s of the 71 GB/s that plain loads get with the same
     access pattern.
 - **Other programs on the CPU pool's cores** (flash-next, 2026-11-24): 64 busy threads of a desktop program cut
   decode to 40 %, as each layer waits for the slowest of the pool's 8 threads. Nice values do not help across
@@ -338,6 +351,10 @@ What has given the largest gains, roughly in order:
   (`agx_ai/benchmark/temps.py`). The RTX 3090's GDDR6X reached 98 °C in Flash-Next decode benchmarks and 108 °C
   with a 260k-token prefill (it throttles at ~110 °C; the core ~80 °C, the Radeon VII at most 46 °C); its power profiles and those of the Radeon VII are in
   [`../vllm-rtx3090-flash-next/README.md`](../vllm-rtx3090-flash-next/README.md#power-profiles).
+- Host settings for CPU-expert runtimes (need root, not measured yet): L3 cache allocation (resctrl CAT) that keeps
+  most of each CCX's L3 for the expert threads, reserved 1 GiB huge pages for the expert arena
+  (`QWEN38_EXPERT_STORE_HUGETLB=1G` in flash-next), and the `performance` energy-performance preference; commands in
+  [`../vllm-rtx3090-flash-next/HOST_TUNING.md`](../vllm-rtx3090-flash-next/HOST_TUNING.md).
 - RTX 3070: a 1600 MHz clock lock or 170 W limit is needed, as with llama.cpp. LXC does not permit
   `ulimits: memlock: -1`. Faster RAM and the `performance` governor are untried for CPU-expert runtimes.
 - GeForce RTX 30 series: [gpu-unlock](../nvidia-unlock/README.md) removes the half-rate cap of FP16/BF16 tensor-core

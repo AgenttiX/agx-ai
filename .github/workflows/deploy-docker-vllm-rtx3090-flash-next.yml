@@ -15,6 +15,7 @@ on:
       - "vllm-rtx3090-flash-next/rvii-moe.patch"
       - "vllm-rtx3090-flash-next/cpu-moe-opt.patch"
       - "vllm-rtx3090-flash-next/rvii-prefill.patch"
+      - "vllm-rtx3090-flash-next/expert-store-hugetlb.patch"
       - "vllm-rtx3090-flash-next/rvii_prefill.py"
       - "vllm-rtx3090-flash-next/rvii_experts/rvii_protocol.h"
       - ".github/workflows/deploy-docker-vllm-rtx3090-flash-next.yml"

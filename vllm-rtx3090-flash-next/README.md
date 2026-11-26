@@ -81,6 +81,9 @@ input and a faster CPU expert kernel:
   bridge kernels and the hooks in `stream_v2.py`), the runtime publishes its hot experts and counts the decode
   requests for the worker's automatic re-ranking, and starts with the worker's ranking (`QWEN38_RANKINGS_AUTO`), see
   [Radeon VII in prefill and automatic re-ranking](#radeon-vii-in-prefill-and-automatic-re-ranking-2026-11-25).
+- [`expert-store-hugetlb.patch`](expert-store-hugetlb.patch) (2026-11-26, the runtime's `expert_store.py`): with
+  `QWEN38_EXPERT_STORE_HUGETLB=1G`, the expert arena is taken from reserved 1 GiB huge pages (off by default; it
+  falls back to transparent huge pages if there are not enough), see [`HOST_TUNING.md`](HOST_TUNING.md).
 - Tools: [`test_server.sh`](test_server.sh) starts a test server as in the compose file with another image or
   settings, [`kernel_bench/`](kernel_bench/README.md) has microbenchmarks of the RTX 3090's kernels, and
   [`isolate_cpus.py`](isolate_cpus.py) is a prototype (for review, not installed) that reserves the pool's cores
@@ -727,6 +730,97 @@ The experts of the RTX 3090 (24 per layer) and of the Radeon VII (135) were chos
 The first layout is that of `rankings-measured.json`, so nothing changes until the use differs. With the measured mix,
 the gain is none; with use far from it (other languages or kinds of text), up to ~10 % in decode was estimated (the
 measured ranking gained 24-28 % over the static one in code). `RVII_AUTO_RERANK=0` keeps the fixed placement.
+
+## Load balancing, more MTP drafts and host settings (2026-11-26)
+
+Where a decode step goes now (`QWEN38_CPU_EXPERTS_STATS=200`, the chat, depth and edit tests), and the speed of the
+current image, measured with a decode trace (`--tests chat depth edit --repeat 2 --depth 6400 32000 --edit-depth 0`):
+
+| Part of a step | ms |
+|---|---|
+| CPU experts (~10 per layer, 48 layers) | 20.7 |
+| RTX 3090 between the layers | 13.8 |
+| RTX 3090 at the end of the step (lm_head, 3 MTP drafts, sampling) | 3.7 |
+
+| Chat | Gen. 6.4k / 32k | Edit | Draft acceptance chat / edit |
+|---|---|---|---|
+| 63.5 | 71.6 / 69.9 | 104.6 | 38 % / 98 % |
+
+**The edit test was 81.5 t/s on 2026-11-25 with the same image:** the runtime now takes its 24 hot experts per layer
+from the automatically re-ranked ranking (`QWEN38_RANKINGS_AUTO`, written by `rerank.py` from the use counted since
+2026-11-25), and in the edit test (`graphlib.py`) the CPU now gets 14.2 instead of 21.9 experts per layer and step
+(the trace replayed with both placements). That use was mostly the benchmarks of 2026-11-25, including this edit
+test, so the gain is partly the ranking learning the benchmark itself; the chat (+3 %) and depth tests (−3 to −2 %)
+hardly changed. In real use, the ranking follows whatever the server is used for. The Radeon VII's set was not
+repacked (the gain stayed under the 2 % threshold).
+
+### Splitting the largest CPU expert of a layer between two threads (not adopted)
+
+Each layer waits for the slowest of the 8 pool threads, and the largest expert (the most tokens) is computed by one
+thread. Implemented (`QWEN38_CPU_EXPERTS_SPLIT=N`, the N experts with the most tokens per layer): each half computes
+the gate and up projections over half of the hidden inputs (half of the packed rows, contiguous), the halves' sums
+are added, and each half computes the down projection for half of the outputs (each 10 KB row read in two contiguous
+halves; the down projection cannot be split by its inputs, as its scale groups are 128 of the 640 rows). A thread
+that finishes its half before the other half has started computes that half too, so that no thread waits for one
+that may not come. Relative difference to the unsplit kernel 1e-5 (the order of the sums). In the replay of the
+decode trace (24 layers, 1500 steps, the prefetch and loaders on; CPU compute time per step, two runs each):
+
+| Variant | CPU ms per step |
+|---|---|
+| Unsplit (current) | 9.06-9.07 |
+| The largest expert of every layer split | 9.09-9.15 |
+| The 2 / 3 largest split | 9.32-9.35 / 9.57-9.59 |
+| The largest split only in layers with ≤ 7 CPU experts | 9.04-9.05 |
+| The 2 largest only in layers with ≤ 6, the 4 largest only with ≤ 4 | 9.04-9.10 |
+
+Within the noise or slower: the kernel now reads 80 GB/s during the layers, and a layer's slowest thread is mostly
+waiting for the RAM like the others (in the synthetic benchmark with ~24 experts per layer, 2 splits were 8 % faster,
+but the real routing has ~10). A split half also loses the prefetch: the expert was prefetched into one CCX's L3,
+and the other half is read from the RAM by another CCX. The code was not kept.
+
+### More MTP drafts when the acceptance is high (estimated, not implemented)
+
+The drafts' acceptance per position (vLLM's `SpecDecoding metrics`, positions 1 / 2 / 3, cumulative): chats and code
+context 0.44-0.67 / 0.23-0.45 / 0.11-0.34 (~2.0 tokens per step), the edit test 0.996 / 0.99 / 0.96 (3.95 tokens per
+step). The cost of one more token per step, from the decode trace replayed with the actual placement:
+
+| Tokens per step | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| CPU experts per layer, all tests | 3.2 | 5.7 | 8.0 | 10.1 | 12.0 | 13.7 | 15.4 | 17.1 |
+| CPU experts per layer, edit test | 4.2 | 7.8 | 11.1 | 14.2 | 17.2 | 20.0 | 22.7 | 25.4 |
+| Radeon VII experts per layer, edit test | 3.8 | 6.6 | 9.2 | 11.5 | 13.6 | 15.5 | 17.3 | 19.0 |
+
+(Tokens 5-8 are the next step's first tokens of the same layer, i.e. the following tokens of the text.) A CPU
+layer takes ~55-80 µs + ~25 µs per expert, so a fifth token adds ~2.9 experts per layer in edits, ~3.5 ms per step
+with the 48 layers, plus ~0.5 ms for the draft itself: ~4 ms on a step of 37.8 ms. With the conditional acceptance
+of ~0.97 per further position in edits, the estimated decode speed in the edit test:
+
+| Drafts per step | 3 (now) | 4 | 5 | 7 |
+|---|---|---|---|---|
+| Tokens per step | 3.95 | 4.88 | 5.78 | 7.51 |
+| Step | 37.8 ms | 41.8 ms | 45.8 ms | 53.8 ms |
+| Edit, t/s | 104.6 | ~117 (+12 %) | ~126 (+21 %) | ~140 (+34 %) |
+
+In chats (~1.9 more CPU experts per layer per token, ~2.8 ms per step with the draft, on a step of ~32 ms), a fourth
+draft (accepted ~10 % of the time) would add ~0.1 tokens per step (−3 %), and 2 drafts instead of 3 would lose ~0.2
+(−0.5 %): 3 stays the best there. An adaptive depth (3 in
+chats, 5-7 when the recent acceptance is above ~90 %) would gain an estimated +20-35 % in code edits and agentic
+rewrites. The vLLM of the image already has the mechanism (variable-K scheduling, `num_spec_tokens_to_schedule`,
+which the runtime enables with `VLLM_FORCE_DYNAMIC_SPEC_SCHEDULING` at a fixed K), but the choice of K is a table by
+batch size. It needs: a choice of K from the recent acceptance in the scheduler, up to 8 tokens in the CPU's
+decode path (`MAXT` = 4 in `cpu_moe.cpp`, `bridge_cuda.cu` and the request slots; the int8 GEMV keeps 4 tokens
+in registers, so 5-8 would take two passes over an expert, the second from the L3), in the Radeon VII's protocol
+and decode kernel (`RVII_MAXT`), CUDA graphs for 5-8 tokens per step, and the serve script's limit (`MTP_DEPTH`
+0-3).
+
+### Host settings
+
+The L3 cache allocation for the pool's cores, 1 GiB huge pages for the expert arena and the CPU's
+energy-performance preference need root and are described, with commands to apply, revert and measure them, in
+[`HOST_TUNING.md`](HOST_TUNING.md). For the huge pages, the image has a new option
+(`QWEN38_EXPERT_STORE_HUGETLB=1G`, [`expert-store-hugetlb.patch`](expert-store-hugetlb.patch)): it maps the arena with
+`MAP_HUGETLB | MAP_HUGE_1GB` and falls back to transparent huge pages with a warning if the host has not reserved
+enough (tested: without reserved pages, the server starts as before; with reserved pages, not yet tested).
 
 ## Measurements (2026-10-13, agx-z2e)
 

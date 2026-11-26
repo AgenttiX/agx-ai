@@ -1,0 +1,51 @@
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/expert_store.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/expert_store.py
+@@ -93,11 +93,25 @@
+             slots += len(self.cold[l])
+         self.num_slots = slots
+         self.nbytes = slots * SLOT
+-        # MAP_PRIVATE anonymous: eligible for transparent huge pages (a shared anonymous map is shmem).
+-        self.arena = mmap.mmap(-1, self.nbytes, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
+-                               prot=mmap.PROT_READ | mmap.PROT_WRITE)
++        # agx-ai: QWEN38_EXPERT_STORE_HUGETLB=1G takes the arena from the host's reserved 1 GiB huge pages
++        # (hugepagesz=1G hugepages=N at boot, or nr_hugepages of hugepages-1048576kB), so that its huge pages do not
++        # depend on how fragmented the RAM is; if there are not enough free, it falls back to transparent huge pages.
++        self.hugetlb = False
++        if os.environ.get("QWEN38_EXPERT_STORE_HUGETLB", "0").upper() in ("1G", "1"):
++            size_1g = -(-self.nbytes // 2**30) * 2**30
++            try:
++                self.arena = mmap.mmap(-1, size_1g, prot=mmap.PROT_READ | mmap.PROT_WRITE,
++                                       flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS | 0x40000 | (30 << 26))
++                self.hugetlb = True  # MAP_HUGETLB | MAP_HUGE_1GB: the pages are reserved by the mapping
++            except OSError as e:
++                logger.warning("Expert store: no %d free 1 GiB huge pages (%s); using transparent huge pages",
++                               size_1g // 2**30, e)
++        if not self.hugetlb:
++            # MAP_PRIVATE anonymous: eligible for transparent huge pages (a shared anonymous map is shmem).
++            self.arena = mmap.mmap(-1, self.nbytes, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
++                                   prot=mmap.PROT_READ | mmap.PROT_WRITE)
+         for advice in ("MADV_HUGEPAGE", "MADV_DONTFORK"):
+-            if hasattr(mmap, advice):
++            if hasattr(mmap, advice) and not (self.hugetlb and advice == "MADV_HUGEPAGE"):
+                 self.arena.madvise(getattr(mmap, advice))
+         self.base = torch.frombuffer(self.arena, dtype=torch.uint8).data_ptr()
+         # Fault the whole arena in first (huge-page faults compact memory as needed), before the page cache
+@@ -142,7 +156,7 @@
+         t1 = time.perf_counter()
+         # Whatever still sits on 4K pages: collapse into huge pages now (MADV_COLLAPSE copies into freshly
+         # compacted 2 MB pages), before cudaHostRegister pins the physical pages.
+-        if os.environ.get("QWEN38_EXPERT_STORE_COLLAPSE", "1") == "1":
++        if os.environ.get("QWEN38_EXPERT_STORE_COLLAPSE", "1") == "1" and not self.hugetlb:
+             _madvise_chunks(self.base, self.nbytes, _MADV_COLLAPSE)
+         t_col = time.perf_counter() - t1
+         t1 = time.perf_counter()
+@@ -211,6 +225,9 @@
+                     self.gpu_addr[l, e] = self.base + sl * SLOT
+         tail_n = sum(map(len, self.tail))
+         huge = _anon_huge_kib()
++        if self.hugetlb:
++            huge_pop = huge = self.nbytes // 1024
++            logger.info("Expert store: the arena is on %d reserved 1 GiB huge pages", len(self.arena) // 2**30)
+         logger.info("Expert store: %d cold experts in the arena (%d-%d per layer), %.2f GiB; huge pages %.1f GiB "
+                     "after prefault (%.1f s), %.1f GiB after fill + collapse (%.1f s); filled %.2f GiB in %.1f s, "
+                     "pinned in %.1f s; %d tail experts (%.2f GiB) on NVMe",
