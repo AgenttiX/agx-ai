@@ -103,6 +103,9 @@ What has given the largest gains, roughly in order:
   (b12686, everything on the GPU) ub 128/256/512/1024 = 227/231/227/226 t/s, i.e. flat. MoE models and
   configurations with experts on the CPU gain the most.
 - Lowering the ubatch is a way to free VRAM (radeon-vii Qwen: ub 256 = -116 MiB, 1024 = +250 MiB vs 512).
+- **Large vocabularies make the compute buffer grow with the ubatch:** Qwen3.5's 248k-token vocabulary needs ~1 MiB
+  of logits per ubatch token (4B: 128 / 256 / 512 = 128 / 257 / 509 MiB). On the T550, ub 128 freed 130 MiB
+  (~4k tokens of context) and was even faster for prompts than 256 (147-151 vs 135 t/s).
 - **Gemma vision encodes an image in one ubatch**, so the ubatch caps the image tokens (ub 512: 512 instead of
   1120 tokens per image).
 - **Crashes:** T550 flash attention + MTP at ub 512 crashed on long prompts (CUDA VMM, `cuMemSetAccess`): ub 256;
@@ -231,6 +234,12 @@ What has given the largest gains, roughly in order:
   it is 10-20 % slower and slows down to 27 t/s (from 64) when the CPU is busy.
 - QAT models (Gemma 4) are worth it: E4B QAT was ~39 % faster, accepted more drafts (66 vs 52 %) and had 2.7x the
   context. Unsloth UD-Q4_K_XL beat Google's Q4_0 GGUF (frame).
+- **Qwen3.5-4B and 9B on a 4 GB Turing GPU** (t550, KLD against Q8_0 with `llama-perplexity`, 6x1024 scored
+  tokens of Python source; noise floor with another ub 0.0004-0.0005): 4B Q4_0 / IQ4_NL / UD-Q4_K_XL / UD-Q5_K_XL =
+  0.033 / 0.024 / 0.013 / 0.005; 9B UD-Q4_K_XL 0.0086, UD-IQ3_XXS 0.080 (99 % KLD 0.78, PPL +7.9 %). The 3-bit
+  quant that would fit the 9B entirely on the GPU is too lossy; UD-Q4_K_XL with 12 of 32 layers on the CPU was used
+  instead. Q4_0 and IQ4_NL generate a little faster on Turing (the MMVQ Turing table gives the K-quants 2 warps
+  instead of 4), but not enough for 2-2.5x the KLD of UD-Q4_K_XL.
 - On the CPU, the IQ types are decode-bound with AVX2; Q2_0 without an AVX2 kernel was 2.5x slower. Q4_0 is
   repacked on the CPU at load (more RAM).
 - **CPU (Zen 2, AVX2), compute-bound embedding models:** the speed does not follow the bits per weight. Qwen3-Embedding-4B:
@@ -316,6 +325,14 @@ ggml-org/llama.cpp#24427 (rtx3090, radeon-vii).
   [`../nvidia-limit`](../nvidia-limit).
 - Laptops: check the actual power limit (`nvidia-smi -q -d POWER`; the T550 was capped at 20 W instead of 30 W, -35 %)
   and close background apps ([`../llama-cpp-t550/free-ram.ps1`](../llama-cpp-t550/free-ram.ps1)).
+- **A 20 W laptop GPU clocks down during generation:** the T550 at its 20 W platform cap ran prompts at
+  ~1500-1700 MHz but generation (memory traffic) at only 400-800 MHz, and sometimes dropped to the 300 MHz floor,
+  where the Qwen3.5-4B generated exactly ~5 t/s instead of 13-17 t/s. Sample the clocks during each run
+  (`nvidia-smi --query-gpu=clocks.sm,power.draw,clocks_event_reasons.sw_power_cap -lms 500`) and compare only runs
+  at similar clocks. Also check that no other program renders on the dGPU (`\GPU Engine(*)\Utilization Percentage`
+  per process): a desktop app's plug-in using ~20 % of the T550's 3D engine took part of its power budget.
+- **Partial offload of a dense model on a laptop CPU is CPU-bound:** Qwen3.5-9B UD-Q4_K_XL with 12-14 of 32 layers
+  on the i7-1260P generated 4-5 t/s while the GPU waited (11-15 W); each layer moved to the GPU gained ~8 %.
 - **Gemma 4 E-models run their per-layer embeddings on the CPU** even with `n-gpu-layers = all`, so a busy CPU
   slows down generation of a model that is otherwise entirely on the GPU (T550 E4B: 15 instead of 23 t/s while a
   download was being unpacked).

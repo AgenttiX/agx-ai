@@ -6,7 +6,7 @@ and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
 The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
 [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md)).
 
-Two models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
+Four models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
 the loaded one):
 
 - `google/gemma-4-e4b-qat`, the default model, loaded at startup: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
@@ -16,6 +16,10 @@ the loaded one):
   (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`), with the MoE experts in RAM and everything else on the GPU, MTP,
   q8_0 K and V caches, `ctx-size = 73728`, a single slot and the vision encoder on the CPU (see
   [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
+- `qwen/qwen3.5-4b`, loaded on request: Qwen3.5-4B (`unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`), entirely on the GPU,
+  f16 KV cache, `ctx-size = 24576`, the vision encoder on the CPU (see [Qwen3.5-4B and 9B](#qwen35-4b-and-9b-2026-11-26)).
+- `qwen/qwen3.5-9b`, loaded on request: Qwen3.5-9B (`unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL`), 20 of 32 layers on the
+  GPU, q8_0 K and V caches, `ctx-size = 16384`, the vision encoder on the CPU.
 
 [`preset.ini`](preset.ini) is set up for running llama.cpp [natively on Windows](#natively-on-windows-2026-09-30),
 which is faster and has room for the 26B-A4B's vision encoder. Where Docker/WSL 2 needs different settings, the
@@ -30,8 +34,10 @@ Natively on Windows with llama.cpp b12250 (CUDA 12.4 build), GPU power limit 20 
 
 | Model | Context | VRAM (peak) | RAM (llama-server) | tg: chat / at 16k / at 32k | pp: 4096 tokens / at 16k / at 32k | Notes |
 |---|---|---|---|---|---|---|
-| Gemma 4 E4B QAT UD-Q4_K_XL, MTP 2 | 69632 | 3883 MiB | ~4.2 GB | 27.8 (native), 32.9 (Docker) / 26.9 (Docker) / 19.3 t/s | 241 (`llama bench`), 253 (Docker) / 215 (Docker) / 180 t/s | Docker is as fast as native; builds after b12250 generate up to 29 % slower at long contexts (see [below](#llamacpp-update-2026-11-25)) |
+| Gemma 4 E4B QAT UD-Q4_K_XL, MTP 2 | 69632 | 3883 MiB | ~4.2 GB | 30.6 (native, after a reboot), 32.9 (Docker) / 25.1 (native), 26.9 (Docker) / 19.3 t/s | 245 (native), 253 (Docker) / 212 (native), 215 (Docker) / 180 t/s | Docker is as fast as native; builds after b12250 generate up to 29 % slower at long contexts (see [below](#llamacpp-update-2026-11-25)) |
 | Gemma 4 26B-A4B QAT UD-Q4_K_XL, MTP 2, experts in RAM | 73728 | 3867 MiB | ~16.2 GB | 6.2 (7.9 with b11262 and more free RAM on 2026-09-30) / 6.0 / - t/s | 87 / 82 / - t/s | RAM-bound: keep ~2 GB free for the page cache (see [below](#gemma-4-26b-a4b-qat-with-b12250-natively-2026-11-25)); 4-5 times slower than the E4B, but much stronger; in Docker only without the vision encoder (RAM of the WSL 2 VM) |
+| Qwen3.5-4B UD-Q4_K_XL (2026-11-26) | 28672 | 3835 MiB | ~4 GB | 13.3 / 12.6 (22k) / - t/s | 141 / 108 (22k) / - t/s | No MTP; slower than the E4B (see [Qwen3.5-4B and 9B](#qwen35-4b-and-9b-2026-11-26)) |
+| Qwen3.5-9B UD-Q4_K_XL, 20 of 32 layers on the GPU (2026-11-26) | 16384 | 3833 MiB | ~6.5 GB | 3.5 / 3.0 (14k) / - t/s | 66 / 61 (14k) / - t/s | CPU-bound; the 26B-A4B is faster and stronger here |
 
 ## llama.cpp update (2026-11-25)
 
@@ -463,6 +469,61 @@ page cache of its WSL 2 VM, which keeps the E4B's files (7.1 GB after the Docker
 ```powershell
 docker run --rm --privileged --entrypoint sh ghcr.io/ggml-org/llama.cpp:server-cuda13-b12242 -c "sync; echo 3 > /proc/sys/vm/drop_caches"
 ```
+
+## Qwen3.5-4B and 9B (2026-11-26)
+
+Natively with b12250, GPU power limit 20 W. Both are Qwen3.5 hybrid models: only every fourth of their 32 layers has
+attention with a KV cache (32 KiB per token with f16), the others are Gated DeltaNet with a fixed state (25-50 MiB),
+so the context costs little VRAM and generation hardly slows down with it. The GGUFs have no MTP layer, so there is
+no speculative decoding, and their 248k-token vocabulary makes the compute buffer ~1 MiB per ubatch token, so both use
+`ubatch-size = 128` (which also processed the 4B's prompts faster than 256: 147-151 vs 135 t/s).
+
+### Choosing the quantization
+
+KLD against the Q8_0 of the same model with `llama-perplexity` (6 chunks of 2048 tokens of Python standard-library
+source, the second half of each scored), and the generation speed with `llama bench` (tg128, all on the GPU, compared
+at similar GPU clocks, as these varied a lot, see [Measurement noise](#measurement-noise-on-this-laptop)):
+
+| Quant (unsloth) | Size | Mean KLD | 99 % KLD | Same top token | PPL | tg |
+|---|---|---|---|---|---|---|
+| 4B Q8_0 with ub 256 (noise floor) | 4.17 GiB | 0.0005 | 0.003 | 99.3 % | 3.447 | |
+| 4B Q4_0 | 2.41 GiB | 0.0329 | 0.268 | 93.7 % | 3.531 | 17-18 t/s at ~600 MHz |
+| 4B IQ4_NL | 2.40 GiB | 0.0240 | 0.194 | 94.8 % | 3.480 | 18.7 t/s (one clean run) |
+| **4B UD-Q4_K_XL** | 2.71 GiB | 0.0133 | 0.105 | 96.0 % | 3.483 | 13.0-13.6 t/s at ~420 MHz, 15.0 at higher clocks |
+| 4B UD-Q5_K_XL | 3.03 GiB | 0.0050 | 0.040 | 97.4 % | 3.454 | 11.4-11.5 t/s at ~400 MHz (-15 %) |
+| 9B Q8_0 with ub 256 (noise floor) | 8.87 GiB | 0.0004 | 0.003 | 99.3 % | 3.140 | |
+| **9B UD-Q4_K_XL** | 5.56 GiB | 0.0086 | 0.082 | 96.7 % | 3.170 | |
+| 9B UD-IQ3_XXS | 3.74 GiB | 0.0796 | 0.776 | 90.3 % | 3.390 | |
+
+- **4B: UD-Q4_K_XL.** Q4_0 and IQ4_NL generate a little faster on this GPU (llama.cpp's Turing MMVQ parameters give
+  the K-quants half the warps), but have 2-2.5 times its KLD. UD-Q5_K_XL is 2.6 times closer to Q8_0 but 15 % slower
+  and leaves room for ~18k tokens of context instead of 28k. Profiled with Nsight Systems, the 4B's generation is
+  entirely in the matrix-vector kernels at ~50 % of the memory bandwidth (the E4B's mostly Q4_0 weights reach ~63 %).
+- **9B: UD-Q4_K_XL with 12 layers on the CPU.** Its GPU part alone would be 5.1 GiB, so it does not fit. The largest
+  quant that fits entirely on the GPU, UD-IQ3_XXS, has 9 times the KLD (PPL +7.9 %), i.e. it is clearly damaged.
+  With 12-14 layers on the CPU, generation is limited by the CPU (the GPU waits at 11-15 W): `llama bench` tg64 with
+  18 / 19 / 20 layers on the GPU = 4.1 / 4.5 / 5.3 t/s. 20 layers fit with q8_0 caches and 16k tokens (or with f16
+  and 8k). Threads 4 / 6 / 8 / 12 made no clear difference (4.0-4.6 t/s, noisy); 8 as for the 26B-A4B.
+
+### Results
+
+| Test | Qwen3.5-4B UD-Q4_K_XL | Qwen3.5-9B UD-Q4_K_XL |
+|---|---|---|
+| Chat | 13.3 t/s (12.9-14.1) | 3.5 t/s (3.4-3.6) |
+| Prompt processing, 4096 tokens | 140.6 t/s | 66.3 t/s |
+| Long context: pp / tg | 22k tokens: 107.7 / 12.6 t/s | 14k tokens: 60.7 / 3.0 t/s |
+| Generation, 256 tokens | 14.6 t/s | 3.1 t/s |
+| Peak GPU memory | 3710 MiB at ctx 24576; 3835 MiB at ctx 28672 with a 26.5k-token prompt (pp 102 t/s; tg 3.0-8.2 t/s, as the GPU dropped to its clock floor) | 3833 MiB |
+
+The 9B generates slower through the server than with `llama bench` or `llama-completion` (5.0-5.3 t/s with the same
+weights, layers, threads, KV types and sampling). The vision encoder is not the cause (3.3 t/s without it).
+`prio = 2` (a high process priority for the model process, which the router otherwise starts in the background,
+where Windows may throttle it) gave +8 % in one run (3.75-3.92 t/s in chat), so it explains only part of the gap,
+and it is not in the preset. The 4B, entirely on the GPU, loses less (13.3 vs ~15 t/s).
+
+Both are slower than the Gemma 4 models here: the E4B generates twice as fast as the 4B thanks to MTP and its Q4_0
+weights, and the 26B-A4B (6-8 t/s, with its experts in RAM) is faster than the 9B and much stronger. The Qwen models
+are mainly useful as a second opinion from another model family.
 
 ## Other findings
 
