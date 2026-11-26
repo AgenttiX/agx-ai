@@ -1,7 +1,7 @@
 r"""Benchmark of a chat server over its OpenAI-compatible API: time to the first token, generation, images, answers.
 
 Works with any server with a streamed ``/v1/chat/completions`` endpoint: llama.cpp, vLLM, OpenVINO Model Server
-(``openvino-l14-npu-e4b``) and the third-party Gemma 4 NPU server that was used there before, for which it was
+(``openvino-l14-e4b``) and the third-party Gemma 4 NPU server that was used there before, for which it was
 written. The requests are streamed and timed on the client, so the numbers include the HTTP overhead. Some servers
 reuse the KV cache of the previous conversation, so each prompt starts with a random nonce. The generation speed uses
 the completion tokens reported in ``usage`` (else one token per streamed chunk). The answers to short questions with

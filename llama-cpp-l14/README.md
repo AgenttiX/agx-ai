@@ -16,10 +16,12 @@ Everything is limited by the memory bandwidth, which the CPU, iGPU and NPU share
 so splitting a model between them does not add bandwidth,
 and mixing CPU and Vulkan in one model is very slow (see below).
 
-The NPU is used by separate servers in [../openvino-l14](../openvino-l14) (OpenVINO Model Server),
-[../openvino-l14-npu-e4b](../openvino-l14-npu-e4b) (Gemma 4 E4B)
-and [../openvino-l14-npu-embeddinggemma2](../openvino-l14-npu-embeddinggemma2) (EmbeddingGemma 2).
-Do not run them at the same time as this server:
+OpenVINO Model Server runs Qwen3-8B ([../openvino-l14](../openvino-l14)) and Gemma 4 E4B
+([../openvino-l14-e4b](../openvino-l14-e4b)) on the iGPU or the NPU,
+and EmbeddingGemma 2 on the NPU ([../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2)).
+On the iGPU, OpenVINO generates Gemma 4 E4B 1.8x as fast as llama.cpp (14 vs 7.8 t/s), but it cannot run the 26B A4B
+(see [../openvino-l14/README.md](../openvino-l14/README.md#using-the-cpu-the-igpu-and-the-npu-together)).
+Do not run the LLM servers at the same time as this server:
 together they exhausted the 32 GB of RAM and the kernel killed the desktop session.
 
 Measured on 2026-09-25/26 (build b11176, tg = token generation, pp = prompt processing, t/s).
@@ -112,12 +114,12 @@ OpenVINO backend, `GGML_OPENVINO_DEVICE=NPU`:
   Qwen3-0.6B on the NPU at ctx 512 (tg 3.4 t/s) answered "Kemi" and "Turku" for the capital of Finland.
   The Qwen3-4B NPU model is kept commented out at the end of [preset.ini](preset.ini).
 - EmbeddingGemma 2 works on the NPU only for inputs of the length that was compiled first,
-  see [../openvino-l14-npu-embeddinggemma2](../openvino-l14-npu-embeddinggemma2).
+  see [../openvino-l14-embeddinggemma2](../openvino-l14-embeddinggemma2).
 - In short, the NPU works with llama.cpp only for small models with a tiny context,
   and even then it is several times slower than the CPU.
   For real use of the NPU, see OpenVINO GenAI / OpenVINO Model Server with the NPU-optimized models
   (e.g. OpenVINO/Qwen3-8B-int4-cw-ov), which use a stateful pipeline instead
-  ([../openvino-l14](../openvino-l14)), and [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b).
+  ([../openvino-l14](../openvino-l14)), and [../openvino-l14-e4b](../openvino-l14-e4b).
 
 ## Memory and threads
 - The 26B-A4B llama-server process used ~20.6 GB RSS on the CPU (weights, the CPU_REPACK copy of the Q4_0 tensors,

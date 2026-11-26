@@ -1,18 +1,64 @@
-# OpenVINO Model Server (OVMS) for the NPU of the ThinkPad L14 Gen 5 with Qwen3-8B. See README.md for the usage and notes.
+# OpenVINO Model Server (OVMS) for the ThinkPad L14 Gen 5 with Qwen3-8B on the iGPU (default) or on the NPU.
+# See README.md for the usage, the measurements and the notes.
+# The iGPU generates 1.8x as fast as the NPU. The NPU variant (profile "npu") leaves the iGPU and the CPU free:
+# docker compose up -d ovms-qwen3-npu
 services:
-  ovms-npu:
-    image: openvino/model_server:2026.4.0-gpu
-    container_name: ovms-npu
+  ovms-qwen3:
+    # 2026.5.0 (weekly build of 2026-11-19), the same as in ../openvino-l14-e4b.
+    image: openvino/model_server@sha256:6c496c2e4c0110d4544c5f09139625637fd34dde5ba8064553443e6321ab1da4
+    container_name: ovms-qwen3
     command: [
       "--rest_port", "8000",
       "--model_repository_path", "/models",
       # Downloaded from Hugging Face on the first start.
+      "--source_model", "OpenVINO/Qwen3-8B-int4-cw-ov",
+      "--model_name", "qwen/qwen3-8b",
+      "--target_device", "GPU",
+      "--task", "text_generation",
+      # Compiled GPU kernels, so that later starts are faster.
+      "--cache_dir", "/models/.ov_cache",
+      # The KV cache (8-bit) is allocated at the start: 2 GB is ~28k tokens.
+      # With the default dynamic allocation, prompts of a few thousand tokens stalled.
+      "--cache_size", "2",
+      # The prompt is processed in chunks of this many tokens. Long GPU jobs are reset by the i915 driver
+      # ("GPU hang"), which crashed OVMS once with 512-token chunks while the NPU was in use.
+      "--max_num_batched_tokens", "256",
+      "--reasoning_parser", "qwen3",
+      "--tool_parser", "hermes3",
+    ]
+    devices:
+      - /dev/dri:/dev/dri
+    # /dev/dri/renderD128 belongs to the host's render group, whose name does not exist in the image (getent group render).
+    group_add:
+      - "992"
+    restart: unless-stopped
+    ports:
+      - "9933:8000"
+    # Run as the host user, so that the downloaded models are not owned by root.
+    user: "1000:1000"
+    volumes:
+      - /home/mika/.cache/ovms:/models
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # The previous configuration on the NPU. Start it instead of ovms-qwen3 (it uses the same port).
+  ovms-qwen3-npu:
+    profiles: [ "npu" ]
+    image: openvino/model_server@sha256:6c496c2e4c0110d4544c5f09139625637fd34dde5ba8064553443e6321ab1da4
+    container_name: ovms-qwen3-npu
+    command: [
+      "--rest_port", "8000",
+      "--model_repository_path", "/models",
       "--source_model", "OpenVINO/Qwen3-8B-int4-cw-ov",
       "--model_name", "qwen/qwen3-8b-npu",
       "--target_device", "NPU",
       "--task", "text_generation",
       # Compiled NPU blobs, so that later starts take seconds instead of the ~30-60 s compilation.
       "--cache_dir", "/models/.ov_cache",
+      # The NPU prompt size limit.
       "--max_prompt_len", "8192",
       "--reasoning_parser", "qwen3",
       "--tool_parser", "hermes3",
@@ -25,7 +71,6 @@ services:
     restart: unless-stopped
     ports:
       - "9933:8000"
-    # Run as the host user, so that the downloaded models are not owned by root.
     user: "1000:1000"
     volumes:
       - /home/mika/.cache/ovms:/models

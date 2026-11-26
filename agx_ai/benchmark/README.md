@@ -5,10 +5,10 @@ llama.cpp and vLLM servers.
 
 | Module | Backends |
 |---|---|
-| [`bench_http`](bench_http.py) | llama.cpp, vLLM; OpenVINO Model Server for embeddings |
+| [`bench_http`](bench_http.py) | llama.cpp, vLLM, OpenVINO Model Server |
 | [`quality_http`](quality_http.py) | llama.cpp, vLLM |
 | [`embedding_retrieval_eval`](embedding_retrieval_eval.py) | llama.cpp, vLLM |
-| [`chat_stream`](chat_stream.py) | any OpenAI-compatible chat server, e.g. llama.cpp, vLLM and OpenVINO Model Server ([`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b)) |
+| [`chat_stream`](chat_stream.py) | any OpenAI-compatible chat server, e.g. llama.cpp, vLLM and OpenVINO Model Server ([`../../openvino-l14-e4b`](../../openvino-l14-e4b)) |
 | [`llama_cpp.bench_container`](llama_cpp/bench_container.py), [`llama_cpp.kld`](llama_cpp/kld.py), [`llama_cpp.test_server`](llama_cpp/test_server.py) | llama.cpp |
 | [`vllm.test_server`](vllm/test_server.py), [`vllm.prefix_return`](vllm/prefix_return.py), [`vllm.concurrent_agents`](vllm/concurrent_agents.py) | vLLM |
 
@@ -95,8 +95,11 @@ denoising time as its generation speed. With either, use the `prompt`, `chat` an
 
 ### OpenVINO Model Server
 
-The embedding test (`--tests embedding`) also works with OpenVINO Model Server (OVMS, detected from its `/v1/config`
-endpoint), e.g. [`../../openvino-l14-npu-embeddinggemma2`](../../openvino-l14-npu-embeddinggemma2).
+The tests also work with OpenVINO Model Server (OVMS, detected from its `/v1/config` endpoint), e.g.
+[`../../openvino-l14`](../../openvino-l14) and [`../../openvino-l14-embeddinggemma2`](../../openvino-l14-embeddinggemma2).
+As with vLLM, the requests are streamed and timed on the client. OVMS reports no draft acceptance, and its prefix
+cache is not bypassed. The VLM pipeline of OVMS (e.g. Gemma 4) has no completion endpoint, so use only the `chat`,
+`depth`, `edit` and `image` tests with it.
 OVMS has no `/detokenize`, so the texts are cut to the token count at word boundaries with its `/v3/tokenize`.
 It does not report its version or arguments, so give them with `--label` or `--server-config`.
 
@@ -109,7 +112,7 @@ uv run -m agx_ai.benchmark.bench_http --url http://localhost:9935 --tests embedd
 Streamed chat requests timed on the client: the time to the first token and the generation speed for a short and a
 long prompt and a prompt with an image, and the answers to eight short questions with an unambiguous answer. It needs
 nothing from the server but `/v1/chat/completions`, so it also works with servers that have no tokenizer endpoints,
-such as OpenVINO Model Server ([`../../openvino-l14-npu-e4b`](../../openvino-l14-npu-e4b)) and the third-party NPU
+such as OpenVINO Model Server ([`../../openvino-l14-e4b`](../../openvino-l14-e4b)) and the third-party NPU
 server that was used there before, for which it was written. For thinking models, use `--no-thinking`, as the answers
 have only 32 tokens. An answer that ends without any text counts as wrong.
 

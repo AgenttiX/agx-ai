@@ -22,7 +22,8 @@ Examples:
     uv run -m agx_ai.benchmark.bench_http --concurrency 1 2 4 8 --n-predict 512 --prompt-tokens 8192 --mixed
     uv run -m agx_ai.benchmark.bench_http --tests chat depth --depth 6400 16000 36500  # long contexts
 
-vLLM servers are supported for the same tests, and OpenVINO Model Server (OVMS) for the embedding test.
+vLLM servers and OpenVINO Model Server (OVMS) are supported for the same tests (OVMS without the server
+properties and the draft acceptance).
 For the raw model speed independent of the server configuration, see ``llama_cpp/bench_container.py``.
 
 Results are printed as a Markdown table and appended as one JSON line per run to ``results/<hostname>.jsonl``,
@@ -214,15 +215,13 @@ class Server:
 UNSUPPORTED_DIFFUSION_PARAMS = ("seed", "temperature", "min_p", "min_tokens")
 
 
-class VllmServer(Server):
-    """The same interface for a vLLM server, which has no ``timings``, ``/props`` or ``cache_prompt``.
+class StreamingServer(Server):
+    """The interface for servers without llama-server's ``timings``, whose requests are streamed and timed here.
 
-    Requests are streamed, and the timings are measured on the client: prompt processing is the prompt length over the
-    time to the first streamed token, and generation is the remaining tokens over the time from the first to the
-    last one (both include the HTTP overhead, which is negligible on localhost). Every request gets its own
-    ``cache_salt``, so that the prefix cache is not hit, like ``cache_prompt: false`` on llama-server. The
-    draft acceptance of speculative decoding comes from the difference of the counters in ``/metrics`` before and
-    after the request, so it is only exact for one request at a time.
+    The timings are measured on the client: prompt processing is the prompt length over the time to the first streamed
+    token, and generation is the remaining tokens over the time from the first to the last one (both include the
+    HTTP overhead, which is negligible on localhost). Every request gets its own ``cache_salt``, so that the prefix
+    cache of vLLM is not hit, like ``cache_prompt: false`` on llama-server (other servers ignore it).
     """
 
     def __init__(self, url: str, api_key: str | None, timeout: float) -> None:
@@ -238,42 +237,9 @@ class VllmServer(Server):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return resp.read().decode()
 
-    def props(self, model: str) -> dict[str, Any]:
-        """Return llama-server-like properties assembled from the vLLM version and model list."""
-        info = next((m for m in self.models() if m["id"] == model), {})
-        return {
-            "build_info": "vLLM " + json.loads(self.text("/version")).get("version", "?"),
-            "model_path": info.get("root"),
-            "max_model_len": info.get("max_model_len"),
-            "total_slots": 1,
-        }
-
-    def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
-        """Embed a batch of texts with a random ``cache_salt``.
-
-        vLLM enables the prefix cache for causal pooling models (e.g. Qwen3-Embedding), so repeated texts would
-        otherwise be served from it.
-        """
-        return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float",
-                                               "cache_salt": os.urandom(8).hex()})
-
-    def tokenize(self, model: str, text: str) -> list[int]:
-        """Convert text to token IDs."""
-        return self.request("/tokenize", {"model": model, "prompt": text, "add_special_tokens": False})["tokens"]
-
-    def detokenize(self, model: str, tokens: list[int]) -> str:
-        """Convert token IDs back to text."""
-        return self.request("/detokenize", {"model": model, "tokens": tokens})["prompt"]
-
     def spec_counters(self) -> tuple[float, float]:
-        """Return the cumulative speculative decoding draft and accepted token counts from ``/metrics``."""
-        draft = accepted = 0.0
-        for line in self.text("/metrics").splitlines():
-            if line.startswith("vllm:spec_decode_num_draft_tokens_total"):
-                draft += float(line.rsplit(" ", 1)[1])
-            elif line.startswith("vllm:spec_decode_num_accepted_tokens_total"):
-                accepted += float(line.rsplit(" ", 1)[1])
-        return draft, accepted
+        """Return the cumulative draft and accepted token counts of speculative decoding (none by default)."""
+        return 0.0, 0.0
 
     def stream(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a streamed request and return client-measured ``timings``, the ``usage`` and the generated ``text``.
@@ -364,11 +330,59 @@ class VllmServer(Server):
         return self.stream("/v1/chat/completions", payload)
 
 
-class OvmsServer(Server):
-    """The interface for OpenVINO Model Server (OVMS), for the embedding test only.
+class VllmServer(StreamingServer):
+    """The same interface for a vLLM server, which has no ``timings``, ``/props`` or ``cache_prompt``.
 
-    OVMS has no ``/props`` or ``/detokenize``, so prompts are cut to length at word boundaries,
-    and its version is not available over the API (give it with ``--label`` or ``--server-config``).
+    The requests are streamed and timed on the client (see ``StreamingServer``). The draft acceptance of speculative
+    decoding comes from the difference of the counters in ``/metrics`` before and after the request, so it is only
+    exact for one request at a time.
+    """
+
+    def props(self, model: str) -> dict[str, Any]:
+        """Return llama-server-like properties assembled from the vLLM version and model list."""
+        info = next((m for m in self.models() if m["id"] == model), {})
+        return {
+            "build_info": "vLLM " + json.loads(self.text("/version")).get("version", "?"),
+            "model_path": info.get("root"),
+            "max_model_len": info.get("max_model_len"),
+            "total_slots": 1,
+        }
+
+    def embeddings(self, model: str, texts: list[str]) -> dict[str, Any]:
+        """Embed a batch of texts with a random ``cache_salt``.
+
+        vLLM enables the prefix cache for causal pooling models (e.g. Qwen3-Embedding), so repeated texts would
+        otherwise be served from it.
+        """
+        return self.request("/v1/embeddings", {"model": model, "input": texts, "encoding_format": "float",
+                                               "cache_salt": os.urandom(8).hex()})
+
+    def tokenize(self, model: str, text: str) -> list[int]:
+        """Convert text to token IDs."""
+        return self.request("/tokenize", {"model": model, "prompt": text, "add_special_tokens": False})["tokens"]
+
+    def detokenize(self, model: str, tokens: list[int]) -> str:
+        """Convert token IDs back to text."""
+        return self.request("/detokenize", {"model": model, "tokens": tokens})["prompt"]
+
+    def spec_counters(self) -> tuple[float, float]:
+        """Return the cumulative speculative decoding draft and accepted token counts from ``/metrics``."""
+        draft = accepted = 0.0
+        for line in self.text("/metrics").splitlines():
+            if line.startswith("vllm:spec_decode_num_draft_tokens_total"):
+                draft += float(line.rsplit(" ", 1)[1])
+            elif line.startswith("vllm:spec_decode_num_accepted_tokens_total"):
+                accepted += float(line.rsplit(" ", 1)[1])
+        return draft, accepted
+
+
+class OvmsServer(StreamingServer):
+    """The interface for OpenVINO Model Server (OVMS).
+
+    The chat and completion requests are streamed and timed on the client (see ``StreamingServer``). OVMS reports no
+    draft acceptance of speculative decoding, and its prefix cache (on by default for the CPU and the GPU) is not
+    bypassed, so repeated prompts may be processed faster. OVMS has no ``/props`` or ``/detokenize``, so prompts are
+    cut to length at word boundaries, and its version is not available over the API (give it with ``--label``).
     """
 
     def props(self, model: str) -> dict[str, Any]:  # noqa: ARG002 (the same interface as Server.props)
@@ -974,7 +988,11 @@ def main() -> int:
     with GpuSampler() as gpu, TempSampler() as temps:
         print("warm-up...", file=sys.stderr)
         if chat_model != embedding_model:
-            server.completion(chat_model, "Hello", 8)
+            if {"generation", "prompt", "concurrency"} & set(args.tests):
+                server.completion(chat_model, "Hello", 8)
+            else:
+                # Only chat requests, e.g. for the VLM pipeline of OVMS, which has no completion endpoint.
+                server.chat(chat_model, "Hello", 8)
         if embedding_model:
             emb_server.embeddings(embedding_model, ["hello"])
         if "generation" in args.tests:

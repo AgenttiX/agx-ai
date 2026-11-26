@@ -27,7 +27,7 @@ INT4_REPO = "OpenVINO/gemma-4-E4B-it-int4-ov"
 FP16_REPO = "OpenVINO/gemma-4-E4B-it-fp16-ov"
 LANGUAGE_MODEL = "openvino_language_model"
 # Channel-wise INT4 (group size -1) decodes 20 % faster on the NPU, but made clearly more arithmetic mistakes
-# (data-free and with AWQ and scale estimation), so the group size of 128 is used (see openvino-l14-npu-e4b/README.md).
+# (data-free and with AWQ and scale estimation), so the group size of 128 is used (see openvino-l14-e4b/README.md).
 GROUP_SIZE = 128
 
 

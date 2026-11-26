@@ -6,8 +6,8 @@ It is used by these configurations, whose `docker-compose.yml` runs it as a `con
 
 | Configuration | Converter | What it does |
 |---|---|---|
-| [`../openvino-l14-npu-e4b`](../openvino-l14-npu-e4b) | [`convert_gemma4.py`](../agx_ai/openvino/convert_gemma4.py) | Gemma 4 E4B with the language model recompressed to symmetric INT4 for NPU 3720 |
-| [`../openvino-l14-npu-embeddinggemma2`](../openvino-l14-npu-embeddinggemma2) | [`convert_embeddinggemma2.py`](../agx_ai/openvino/convert_embeddinggemma2.py) | Export of the text model of EmbeddingGemma 2 to OpenVINO IR |
+| [`../openvino-l14-e4b`](../openvino-l14-e4b) | [`convert_gemma4.py`](../agx_ai/openvino/convert_gemma4.py) | Gemma 4 E4B with the language model recompressed to symmetric INT4 for NPU 3720 |
+| [`../openvino-l14-embeddinggemma2`](../openvino-l14-embeddinggemma2) | [`convert_embeddinggemma2.py`](../agx_ai/openvino/convert_embeddinggemma2.py) | Export of the text model of EmbeddingGemma 2 to OpenVINO IR |
 
 - The converter and its arguments (e.g. the model revisions) are given as the `command` in the `docker-compose.yml`
   of the configuration, e.g. `python -m agx_ai.openvino.convert_gemma4 /models/... --int4-revision ...`.

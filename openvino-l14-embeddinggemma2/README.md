@@ -1,4 +1,4 @@
-# EmbeddingGemma 2 on the NPU of the ThinkPad L14 Gen 5
+# EmbeddingGemma 2 on the NPU (or the iGPU) of the ThinkPad L14 Gen 5
 
 Serves the text embeddings of [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)
 on the NPU of the ThinkPad L14 Gen 5 with OpenVINO Model Server (OVMS).
@@ -7,12 +7,19 @@ so [convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py) e
 to OpenVINO IR in a container ([../openvino-npu-convert](../openvino-npu-convert/README.md)).
 The vision and audio encoders are not exported.
 
-| Model | Context | NPU memory | RAM | 100-token texts | 500-token texts | Notes |
-|---|---|---|---|---|---|---|
-| EmbeddingGemma 2, FP32 IR compiled in FP16 ([convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py)) | 512 tokens per input | shared RAM | 1.8 GiB | 692 t/s | 3518 t/s | 0.15 s per input of any length, as the NPU pads every input to 512 tokens |
+| Model | Device | Context | NPU memory | RAM | 100-token texts | 500-token texts | Notes |
+|---|---|---|---|---|---|---|---|
+| EmbeddingGemma 2, FP32 IR compiled in FP16 ([convert_embeddinggemma2.py](../agx_ai/openvino/convert_embeddinggemma2.py)) | **NPU (default)** | 512 tokens per input | shared RAM | 1.8 GiB | 692 t/s | 3518 t/s | 0.15 s per input of any length, as the NPU pads every input to 512 tokens |
+| the same | iGPU (`ovms-embeddinggemma2-gpu`) | 512 tokens per input | shared RAM | | 3594 t/s | 3076 t/s | 0.07 s for a 100-token input; slows down an LLM on the iGPU by half |
 
 - 12 % faster than the previous export (FP16 IR with the default attention masks, 618 and 3133 t/s),
   and closer to the reference (cosine similarity 0.99999 instead of 0.99997), see [Performance](#performance).
+- The NPU is the default, as it leaves the iGPU to the LLM servers ([../openvino-l14](../openvino-l14) and
+  [../openvino-l14-e4b](../openvino-l14-e4b)), which then run 10-20 % slower while embeddings are computed
+  on the NPU, but at half speed with the embeddings on the iGPU (see
+  [../openvino-l14/README.md](../openvino-l14/README.md#using-the-cpu-the-igpu-and-the-npu-together)).
+  When no LLM runs on the iGPU, the iGPU variant is faster, 5x for short texts.
+  The embeddings of the iGPU and the NPU agree (cosine similarity 0.99998-1.00000 for 5 texts).
 - Faster than the CPU of this laptop for document chunks (927 t/s with dynamic shapes),
   but slower for short queries (0.12 s), and it leaves the CPU free.
   [../vllm-zen2-embeddinggemma2](../vllm-zen2-embeddinggemma2) on a Threadripper 3970X is faster (4650-5000 t/s).
@@ -23,8 +30,9 @@ The vision and audio encoders are not exported.
 - CPU: Intel Core Ultra 5 125U (Meteor Lake, 2 P-cores with HT + 8 E-cores + 2 LP E-cores)
 - RAM: 32 GB (2 x 16 GB DDR5-5600 SO-DIMM), shared by the CPU, the iGPU and the NPU
 - NPU: Intel AI Boost (Meteor Lake NPU 3720), kernel driver intel_vpu, user-mode driver 1.38.0 in the OVMS image
-- GPU: Intel Graphics (Meteor Lake iGPU, Xe-LPG architecture, 4 Xe cores), no dedicated VRAM (uses the shared RAM)
-- OVMS 2026.5.0 (weekly build of 2026-11-19, the same as in [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
+- GPU: Intel Graphics (Meteor Lake iGPU, Xe-LPG architecture, 4 Xe cores), no dedicated VRAM (uses the shared RAM),
+  kernel driver i915
+- OVMS 2026.5.0 (weekly build of 2026-11-19, the same as in [../openvino-l14-e4b](../openvino-l14-e4b)),
   OpenVINO 2026.4.1 and transformers 5.24.1 in the converter
 
 ## Usage
@@ -34,12 +42,15 @@ docker compose up -d
 ```
 - On the first start, the `convert` container downloads the model files (1.5 GB) to the Hugging Face cache of the host
   (`~/.cache/huggingface/hub`, of which only the `hub` directory is mounted),
-  exports the text model to the Docker volume `openvino-l14-npu-embeddinggemma2_models` (1.1 GB) and exits (~1 min).
+  exports the text model to the Docker volume `openvino-l14-embeddinggemma2_models` (1.1 GB) and exits (~1 min).
   OVMS starts after it and compiles the model for the NPU in ~15 s (cached in the same volume, 0.5 GB).
   Later starts skip the export, as long as the revision, the export settings and the library versions are the same
   (`export.json`).
 - The API is OpenAI-compatible at http://localhost:9935/v3/embeddings (also `/v1/embeddings`).
-  The model id is `google/embeddinggemma-2-npu`. The embeddings have 768 dimensions and are normalized.
+  The model id is `google/embeddinggemma-2-npu` (`google/embeddinggemma-2` on the iGPU).
+  The embeddings have 768 dimensions and are normalized.
+- The iGPU variant is started instead with `docker compose up -d ovms-embeddinggemma2-gpu` (stop the other one first,
+  as they use the same port). It compiles the model for the iGPU in a few seconds.
   Truncating them to 512, 256 or 128 dimensions (Matryoshka) has to be done by the client (and renormalized),
   as OVMS does not support the `dimensions` parameter.
 - The inputs are limited to 512 tokens, and longer inputs are rejected with HTTP 400 ("Input length ... longer than
@@ -47,10 +58,10 @@ docker compose up -d
   `--truncate true` would truncate them instead.
 - Use the task prefixes of the [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes),
   e.g. `task: search result | query: {query}` for queries and `title: none | text: {document}` for documents.
-- The container uses 1.8 GiB of RAM. It can run at the same time as [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)
+- The container uses 1.8 GiB of RAM. It can run at the same time as [../openvino-l14-e4b](../openvino-l14-e4b)
   (tested), but they share the NPU (see below).
 
-The converter image, which is shared with [../openvino-l14-npu-e4b](../openvino-l14-npu-e4b),
+The converter image, which is shared with [../openvino-l14-e4b](../openvino-l14-e4b),
 is described in [../openvino-npu-convert](../openvino-npu-convert/README.md).
 The exported revision is set in the `command` of the `convert` service in [docker-compose.yml](docker-compose.yml).
 
@@ -70,6 +81,20 @@ an ad-hoc check that is not in the repository:
 | FP16 IR (previous), INT8 weights (NNCF `INT8_SYM`) | 625 t/s | 3157 t/s | 0.16 s | 0.99967 / 0.99982 | |
 | FP16 IR (previous), INT8 weights and activations (NNCF PTQ, 96 calibration texts) | 676 t/s | 3418 t/s | 0.15 s | 0.99597 / 0.99816 | |
 
+Measured on 2026-11-25 with OVMS 2026.5 weekly and the FP32 IR on other devices (`--tests embedding --embed-texts 16`,
+and an ad-hoc test of 12 concurrent requests of 16 texts each, 2 or 4 at a time, over one or two servers):
+
+| Device | 100-token texts | 500-token texts | Single text | Concurrent, 100 / 500-token texts |
+|---|---|---|---|---|
+| NPU (this) | 692 t/s | 3518 t/s | 0.15 s | 449 / 2208 t/s |
+| iGPU (dynamic shapes) | 3594 t/s | 3076 t/s | 0.07 s (100 tokens), 0.16 s (500 tokens) | 4353 / 3912 t/s |
+| CPU (dynamic shapes) | 905 t/s | 688 t/s | 0.12 s (100 tokens), 0.81 s (500 tokens) | |
+| NPU and iGPU, round robin over two servers | | | | 898 / 4345 t/s |
+
+- The round robin over the NPU and the iGPU waits for the slower NPU, so it was slower than the iGPU alone for short
+  texts and only 11 % faster for long ones. A load balancer that sends more requests to the iGPU could do better,
+  but the iGPU is better left to the LLMs (see above).
+
 Measured on 2026-10-14 with OVMS 2026.4.1 and the previous export:
 
 | Device, `--max_length` | 100-token texts | 500-token texts | Single text |
@@ -85,7 +110,7 @@ Measured on 2026-10-14 with OVMS 2026.4.1 and the previous export:
   `PERFORMANCE_HINT` `THROUGHPUT`.
 - The INT8 quantization of the activations was 9 % faster, but changed the top result for 1 of the 15 queries,
   so it was not used. The INT8 weights did not help, as the model is not limited by the weights on the NPU.
-- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-l14-npu-e4b](../openvino-l14-npu-e4b)),
+- With Gemma 4 E4B generating on the NPU at the same time ([../openvino-l14-e4b](../openvino-l14-e4b)),
   the embeddings ran at 1869 t/s (500-token texts), and with embeddings computed continuously,
   the generation slowed from 8.3 to 3.9 t/s.
 
