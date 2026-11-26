@@ -18,7 +18,8 @@ from pathlib import Path
 import struct
 import sys
 
-REC: struct.Struct = struct.Struct("<qqqii40i")  # t_req, t_cpu_end, t_done (ns), layer, T, ids[40]
+# t_req, t_cpu_end, t_done (ns), layer, T, ids[80] (ids[40] in traces before 2026-11-26)
+REC: struct.Struct = struct.Struct("<qqqii80i")
 LAYERS: int = 48
 EXPERTS: int = 512
 HERE: Path = Path(__file__).resolve().parent

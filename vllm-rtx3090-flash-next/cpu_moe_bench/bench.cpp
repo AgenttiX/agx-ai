@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
     // Replay a decode trace (QWEN38_DECODE_TRACE records) on layers [0, L): real routing, the hot and Radeon VII
     // experts skipped (BENCH_SKIP: a file of uint8 [48][512], 1 = not a CPU expert), and the traced GPU gaps
     // between the layers spun out (BENCH_GAPS=0: none). Needs BENCH_E=512.
-    struct Rec { int64_t t_req, t_cpu, t_done; int32_t layer, T; int32_t ids[40]; };
+    struct Rec { int64_t t_req, t_cpu, t_done; int32_t layer, T; int32_t ids[80]; };  // ids[40] in traces before 2026-11-26
     std::vector<Rec> recs;
     { FILE* f = std::fopen(rp, "rb"); Rec r; while (std::fread(&r, sizeof r, 1, f) == 1) recs.push_back(r); std::fclose(f); }
     std::vector<uint8_t> skip48(48 * 512, 0);
@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     std::vector<float> scratch(4 << 20), outb(MAXT * H), xin(MAXT * H);
     std::normal_distribution<float> nd2(0.f, 1.f);
     for (auto& v : xin) v = nd2(rng);
-    std::vector<float> wv(40, 0.1f);
+    std::vector<float> wv(80, 0.1f);
     auto spin_ns = [](int64_t ns) { const auto t0 = std::chrono::steady_clock::now();
       while (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count() < ns) _mm_pause(); };
     int nsteps = 0; double cpu_s = 0; int64_t jobs0 = g_cold_jobs.load();

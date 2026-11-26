@@ -53,7 +53,10 @@
 
 namespace {
 
-constexpr int H = RVII_H, I = RVII_I, MAXT = RVII_MAXT, MAXJ = RVII_MAXJ;
+// MAXT: tokens of a request (rows of x and y, 8 since 2026-11-26); JN: tokens of a job (an expert with more tokens
+// comes as two jobs), which the gate/up and down kernels handle with one wave per token.
+constexpr int H = RVII_H, I = RVII_I, MAXT = RVII_MAXT, JN = RVII_JOBN, MAXJ = RVII_MAXJ;
+static_assert(JN == 4, "the kernels use one of the 4 waves per job token");
 constexpr size_t GU_W = size_t(10) * 20 * 8 * 64 * 16;  // 1638400
 constexpr size_t GU_S = size_t(10) * 20 * 64 * 4;       // 51200
 constexpr size_t DN_W = size_t(40) * 5 * 4 * 64 * 16;   // 819200
@@ -66,8 +69,8 @@ typedef uint32_t u32x4 __attribute__((ext_vector_type(4)));  // a 16-B load
 
 struct Job {
   int slot, n;
-  int tok[MAXT];
-  float wt[MAXT];
+  int tok[JN];
+  float wt[JN];
 };
 
 // Kernel arguments (passed by value, read with scalar loads).
@@ -80,9 +83,9 @@ struct Args {
   int64_t* seqh;      // the response seq in the shared memory
   uint32_t* xq;       // [MAXT][40][8][8] x in 24-bit planes, per 64 k (see quant64)
   float* xi;          // [MAXT][40][16] their infos
-  uint32_t* aq;       // [MAXJ][MAXT][10][8][8] SiLU(gate) * up of each job's tokens, in planes
-  float* ai;          // [MAXJ][MAXT][10][16]
-  float* gpart;       // [MAXJ][10][KA][2 MAXT][64] partial sums of the gate/up workgroups
+  uint32_t* aq;       // [MAXJ][JN][10][8][8] SiLU(gate) * up of each job's tokens, in planes
+  float* ai;          // [MAXJ][JN][10][16]
+  float* gpart;       // [MAXJ][10][KA][2 JN][64] partial sums of the gate/up workgroups
   float* ypart;       // [MAXS][MAXT][H] partial outputs of the down workgroups
   uint32_t* xflag;    // [40] = gen when the planes of x of block hb (64 k) are written
   uint32_t* aflag;    // [MAXJ][10] = gen when the planes of act of job j, columns 64 cb.. are written
@@ -117,6 +120,8 @@ constexpr uint32_t ONES = 0x11111111u;
 // Each wave stages the planes and infos of its 64-k block pair for all tokens of its job in LDS (st, written with
 // vector loads after the flag), and reads them back as uniform ds_read_b128 broadcasts for v_dot8.
 constexpr int STW = 136;  // dwords per token: 128 of planes (2 blocks), 2 x 4 of infos
+// The 4 waves' partial sums in LDS (gate/up: [4][2 JN][64], down: [4][MAXT][64]), before the staging areas.
+constexpr int LDS_RED = 4 * 64 * (2 * JN > MAXT ? 2 * JN : MAXT);
 __device__ __forceinline__ void stage(uint32_t* st, const uint32_t* q, const float* info, int lane) {
   if (lane < 32) reinterpret_cast<u32x4*>(st)[lane] = reinterpret_cast<const u32x4*>(q)[lane];
   else if (lane < 34) reinterpret_cast<u32x4*>(st + 128)[lane - 32] = reinterpret_cast<const u32x4*>(info)[4 * (lane - 32)];
@@ -197,10 +202,11 @@ __device__ __forceinline__ void wait_flag(const uint32_t* f, uint32_t gen) {
   while (__hip_atomic_load(f, __ATOMIC_ACQUIRE, __HIP_MEMORY_SCOPE_AGENT) != gen) __builtin_amdgcn_s_sleep(2);
 }
 
-// Copy role: 64-k block hb of x, token w (wave w), to planes.
+// Copy role: 64-k block hb of x, tokens w, w + 4 (wave w), to planes.
 __device__ void copy_x(const Args& a, int hb) {
-  const int t = threadIdx.x >> 6, lane = threadIdx.x & 63;
-  if (t < a.T) quant64(a.xh[t * H + hb * 64 + lane], a.xq + (t * 40 + hb) * 64, a.xi + (t * 40 + hb) * 16);
+  const int lane = threadIdx.x & 63;
+  for (int t = threadIdx.x >> 6; t < a.T; t += 4)
+    quant64(a.xh[t * H + hb * 64 + lane], a.xq + (t * 40 + hb) * 64, a.xi + (t * 40 + hb) * 16);
   set_flag(a.xflag + hb, a.gen);
   TR(1);
 }
@@ -208,7 +214,7 @@ __device__ void copy_x(const Args& a, int hb) {
 // Gate/up role: job j, columns c = 64 cb + lane, group g = 4 ks + w for wave w. The 4 waves' sums are added in
 // LDS, the KA workgroups' in gpart by the last of them, which applies SiLU.
 template <int N>
-__device__ __forceinline__ void gate_up(const Args& a, const Job& jb, int cb, int g, float (*red)[2 * MAXT][64],
+__device__ __forceinline__ void gate_up(const Args& a, const Job& jb, int cb, int g, float (*red)[2 * JN][64],
                                         uint32_t* st) {
   const int w = threadIdx.x >> 6, lane = threadIdx.x & 63;
   const uint8_t* ew = a.w + size_t(jb.slot) * EXPERT_BYTES;
@@ -267,9 +273,9 @@ __device__ __forceinline__ void gate_up(const Args& a, const Job& jb, int cb, in
 }
 
 __device__ void gate_up_role(const Args& a, int j, int cb, int ks, uint32_t* lds) {
-  float (*red)[2 * MAXT][64] = reinterpret_cast<float (*)[2 * MAXT][64]>(lds);
+  float (*red)[2 * JN][64] = reinterpret_cast<float (*)[2 * JN][64]>(lds);
   const int w = uniform(threadIdx.x >> 6), lane = threadIdx.x & 63;
-  uint32_t* st = lds + 4 * 2 * MAXT * 64 + w * MAXT * STW;
+  uint32_t* st = lds + LDS_RED + w * JN * STW;
   const Job& jb = a.jobs[j];
   switch (jb.n) {
     case 1: gate_up<1>(a, jb, cb, ks * 4 + w, red, st); break;
@@ -280,9 +286,9 @@ __device__ void gate_up_role(const Args& a, int j, int cb, int ks, uint32_t* lds
   TR(3);
   __syncthreads();
   // Wave w: rows r = 2 i + {0: gate, 1: up} of the workgroup's sum to gpart[j][cb][ks][r][lane].
-  float* gp = a.gpart + size_t(j * 10 + cb) * KA * 2 * MAXT * 64;
+  float* gp = a.gpart + size_t(j * 10 + cb) * KA * 2 * JN * 64;
   for (int r = w; r < 2 * jb.n; r += 4)
-    gp[(ks * 2 * MAXT + r) * 64 + lane] = red[0][r][lane] + red[1][r][lane] + red[2][r][lane] + red[3][r][lane];
+    gp[(ks * 2 * JN + r) * 64 + lane] = red[0][r][lane] + red[1][r][lane] + red[2][r][lane] + red[3][r][lane];
   if (!last_block(a.cnt_gu + j * 10 + cb, KA)) return;
   // The last workgroup: wave i < n computes token i's SiLU(gate) * up, to planes.
   const int i = w;
@@ -290,10 +296,10 @@ __device__ void gate_up_role(const Args& a, int j, int cb, int ks, uint32_t* lds
     float gs = 0.f, us = 0.f;
 #pragma unroll
     for (int k = 0; k < KA; ++k) {
-      gs += ld_agent(gp + (k * 2 * MAXT + 2 * i) * 64 + lane);
-      us += ld_agent(gp + (k * 2 * MAXT + 2 * i + 1) * 64 + lane);
+      gs += ld_agent(gp + (k * 2 * JN + 2 * i) * 64 + lane);
+      us += ld_agent(gp + (k * 2 * JN + 2 * i + 1) * 64 + lane);
     }
-    const int blk = (j * MAXT + i) * 10 + cb;
+    const int blk = (j * JN + i) * 10 + cb;
     quant64(gs / (1.f + __expf(-gs)) * us, a.aq + blk * 64, a.ai + blk * 16);
   }
   set_flag(a.aflag + j * 10 + cb, a.gen);
@@ -310,7 +316,7 @@ __device__ __forceinline__ void down_unit(const Args& a, int j, int g, const u32
   const int lane = threadIdx.x & 63;
 #pragma unroll
   for (int i = 0; i < N; ++i) {
-    const int b0 = (j * MAXT + i) * 10 + 2 * g;
+    const int b0 = (j * JN + i) * 10 + 2 * g;
     stage(st + i * STW, a.aq + b0 * 64, a.ai + b0 * 16, lane);
   }
   float val[N];
@@ -353,9 +359,11 @@ __device__ __forceinline__ void down_unit(const Args& a, int j, int g, const u32
 __device__ void down_role(const Args& a, int cb, int sp, uint32_t* lds) {
   float (*red)[MAXT][64] = reinterpret_cast<float (*)[MAXT][64]>(lds);
   const int w = uniform(threadIdx.x >> 6), lane = threadIdx.x & 63;
-  uint32_t* st = lds + 4 * 2 * MAXT * 64 + w * MAXT * STW;
+  uint32_t* st = lds + LDS_RED + w * JN * STW;
   const int U = a.J * 5;
-  float y[MAXT] = {0.f, 0.f, 0.f, 0.f};
+  float y[MAXT];
+#pragma unroll
+  for (int t = 0; t < MAXT; ++t) y[t] = 0.f;
   // Software pipeline: the next unit's weights are loaded before the current one is computed.
   int u = 4 * sp + w;
   u32x4 q[4], qn[4];
@@ -391,11 +399,10 @@ __device__ void down_role(const Args& a, int cb, int sp, uint32_t* lds) {
 #pragma unroll
   for (int t = 0; t < MAXT; ++t) red[w][t][lane] = y[t];
   __syncthreads();
-  const int t = w;
-  if (t < a.T)
+  for (int t = w; t < a.T; t += 4)
     a.ypart[(sp * MAXT + t) * H + cb * 64 + lane] = red[0][t][lane] + red[1][t][lane] + red[2][t][lane] + red[3][t][lane];
   if (!last_block(a.cnt_dn + cb, a.S)) return;
-  if (t < a.T) {
+  for (int t = w; t < a.T; t += 4) {
     float v = 0.f;
     for (int p = 0; p < a.S; ++p) v += ld_agent(a.ypart + (p * MAXT + t) * H + cb * 64 + lane);
     a.yh[t * H + cb * 64 + lane] = v;
@@ -410,8 +417,8 @@ __device__ void down_role(const Args& a, int cb, int sp, uint32_t* lds) {
 }
 
 __global__ void __launch_bounds__(256) k_req(const Args a) {
-  // LDS: the 4 waves' partial sums (gate/up: [4][2 MAXT][64], down: [4][MAXT][64]), then each wave's staging area.
-  __shared__ __attribute__((aligned(16))) uint32_t lds[4 * 2 * MAXT * 64 + 4 * MAXT * STW];
+  // LDS: the 4 waves' partial sums (gate/up: [4][2 JN][64], down: [4][MAXT][64]), then each wave's staging area.
+  __shared__ __attribute__((aligned(16))) uint32_t lds[LDS_RED + 4 * JN * STW];
   const int b = blockIdx.x;
   TR(0);
   if (b < 40) copy_x(a, b);
@@ -891,9 +898,9 @@ int main(int argc, char** argv) {
   a.w = dw;
   CK(hipMalloc(&a.xq, sizeof(uint32_t) * MAXT * 40 * 64));
   CK(hipMalloc(&a.xi, sizeof(float) * MAXT * 40 * 16));
-  CK(hipMalloc(&a.aq, sizeof(uint32_t) * MAXJ * MAXT * 10 * 64));
-  CK(hipMalloc(&a.ai, sizeof(float) * MAXJ * MAXT * 10 * 16));
-  CK(hipMalloc(&a.gpart, sizeof(float) * MAXJ * 10 * KA * 2 * MAXT * 64));
+  CK(hipMalloc(&a.aq, sizeof(uint32_t) * MAXJ * JN * 10 * 64));
+  CK(hipMalloc(&a.ai, sizeof(float) * MAXJ * JN * 10 * 16));
+  CK(hipMalloc(&a.gpart, sizeof(float) * MAXJ * 10 * KA * 2 * JN * 64));
   CK(hipMalloc(&a.ypart, sizeof(float) * MAXS * MAXT * H));
   constexpr size_t NFLAG = 40 + MAXJ * 10 + MAXJ * 10 + 40 + 1;  // xflag, aflag, cnt_gu, cnt_dn, cnt_y
   uint32_t* flags = nullptr;
@@ -971,11 +978,11 @@ int main(int argc, char** argv) {
     for (int j = 0; j < J && !bad; ++j) {
       const RviiJob& r = rjobs[j];
       const int slot = r.e >= 0 && r.e < RVII_E ? map[layer * RVII_E + r.e] : -1;
-      if (slot < 0 || r.n < 1 || r.n > a.T) { bad = true; break; }
+      if (slot < 0 || r.n < 1 || r.n > a.T || r.n > JN) { bad = true; break; }
       Job& o = a.jobs[a.J++];
       o.slot = slot;
       o.n = r.n;
-      for (int i = 0; i < MAXT; ++i) {
+      for (int i = 0; i < JN; ++i) {
         o.tok[i] = i < r.n ? r.tok[i] : 0;
         o.wt[i] = i < r.n ? r.wt[i] : 0.f;
         if (i < r.n && (r.tok[i] < 0 || r.tok[i] >= a.T)) bad = true;

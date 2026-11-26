@@ -16,9 +16,10 @@ COPY abliteration.py /usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8
 COPY abliteration /opt/qwen38/abliteration
 COPY rvii_experts/rvii_protocol.h rvii_prefill.py /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/
 COPY flash-next.patch vllm-mm.patch cpu-moe.patch rvii-moe.patch cpu-moe-opt.patch rvii-prefill.patch \
-     expert-store-hugetlb.patch /tmp/
+     expert-store-hugetlb.patch mtp-adaptive.patch /tmp/
 RUN patch -p1 -d / < /tmp/flash-next.patch && patch -p1 -d / < /tmp/vllm-mm.patch \
     && patch -p1 -d / < /tmp/cpu-moe.patch && patch -p1 -d / < /tmp/rvii-moe.patch \
     && patch -p1 -d / < /tmp/cpu-moe-opt.patch && patch -p1 -d / < /tmp/rvii-prefill.patch && patch -p1 -d / < /tmp/expert-store-hugetlb.patch \
+    && patch -p1 -d / < /tmp/mtp-adaptive.patch \
     && rm /tmp/flash-next.patch /tmp/vllm-mm.patch /tmp/cpu-moe.patch /tmp/rvii-moe.patch /tmp/cpu-moe-opt.patch \
-       /tmp/rvii-prefill.patch /tmp/expert-store-hugetlb.patch
+       /tmp/rvii-prefill.patch /tmp/expert-store-hugetlb.patch /tmp/mtp-adaptive.patch

@@ -205,13 +205,15 @@ What has given the largest gains, roughly in order:
   top_p 0.95) 919 µs per step on an RTX 3090, with the Triton kernel 248 µs and the same tokens kept. flash-next
   lowers the threshold to 2 rows (`flash-next.patch`): -0.6 ms per decode step. Check it in a profile of the step's
   tail (`--profiler-config '{"profiler":"torch","torch_profiler_dir":...}'`, `POST /start_profile`).
-- **The number of drafts with experts on the CPU** (flash-next, 2026-11-26, estimated from a decode trace): each
-  further token per step adds its own experts (~2.9 more CPU experts per layer in code edits, ~4 ms per step with
-  the draft), so it pays off only where the drafts are nearly always accepted: in edits (0.996 / 0.99 / 0.96 at
-  positions 1-3) 5 drafts would give an estimated +21 %, 7 +34 %; in chats (positions 1-3: ~0.5 / 0.3 / 0.2) 3 stays
-  the best (2 or 4: −0.5 / −3 %). vLLM has variable-K scheduling (`num_spec_tokens_to_schedule`), chosen by batch
-  size; an adaptive depth needs a choice by the recent acceptance. Read the per-position acceptance from vLLM's
-  `SpecDecoding metrics` log lines.
+- **More drafts with experts on the CPU do not pay off** (flash-next, 2026-11-26, measured): an adaptive depth
+  (`QWEN38_MTP_ADAPTIVE`: the scheduler chooses 1-7 drafts per step from the per-position acceptance and the
+  measured step time per depth; the V2 model runner verifies that many with a full CUDA graph per verify length)
+  reached ~7 tokens per step in code edits instead of 3.95, but at the same speed: each further verified token
+  added ~3.5 distinct CPU experts per layer (memory-bound, ~31 µs each), i.e. nearly the cost of a token of its own,
+  and chats lost 8-14 %, as the drafter drafts all 7 tokens in one fused graph anyway. A trace-based estimate
+  (+21-34 % in edits) was far off: measure the step time at the real depth. It pays off only when the experts of an
+  extra token are cheap (on the GPU). Depths 5-8 need `--block-size` 192 there (the QSA indexer's ring of 12).
+  Read the per-position acceptance from vLLM's `SpecDecoding metrics` log lines.
 - Measure with the `chat`, `depth` and `edit` tests of `bench_http.py`; the raw generation test with
   repeated text gives ~98 % acceptance.
 
@@ -283,6 +285,8 @@ What has given the largest gains, roughly in order:
     instead of the previous step's: 61 instead of 42 % of the prefetched experts used, -3.5 % CPU time, +2.4 % t/s
     in code edits. Measure the prediction offline first (`QWEN38_DECODE_XDUMP`, `cpu_moe_bench/pregate_eval.py`:
     70 vs 50 % with 7 experts per layer).
+  - **Send what the GPU has:** the decode requests were widened from BF16 to FP32 on the GPU, doubling what it
+    writes to host memory (~4 GB/s here); BF16 and the widening on the CPU: −0.3 ms per step, bit-identical input.
   - Not better: column slices of an expert for load balance (strided rows halve the RAM bandwidth with 8 threads,
     as the hardware prefetchers read the neighbouring slices' lines), a row-streaming loop order, longer prefetch
     distances, 12-16 threads. Also (2026-11-26) splitting a layer's largest expert between two threads in

@@ -81,6 +81,10 @@ input and a faster CPU expert kernel:
   bridge kernels and the hooks in `stream_v2.py`), the runtime publishes its hot experts and counts the decode
   requests for the worker's automatic re-ranking, and starts with the worker's ranking (`QWEN38_RANKINGS_AUTO`), see
   [Radeon VII in prefill and automatic re-ranking](#radeon-vii-in-prefill-and-automatic-re-ranking-2026-11-25).
+- [`mtp-adaptive.patch`](mtp-adaptive.patch) (2026-11-26, after `expert-store-hugetlb.patch`): the decode requests
+  in BF16, up to 8 tokens per decode step in the CPU's and the Radeon VII's decode path, and the optional adaptive MTP
+  depth (`QWEN38_MTP_ADAPTIVE`, `BLOCK_SIZE`; off), see
+  [BF16 decode requests and the adaptive MTP depth](#bf16-decode-requests-and-the-adaptive-mtp-depth-2026-11-26).
 - [`expert-store-hugetlb.patch`](expert-store-hugetlb.patch) (2026-11-26, the runtime's `expert_store.py`): with
   `QWEN38_EXPERT_STORE_HUGETLB=1G`, the expert arena is taken from reserved 1 GiB huge pages (off by default; it
   falls back to transparent huge pages if there are not enough), see [`HOST_TUNING.md`](HOST_TUNING.md).
@@ -778,7 +782,7 @@ waiting for the RAM like the others (in the synthetic benchmark with ~24 experts
 but the real routing has ~10). A split half also loses the prefetch: the expert was prefetched into one CCX's L3,
 and the other half is read from the RAM by another CCX. The code was not kept.
 
-### More MTP drafts when the acceptance is high (estimated, not implemented)
+### More MTP drafts when the acceptance is high (the estimate)
 
 The drafts' acceptance per position (vLLM's `SpecDecoding metrics`, positions 1 / 2 / 3, cumulative): chats and code
 context 0.44-0.67 / 0.23-0.45 / 0.11-0.34 (~2.0 tokens per step), the edit test 0.996 / 0.99 / 0.96 (3.95 tokens per
@@ -821,6 +825,68 @@ energy-performance preference need root and are described, with commands to appl
 (`QWEN38_EXPERT_STORE_HUGETLB=1G`, [`expert-store-hugetlb.patch`](expert-store-hugetlb.patch)): it maps the arena with
 `MAP_HUGETLB | MAP_HUGE_1GB` and falls back to transparent huge pages with a warning if the host has not reserved
 enough (tested: without reserved pages, the server starts as before; with reserved pages, not yet tested).
+
+## BF16 decode requests and the adaptive MTP depth (2026-11-26)
+
+[`mtp-adaptive.patch`](mtp-adaptive.patch) (after `expert-store-hugetlb.patch`) and protocol version 2 of
+[`rvii_experts/rvii_protocol.h`](rvii_experts/rvii_protocol.h) (both images must be updated together; a worker with
+the other version is not used, and the CPU computes its experts):
+
+- **BF16 decode requests:** the RTX 3090 wrote each layer's MoE input to the CPU's request slot widened to FP32,
+  i.e. twice the bytes of its BF16 values, at the ~4 GB/s at which it writes host memory here. It now copies the
+  BF16 values, and the CPU widens them to FP32 itself (exact: the CPU's input is bit-identical, so this needs no
+  quality test). The RTX 3090's time between the layers: 13.4-13.6 instead of 13.8 ms per step (−0.3 ms, ~+1 %).
+  The answers stay FP32 (rounding them to BF16 before the GPU adds them to its BF16 output would round twice).
+- **Up to 8 tokens per decode step** (MTP depths up to 7; 4 before) in the CPU's decode path (`MAXT`; the int8 GEMV
+  keeps 4 tokens' sums in registers, so experts with more tokens take a second pass over the weights from the
+  cache: the same error against FP32 as with 4 tokens, 1.2e-2 for int8 and 6e-5 for int16 activations in
+  `cpu_moe_bench`), the bridge, the pre-gating hints, the decode trace (80 ids per record now; `analyze_trace.py`
+  and `bench.cpp` read the new format, not the old traces) and the Radeon VII's protocol (8 tokens, jobs of up to 4
+  tokens; the CPU sends an expert with more as two jobs; see [`rvii_experts/README.md`](rvii_experts/README.md)).
+- **The adaptive MTP depth** (`QWEN38_MTP_ADAPTIVE=1` with `MTP_DEPTH` up to 7; **off**, see below): the scheduler
+  chooses the number of drafts of each step (vLLM's variable-K scheduling, `num_spec_tokens_to_schedule`) to
+  maximize the expected tokens per second, from an average of the conditional acceptance of each draft position
+  and of the measured time of a step with each number of drafts. The runtime uses vLLM's V2 model runner, which
+  verifies the scheduled number of drafts and captures a full CUDA graph for each verify length (the patch makes it
+  capture all lengths 2-8; vLLM's own dynamic speculative decoding takes them from a table by batch size). Depths
+  5-8 need an attention block that 12 divides (the indexer's ring of the QSA attention): `BLOCK_SIZE=192` (new in
+  the serve script, vLLM's `--block-size`) gives 3456-token blocks, with `VLLM_PREFIX_CACHE_RETENTION_INTERVAL=3456`,
+  and the Gated DeltaNet states of 8 rows per request need `KV_CACHE_MEMORY_BYTES=5550000000` for the full context
+  (+0.37 GiB of VRAM).
+
+The adaptive depth works as intended (in the edit test it chose ~7 drafts, 6.8-7.0 tokens per step instead of 3.95;
+in chats 1-2), but it is not faster here (`--tests chat depth edit`, t/s):
+
+| Configuration | Chat | Gen. 6.4k / 32k | Edit | Tokens per step (edit) | CPU / between layers / tail ms per step (edit) |
+|---|---|---|---|---|---|
+| MTP 3, BF16 requests | 65.7 | 68.7 / 70.4 | 104.2 | 3.95 | 20.8 / 13.4 / 3.7 |
+| Adaptive depth 1-7 | 60.6 | 59.0 / 68.2 | 104.2 | ~7.0 | 42.0 / 16.6 / 6.6 |
+
+An extra token per step costs nearly as much as a token of its own: each one adds ~3.5 distinct CPU experts per
+layer in the edit test (14.2 at 4 tokens, 28.3 at 8; the trace predicted 25.4), each at ~31 µs of a memory-bound
+layer, plus ~0.8 ms of the RTX 3090 per token and ~0.5 ms per draft. A step with 7 drafts took ~67 ms for ~7 tokens,
+one with 3 drafts 38 ms for 3.95: the same rate. The estimate above (+21-34 %) assumed ~25 µs per expert and fewer
+new experts per token. In chats, the drafter still drafts all 7 tokens in every step (its draft steps are one fused
+CUDA graph; the scheduler only verifies fewer), +2.9 ms per step for nothing, so chats lost 8-14 %. Drafting only
+the chosen number would recover that, and with ~5 drafts in edits the estimate from these measurements is +3 % at
+most, for 0.37 GiB of VRAM: not worth it. It would pay off when the CPU's experts are cheaper per token (more
+experts on the GPUs, faster RAM). Before the V2 runner was found to be the one in use, a version padded every step
+to 8 rows on the V1 runner (not used by this runtime) and was dropped.
+
+The greedy outputs of the chat prompts (`quality_http.py --tests agreement`) diverge from those with MTP 3 at
+near-ties (e.g. "analogy from physics" vs "analogy physics"), as expected from any other verify shape (two runs
+with 7 drafts per step: 0 of 12 identical, the common prefix 12 % of the length; no noise floor of MTP 3 against
+itself was measured); the retrieval answers (171/176 identical,
+164/176 correct either way) and the KL divergence of their token distributions (0.0028, at the noise floor of
+0.0027) did not change.
+
+**Comparing runs on this day:** the Radeon VII worker re-ranked and repacked its experts at 06:08 during these tests
+(`RVII_AUTO_RERANK=1`; the adaptive runs verified up to 8 rows per step, i.e. many more requests, also of rejected
+drafts), and the runtime takes its hot experts from the re-ranked ranking at every start. So the CPU's experts per
+step differ between the server starts of this day (the final image with MTP 3 and the new placement: chat 66.9,
+6.4k / 32k 73.1 / 72.8, edit 94.7 t/s with 830 instead of 680 CPU experts per step in the edit test). The table
+above compares runs with the same placement, and the BF16 change is judged by the RTX 3090's time between the
+layers, which the placement does not change.
 
 ## Measurements (2026-10-13, agx-z2e)
 

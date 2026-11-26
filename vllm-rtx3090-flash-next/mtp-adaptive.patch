@@ -1,0 +1,541 @@
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_moe.cpp
+@@ -1,4 +1,4 @@
+-// CPU compute for "cold" MoE experts of Qwen3.8-Flash-Next (decode, 1..4 tokens).
++// CPU compute for "cold" MoE experts of Qwen3.8-Flash-Next (decode, 1..8 tokens; agx-ai: 8 since 2026-11-26).
+ // Weights are the checkpoint's AutoRound GPTQ INT4 tensors, symmetric (zero = 8), group 128:
+ //   qweight int32 [K/8, N] (8 consecutive k per int32, low nibble first), scales fp16 [K/128, N].
+ //   gate/up: K = 2560 -> N = 640;  down: K = 640 -> N = 2560.
+@@ -32,7 +32,7 @@
+ constexpr int H = 2560;   // hidden
+ constexpr int I = 640;    // expert intermediate
+ constexpr int GS = 128;   // quant group
+-constexpr int MAXT = 4;   // tokens per decode verify step handled here
++constexpr int MAXT = 8;   // tokens per decode verify step handled here (agx-ai: 8 for MTP depths up to 7)
+ 
+ static inline __m256 load_h8(const uint16_t* p) {
+   return _mm256_cvtph_ps(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p)));
+@@ -108,6 +108,12 @@
+ 
+ static void gemv_cols(const int32_t* qw, const uint16_t* sc, int K, int N, int n0, int n1, int Tn,
+                       const float* x, const float* xg, float* y, int ldy) {
++  if (Tn > 4) {  // agx-ai: 4 tokens per pass (the second pass reads the weights from the cache)
++    for (int t0 = 0; t0 < Tn; t0 += 4)
++      gemv_cols(qw, sc, K, N, n0, n1, std::min(4, Tn - t0), x + static_cast<size_t>(t0) * K,
++                xg + static_cast<size_t>(t0) * (K / GS), y + static_cast<size_t>(t0) * ldy, ldy);
++    return;
++  }
+   for (int a = n0; a < n1; a += MAXC) {
+     const int b = std::min(n1, a + MAXC);
+     switch (Tn) {
+@@ -223,6 +229,13 @@
+ 
+ static void gemv_q16_cols(const int32_t* qw, const uint16_t* sc, int K, int N, int n0, int n1, int Tn,
+                           const int16_t* xq, const float* xs, const int32_t* xz, float* y, int ldy) {
++  if (Tn > 4) {  // agx-ai: 4 tokens per pass
++    for (int t0 = 0; t0 < Tn; t0 += 4)
++      gemv_q16_cols(qw, sc, K, N, n0, n1, std::min(4, Tn - t0), xq + static_cast<size_t>(t0) * K,
++                    xs + static_cast<size_t>(t0) * (K / GS), xz + static_cast<size_t>(t0) * (K / GS),
++                    y + static_cast<size_t>(t0) * ldy, ldy);
++    return;
++  }
+   for (int a = n0; a < n1; a += MAXC) {
+     const int b = std::min(n1, a + MAXC);
+     switch (Tn) {
+@@ -331,6 +344,13 @@
+ 
+ static void gemv_q8_cols(const int32_t* qw, const uint16_t* sc, int K, int N, int n0, int n1, int Tn,
+                          const int8_t* xq, const float* xs, const int32_t* xz, float* y, int ldy) {
++  if (Tn > 4) {  // agx-ai: 4 tokens per pass (the second pass reads the weights from the cache)
++    for (int t0 = 0; t0 < Tn; t0 += 4)
++      gemv_q8_cols(qw, sc, K, N, n0, n1, std::min(4, Tn - t0), xq + static_cast<size_t>(t0) * K,
++                   xs + static_cast<size_t>(t0) * (K / QG), xz + static_cast<size_t>(t0) * (K / QG),
++                   y + static_cast<size_t>(t0) * ldy, ldy);
++    return;
++  }
+   for (int a = n0; a < n1; a += MAXC) {
+     const int b = std::min(n1, a + MAXC);
+     switch (Tn) {
+@@ -779,12 +799,7 @@
+     for (int a0 = 0; a0 < H; a0 += 320) {
+       if (g_int8) gemv_q8_cols(qd, sd, cw, H, a0, a0 + 320, jb.n, aq, as, az, y, 320);
+       else if (g_int16) gemv_q16_cols(qd, sd, cw, H, a0, a0 + 320, jb.n, aw, aws, awz, y, 320);
+-      else switch (jb.n) {
+-        case 1: gemv_rows<1>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+-        case 2: gemv_rows<2>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+-        case 3: gemv_rows<3>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+-        default: gemv_rows<4>(qd, sd, cw, H, a0, a0 + 320, act, ag, y, 320); break;
+-      }
++      else gemv_cols(qd, sd, cw, H, a0, a0 + 320, jb.n, act, ag, y, 320);  // (gemv_rows<n>, 4 tokens per pass)
+       for (int t = 0; t < jb.n; ++t) {
+         float* o = yacc + static_cast<size_t>(jb.tok[t]) * H + a0;
+         const __m256 wv = _mm256_set1_ps(jb.wt[t]);
+@@ -937,7 +952,7 @@
+                    torch::Tensor skip, torch::Tensor out, torch::Tensor scratch) {
+   TORCH_CHECK(g_pool, "call init(threads) first");
+   const int T = x.size(0), topk = ids.size(1), E = table.size(1);
+-  TORCH_CHECK(T >= 1 && T <= MAXT, "1..4 tokens");
++  TORCH_CHECK(T >= 1 && T <= MAXT, "1..8 tokens");
+   compute_layer(table.data_ptr<int64_t>() + layer * E * 6, E, skip.data_ptr<uint8_t>(), T, topk,
+                 ids.data_ptr<int32_t>(), w.data_ptr<float>(), x.data_ptr<float>(), out.data_ptr<float>(),
+                 scratch.data_ptr<float>(), scratch.numel());
+@@ -1204,9 +1219,10 @@
+ // file every 256 decode steps, e.g. to choose the GPU's and the Radeon VII's experts from real use instead of the
+ // static rankings.
+ // agx-ai: decode trace (QWEN38_DECODE_TRACE=<file>) for cpu_moe_bench (analyze_trace.py, the replay mode of bench):
+-// per decode request {t_req, t_cpu_end, t_done (ns, steady clock), layer, T, ids[40]}, buffered and written every 4096
++// per decode request {t_req, t_cpu_end, t_done (ns, steady clock), layer, T, ids[80]} (ids[40] before 2026-11-26),
++// buffered and written every 4096
+ // records (the last ones are lost when the server stops).
+-struct TraceRec { int64_t t_req, t_cpu, t_done; int32_t layer, T; int32_t ids[40]; };
++struct TraceRec { int64_t t_req, t_cpu, t_done; int32_t layer, T; int32_t ids[MAXT * 10]; };
+ struct DecodeTrace {
+   FILE* f = nullptr;
+   std::vector<TraceRec> buf;
+@@ -1235,7 +1251,7 @@
+     }
+   }
+   void add(int32_t layer, int32_t T, const int32_t* ids, const float* x) {
+-    if (!f || left <= 0) return;
++    if (!f || left <= 0 || T > 4) return;  // agx-ai: the dump's format has 4 tokens (steps with more are left out)
+     int32_t head[42];
+     head[0] = layer; head[1] = T;
+     for (int i = 0; i < 40; ++i) head[2 + i] = i < T * 10 ? ids[i] : -1;
+@@ -1293,7 +1309,8 @@
+       if (e < 0 || e >= E || sk[e] || map[e] < 0) continue;
+       skl[e] = 1;
+       int j = 0;
+-      while (j < J && jobs[j].e != e) ++j;
++      // agx-ai: a job has at most RVII_JOBN (4) tokens; an expert with more gets a second job
++      while (j < J && !(jobs[j].e == e && jobs[j].n < RVII_JOBN)) ++j;
+       if (j == J) { jobs[J].e = e; jobs[J].n = 0; ++J; }
+       jobs[j].tok[jobs[j].n] = t; jobs[j].wt[jobs[j].n] = wp[t * topk + k]; jobs[j].n++;
+     }
+@@ -1343,9 +1360,9 @@
+ 
+ // agx-ai: pre-gating hints (QWEN38_CPU_EXPERTS_PREGATE=1, cpu_experts.py): after submitting layer l, the GPU applies
+ // layer l+1's router to layer l's MoE input and writes the top 10 experts of each token into layer l+1's hint slot
+-// (seq int64 @0 = the request seq that layer l+1 will have, T int32 @8, ids int32[40] @16). These predict ~70 % of
++// (seq int64 @0 = the request seq that layer l+1 will have, T int32 @8, ids int32[80] @16). These predict ~70 % of
+ // the prefetched experts correctly, against ~50 % for the previous step's experts (cpu_moe_bench/pregate_eval.py).
+-constexpr int HINT_BYTES = 256;
++constexpr int HINT_BYTES = 512;  // agx-ai: ids int32[80] @16 (8 tokens)
+ char* g_pregate = nullptr;
+ std::atomic<int64_t> g_hint_layers{0}, g_hint_missing{0};
+ void set_hints(int64_t addr) { g_pregate = reinterpret_cast<char*>(addr); }
+@@ -1407,10 +1424,18 @@
+ }
+ 
+ // ---------------------------------------------------------------- GPU request server
+-// Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[40] @64, w f32[40] @224, x f32[4*H] @448.
+-// Response slot: seq int64 @0, y f32[4*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
++// Request slot (bytes): seq int64 @0, T int32 @8, layer int32 @12, ids int32[80] @64, w f32[80] @384, x bf16[8*H] @768.
++// Response slot: seq int64 @0, y f32[8*H] @64. The GPU publishes req.seq last (st.release.sys) and waits for
+ // resp.seq == req.seq (ld.acquire.sys).
+-constexpr size_t REQ_BYTES = 41472, RESP_BYTES = 41088;
++// agx-ai (2026-11-26): up to 8 tokens, and x in BF16 as the GPU has it (it wrote FP32: the same values in twice the
++// bytes, and the GPU writes host memory at only ~4 GB/s); the CPU widens it to FP32 (exact). Before: ids[40] @64,
++// w[40] @224, x f32[4*H] @448, 41472 and 41088 bytes.
++constexpr size_t REQ_IDS = 64, REQ_W = 384, REQ_X = 768;
++constexpr size_t REQ_BYTES = REQ_X + 2ull * MAXT * H, RESP_BYTES = 64 + 4ull * MAXT * H;
++static_assert(REQ_W >= REQ_IDS + 4 * MAXT * 10 && REQ_X >= REQ_W + 4 * MAXT * 10, "request layout");
++std::vector<int64_t> decode_layout() {
++  return {static_cast<int64_t>(REQ_BYTES), static_cast<int64_t>(RESP_BYTES), MAXT, HINT_BYTES};
++}
+ namespace {
+ std::thread g_server;
+ std::atomic<bool> g_server_stop{false};
+@@ -1449,6 +1474,7 @@
+     delete g_pool;
+     g_pool = new Pool(static_cast<int>(threads), c);   // server thread becomes worker 0
+     std::vector<float> scratch(4 << 20);
++    alignas(32) static float xf[MAXT * H];  // agx-ai: the request's BF16 x widened to FP32
+     std::vector<float> scratch_big(req_big_addr ? big_scratch_floats(static_cast<int>(threads)) : 0);
+     std::vector<int64_t> seen(nslots, 0);
+     int64_t seen_big = 0;
+@@ -1478,15 +1504,20 @@
+         }
+         if (T >= 1 && T <= MAXT && layer >= 0) {
+           g_cur_layer = layer;
++          const uint16_t* xb = reinterpret_cast<const uint16_t*>(rq + REQ_X);
++          for (int i = 0; i < T * H; i += 8) {  // BF16 -> FP32: the 16 bits shifted to the top
++            const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(xb + i));
++            _mm256_store_ps(xf + i, _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(v), 16)));
++          }
+           compute_layer_rv(layer, tab + static_cast<int64_t>(layer) * E * 6, E, sk + static_cast<int64_t>(layer) * E, T, 10,
+-                        reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 224),
+-                        reinterpret_cast<float*>(rq + 448), reinterpret_cast<float*>(rs + 64), scratch.data(),
++                        reinterpret_cast<int32_t*>(rq + REQ_IDS), reinterpret_cast<float*>(rq + REQ_W),
++                        xf, reinterpret_cast<float*>(rs + 64), scratch.data(),
+                         scratch.size(), g_tail_mask ? g_tail_mask + static_cast<int64_t>(layer) * E : nullptr);
+         } else {
+           std::memset(rs + 64, 0, sizeof(float) * MAXT * H);
+         }
+         if (g_xdump.f && T >= 1 && T <= MAXT && layer >= 0)
+-          g_xdump.add(layer, T, reinterpret_cast<int32_t*>(rq + 64), reinterpret_cast<float*>(rq + 448));  // before the answer: the GPU reuses the slot after it
++          g_xdump.add(layer, T, reinterpret_cast<int32_t*>(rq + REQ_IDS), xf);  // before the answer: the GPU reuses the slot after it
+         __atomic_store_n(reinterpret_cast<int64_t*>(rs), q, __ATOMIC_RELEASE);
+         if (g_cur_layer >= 0) {
+           const int nl = layer + 1 < 48 ? layer + 1 : 0;
+@@ -1501,8 +1532,8 @@
+           r.t_done = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done.time_since_epoch()).count();
+           r.t_cpu = g_trace.t_cpu ? g_trace.t_cpu : r.t_done; g_trace.t_cpu = 0;
+           r.layer = layer; r.T = T;
+-          std::memcpy(r.ids, rq + 64, sizeof(int32_t) * T * 10);
+-          for (int i = T * 10; i < 40; ++i) r.ids[i] = -1;
++          std::memcpy(r.ids, rq + REQ_IDS, sizeof(int32_t) * T * 10);
++          for (int i = T * 10; i < MAXT * 10; ++i) r.ids[i] = -1;
+           g_trace.add(r);
+         }
+         const int64_t cns = std::chrono::duration_cast<std::chrono::nanoseconds>(last_done - tc0).count();
+@@ -1512,7 +1543,7 @@
+         window.requests += 1;
+         last_layer = layer;
+         if (g_dyn.on && T >= 1 && T <= MAXT && layer >= 0) {
+-          dyn_note(layer, q / 64, T, reinterpret_cast<int32_t*>(rq + 64), sk + static_cast<int64_t>(layer) * E);
++          dyn_note(layer, q / 64, T, reinterpret_cast<int32_t*>(rq + REQ_IDS), sk + static_cast<int64_t>(layer) * E);
+           if (layer == g_dyn.last_layer) dyn_promote();
+         }
+         const int64_t every = g_stats_every.load(std::memory_order_relaxed);
+@@ -1668,6 +1699,7 @@
+   m.def("dyn_stats", &dyn_stats);
+   m.def("usage_ready", &usage_ready);
+   m.def("big_layout", &big_layout);
++  m.def("decode_layout", &decode_layout);
+   m.def("rvii_stats", &rvii_stats);
+   m.def("set_hints", &set_hints);
+   m.def("hint_stats", [] { return std::vector<int64_t>{g_hint_layers.load(), g_hint_missing.load()}; });
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/bridge_cuda.cu
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/bridge_cuda.cu
+@@ -4,7 +4,9 @@
+ #include <cuda_bf16.h>
+ 
+ namespace {
+-constexpr int H = 2560, TOPK = 10, MAXT = 4;
++constexpr int H = 2560, TOPK = 10, MAXT = 8;  // agx-ai: 8 tokens (MTP depths up to 7), was 4
++// agx-ai: the decode request slot (cpu_moe.cpp): ids int32[80] @64, w f32[80] @384, x bf16[8 * H] @768.
++constexpr int REQ_IDS = 64, REQ_W = 384, REQ_X = 768;
+ 
+ template <typename IdT>
+ __global__ void submit_kernel(const __nv_bfloat16* __restrict__ x, const IdT* __restrict__ ids,
+@@ -18,15 +20,17 @@
+     *reinterpret_cast<int*>(req + 8) = T;
+     *reinterpret_cast<int*>(req + 12) = layer;
+   }
+-  int* ido = reinterpret_cast<int*>(req + 64);
+-  float* wo = reinterpret_cast<float*>(req + 224);
++  int* ido = reinterpret_cast<int*>(req + REQ_IDS);
++  float* wo = reinterpret_cast<float*>(req + REQ_W);
+   for (int i = threadIdx.x; i < MAXT * TOPK; i += blockDim.x) {
+     const bool v = i < T * TOPK && !(mask && mask[i]);
+     ido[i] = v ? static_cast<int>(ids[i]) : -1;
+     wo[i] = v ? w[i] : 0.f;
+   }
+-  float* xo = reinterpret_cast<float*>(req + 448);
+-  for (int i = threadIdx.x; i < T * H; i += blockDim.x) xo[i] = __bfloat162float(x[i]);
++  // agx-ai: x as BF16, as it is (16-byte copies; it was widened to FP32, twice the bytes over PCIe)
++  uint4* xo = reinterpret_cast<uint4*>(req + REQ_X);
++  const uint4* xi = reinterpret_cast<const uint4*>(x);
++  for (int i = threadIdx.x; i < T * H / 8; i += blockDim.x) xo[i] = xi[i];
+   __threadfence_system();
+   __syncthreads();
+   if (threadIdx.x == 0)
+@@ -190,16 +194,16 @@
+ 
+ void bridge_hint(torch::Tensor ids, int64_t hint_addr, torch::Tensor counter, int64_t layer) {
+   TORCH_CHECK(ids.is_contiguous() && ids.dim() == 2 && ids.size(1) == TOPK && ids.size(0) <= MAXT,
+-              "hint: ids [T <= 4, 10]");
++              "hint: ids [T <= 8, 10]");
+   auto stream = c10::cuda::getCurrentCUDAStream();
+   auto* cp = reinterpret_cast<const long long*>(counter.data_ptr<int64_t>());
+   char* h = reinterpret_cast<char*>(hint_addr);
+   const int T = ids.size(0);
+   if (ids.dtype() == torch::kInt64)
+-    hint_kernel<long long><<<1, 64, 0, stream>>>(reinterpret_cast<const long long*>(ids.data_ptr<int64_t>()), T, h,
+-                                                 cp, static_cast<int>(layer));
++    hint_kernel<long long><<<1, 128, 0, stream>>>(reinterpret_cast<const long long*>(ids.data_ptr<int64_t>()), T, h,
++                                                  cp, static_cast<int>(layer));
+   else
+-    hint_kernel<int><<<1, 64, 0, stream>>>(ids.data_ptr<int32_t>(), T, h, cp, static_cast<int>(layer));
++    hint_kernel<int><<<1, 128, 0, stream>>>(ids.data_ptr<int32_t>(), T, h, cp, static_cast<int>(layer));
+ }
+ 
+ bool event_done(int64_t event) {
+@@ -241,6 +245,8 @@
+   const signed char* mask = reinterpret_cast<const signed char*>(mask_addr);
+   TORCH_CHECK(x.dtype() == torch::kBFloat16 && x.is_contiguous() && ids.is_contiguous() && w.is_contiguous());
+   const int T = x.size(0);
++  TORCH_CHECK(T >= 1 && T <= MAXT && x.size(1) == H && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0,
++              "submit: 1..8 tokens of 2560, 16-byte aligned");
+   auto stream = c10::cuda::getCurrentCUDAStream();
+   char* req = reinterpret_cast<char*>(req_addr);
+   auto* xp = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/cpu_experts.py
+@@ -19,7 +19,9 @@
+ 
+ logger = init_logger(__name__)
+ L, E = 48, 512
+-REQ_BYTES, RESP_BYTES = 41472, 41088
++# agx-ai (2026-11-26): up to 8 tokens per decode step and x in BF16 (cpu_moe.cpp, decode_layout); was 41472, 41088.
++MAXT = 8
++REQ_BYTES, RESP_BYTES = 768 + 2 * MAXT * 2560, 64 + 4 * MAXT * 2560
+ _PARTS = (("gate_proj", "qweight"), ("gate_proj", "scales"), ("up_proj", "qweight"),
+           ("up_proj", "scales"), ("down_proj", "qweight"), ("down_proj", "scales"))
+ _HOT: dict[int, list[int]] = {}
+@@ -36,7 +38,7 @@
+ # experts of layer l+1 into its L3 cache instead of those of the previous step (cpu_moe.cpp, post_prefetch).
+ _PREGATE = os.environ.get("QWEN38_CPU_EXPERTS_PREGATE", "0") == "1"
+ _GATES: dict[int, torch.nn.Module] = {}
+-HINT_BYTES = 256
++HINT_BYTES = 512  # agx-ai: ids int32[80] (8 tokens)
+ 
+ 
+ def register_gate(layer: int, gate: torch.nn.Module) -> None:
+@@ -122,6 +124,9 @@
+             os.replace("/dev/shm/qwen38-hot.bin.tmp", "/dev/shm/qwen38-hot.bin")
+         except OSError as e:
+             logger.warning("CPU experts: cannot write /dev/shm/qwen38-hot.bin: %s", e)
++        layout = list(self.ext.decode_layout())
++        if layout != [REQ_BYTES, RESP_BYTES, MAXT, HINT_BYTES]:
++            raise RuntimeError(f"CPU experts: the kernel's decode layout {layout} differs from cpu_experts.py's")
+         self.req = torch.zeros(L * REQ_BYTES, dtype=torch.uint8).pin_memory()
+         self.resp = torch.zeros(L * RESP_BYTES, dtype=torch.uint8).pin_memory()
+         self.req_addr, self.resp_addr = self.req.data_ptr(), self.resp.data_ptr()
+@@ -171,7 +176,7 @@
+         self.ext.bridge_submit(x.contiguous(), topk_ids.contiguous(), w.contiguous(),
+                                self.req_addr + REQ_BYTES * layer, self.counter, layer, layer == 0,
+                                0 if mask is None else mask.data_ptr())
+-        if self.hints is not None and layer + 1 < L and x.dim() == 2 and x.shape[0] <= 4:
++        if self.hints is not None and layer + 1 < L and x.dim() == 2 and x.shape[0] <= MAXT:
+             gate = _GATES.get(layer + 1)
+             weight = getattr(gate, "weight", None)
+             if weight is not None and weight.dtype == x.dtype and weight.shape[1] == x.shape[1]:
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py
+@@ -1833,7 +1833,7 @@
+         hot_only_layer = getattr(self, "_hot_only_layer", None)
+         if hot_only_layer is not None:
+             from . import cpu_experts, stream_v2
+-            if x.shape[0] <= 4 and cpu_experts.enabled():
++            if x.shape[0] <= cpu_experts.MAXT and cpu_experts.enabled():
+                 # Decode: hot experts on the GPU (the layer's own weights), cold experts on the CPU in parallel;
+                 # optionally the GPU also takes a share of the cold experts over PCIe (gpu_share.py).
+                 from . import gpu_share
+@@ -1865,7 +1865,7 @@
+             return stream_v2.forward(hot_only_layer, x, topk_ids, topk_weights, layer.activation)
+         cache = self._static_hot_cache
+         cpu_layer = getattr(self, "_cpu_experts_layer", None)
+-        if cache is not None and cpu_layer is not None and x.shape[0] <= 4:
++        if cache is not None and cpu_layer is not None and x.shape[0] <= 8:  # agx-ai: 8 (cpu_experts.MAXT)
+             # Hot experts on the GPU (hot_map sends the rest to -1), cold experts on the CPU in parallel.
+             # The hot set is fixed: this path never runs the LRU update.
+             from .cpu_experts import service
+--- a/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/gpu_share.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/gpu_share.py
+@@ -17,7 +17,7 @@
+ 
+ FRAC = float(os.environ.get("QWEN38_GPU_SHARE_FRAC", "0"))
+ K_MAX = int(os.environ.get("QWEN38_GPU_SHARE_KMAX", "8"))
+-H, I, TOPK, MAXT = 2560, 640, 10, 4
++H, I, TOPK, MAXT = 2560, 640, 10, 8  # agx-ai: 8 tokens per decode step (was 4)
+ # slot layout (expert_store.PARTS): gate q, up q, down q, gate s, up s, down s
+ OFF_GQ, OFF_UQ, OFF_DQ, OFF_GS, OFF_US, OFF_DS = 0, 819200, 1638400, 2457600, 2483200, 2508800
+ 
+--- a/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py
+@@ -67,6 +67,87 @@
+ logger = init_logger(__name__)
+ 
+ 
++class _AdaptiveDepth:
++    """agx-ai: the MTP depth chosen per step from the drafts' recent acceptance and the measured step times
++    (QWEN38_MTP_ADAPTIVE=1, mtp-adaptive.patch).
++
++    Keeps an exponential average of the conditional acceptance of each draft position (accepted, given that the
++    previous ones were) and of the time of a step with K drafts (the time between two outputs of decode steps), and
++    chooses the K that maximizes the expected tokens per second, (1 + sum_k prod_{i <= k} a_i) / T(K). The times of
++    depths not measured yet are extrapolated from the measured ones (at least QWEN38_MTP_COST, default 0.1, of a
++    step's time per draft), and acceptances of positions beyond the drafted ones drift towards the last observed
++    one, so that a high acceptance tries more drafts again. QWEN38_MTP_MIN (default 1) bounds K from below,
++    num_speculative_tokens (MTP_DEPTH) from above.
++    """
++
++    def __init__(self, k_max: int) -> None:
++        self.k_max = k_max
++        self.k_min = max(1, min(k_max, int(os.environ.get("QWEN38_MTP_MIN", "1"))))
++        self.cost = float(os.environ.get("QWEN38_MTP_COST", "0.1"))
++        self.alpha = float(os.environ.get("QWEN38_MTP_ALPHA", "0.15"))
++        self.acc = [0.6] * k_max
++        self.time: list[float | None] = [None] * (k_max + 1)  # seconds per step with K drafts
++        self.last_k = min(k_max, max(self.k_min, 3))
++        self._t_prev: float | None = None
++        self.steps = 0
++        self.k_sum = 0
++        self.tokens = 0
++
++    def observe(self, drafts: int, accepted: int) -> None:
++        """A verify step with `drafts` drafts, of which the first `accepted` were accepted."""
++        now = time.monotonic()
++        dt = None if self._t_prev is None else now - self._t_prev
++        self._t_prev = now
++        if drafts <= 0:
++            return
++        if dt is not None and 0.0 < dt < 0.3:  # (not after a pause or a prefill)
++            t = self.time[drafts]
++            self.time[drafts] = dt if t is None else t + 0.1 * (dt - t)
++        a = self.alpha
++        for i in range(min(accepted, drafts)):
++            self.acc[i] += a * (1.0 - self.acc[i])
++        if accepted < drafts:
++            self.acc[accepted] -= a * self.acc[accepted]
++        last = self.acc[min(accepted, drafts - 1)]
++        for i in range(drafts, self.k_max):
++            self.acc[i] += 0.5 * a * (last - self.acc[i])
++        self.steps += 1
++        self.k_sum += drafts
++        self.tokens += accepted + 1
++        if self.steps % 2000 == 0:
++            logger.info("Adaptive MTP depth: %.2f drafts and %.2f tokens per step in the last 2000 steps; "
++                        "conditional acceptance per position %s; ms per step by depth %s", self.k_sum / 2000,
++                        self.tokens / 2000, " ".join(f"{v:.2f}" for v in self.acc),
++                        " ".join("-" if t is None else f"{1000 * t:.1f}" for t in self.time[1:]))
++            self.k_sum = self.tokens = 0
++
++    def _step_time(self, k: int) -> float:
++        known = [(j, t) for j, t in enumerate(self.time) if t is not None and j > 0]
++        if self.time[k] is not None:
++            return self.time[k]  # type: ignore[return-value]
++        if not known:
++            return 1.0 + self.cost * k
++        base = min(t for _, t in known)
++        slope = self.cost * base
++        if len(known) >= 2:  # the measured slope, if steeper
++            (j0, t0), (j1, t1) = min(known), max(known)
++            slope = max(slope, (t1 - t0) / (j1 - j0))
++        j, t = min(known, key=lambda jt: abs(jt[0] - k))
++        return max(base * 0.5, t + slope * (k - j))
++
++    def choose(self) -> int:
++        best_k, best, expect, surv = self.k_min, -1.0, 1.0, 1.0
++        for k in range(1, self.k_max + 1):
++            surv *= self.acc[k - 1]
++            expect += surv
++            if k >= self.k_min:
++                v = expect / self._step_time(k)
++                if v > best:
++                    best_k, best = k, v
++        self.last_k = best_k
++        return best_k
++
++
+ class Scheduler(SchedulerInterface):
+     def __init__(
+         self,
+@@ -286,6 +367,11 @@
+                     else 1
+                 )
+ 
++        # agx-ai: the adaptive MTP depth (mtp-adaptive.patch)
++        self._agx_mtp = _AdaptiveDepth(self.num_spec_tokens) if (
++            os.environ.get("QWEN38_MTP_ADAPTIVE", "0") == "1" and self.dynamic_sd_lookup is not None
++            and self.num_spec_tokens > 1) else None
++
+         # Create the KV cache manager.
+         if hash_block_size is None:
+             hash_block_size = block_size
+@@ -1286,6 +1372,12 @@
+             num_spec_tokens_to_schedule = self.dynamic_sd_lookup[
+                 len(num_scheduled_tokens)
+             ]
++        agx_verify_drafts = None
++        if self._agx_mtp is not None and len(num_scheduled_tokens) > 0:
++            # agx-ai: the drafts proposed after this step (the next verify step has num_spec_tokens rows anyway); the
++            # real drafts of this step's verification are those chosen at the previous step.
++            agx_verify_drafts = self._agx_mtp.last_k
++            num_spec_tokens_to_schedule = self._agx_mtp.choose()
+         scheduled_encoder_input_stats = None
+         if (
+             self.log_stats
+@@ -1317,6 +1409,7 @@
+             num_spec_tokens_to_schedule=num_spec_tokens_to_schedule,
+             ec_manager_metadata=self.encoder_cache_manager.get_manager_metadata(),
+         )
++        scheduler_output._agx_verify_drafts = agx_verify_drafts  # type: ignore[attr-defined]
+ 
+         # NOTE(Kuntai): this function is designed for multiple purposes:
+         # 1. Plan the KV cache store
+@@ -1865,6 +1958,10 @@
+                 num_sampled = self.num_sampled_tokens_per_step
+                 num_accepted = max(len(generated_token_ids) - num_sampled, 0)
+                 num_rejected = num_draft_tokens - num_accepted
++                agx_real = getattr(scheduler_output, "_agx_verify_drafts", None)
++                if self._agx_mtp is not None and agx_real is not None and not output_is_stale:
++                    agx_real = min(agx_real, num_draft_tokens)
++                    self._agx_mtp.observe(agx_real, min(num_accepted, agx_real))
+                 # Rejections roll back num_computed_tokens (and, under async
+                 # scheduling, num_output_placeholders, which covers the spec
+                 # tokens). A stale rejection count predates the preemption
+@@ -1876,7 +1973,9 @@
+                         request.num_output_placeholders -= num_rejected
+                 spec_decoding_stats = self.make_spec_decoding_stats(
+                     spec_decoding_stats,
+-                    num_draft_tokens=num_draft_tokens,
++                    # agx-ai: only the real drafts of an adaptive step count in the metrics
++                    num_draft_tokens=agx_real if self._agx_mtp is not None and agx_real is not None
++                    else num_draft_tokens,
+                     num_accepted_tokens=num_accepted,
+                     num_invalid_spec_tokens=scheduler_output.num_invalid_spec_tokens,
+                     request_id=req_id,
+--- a/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/cudagraph_utils.py
++++ b/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/cudagraph_utils.py
+@@ -215,6 +215,18 @@
+             ]
+         else:
+             decode_query_lens = [self.decode_query_len]
++        if (
++            speculative_config
++            and __import__("os").environ.get("QWEN38_MTP_ADAPTIVE", "0") == "1"
++            and self.decode_query_len > self.vllm_config.num_speculative_tokens
++        ):
++            # agx-ai: the adaptive MTP depth (mtp-adaptive.patch): the scheduler chooses any number of drafts from 1
++            # to num_speculative_tokens per step, so capture the target's decode graphs of all these query lengths
++            # (not the drafter's, whose decode steps have one token).
++            n_new = self.decode_query_len - self.vllm_config.num_speculative_tokens
++            decode_query_lens = [
++                k + n_new for k in range(1, self.vllm_config.num_speculative_tokens + 1)
++            ]
+ 
+         capture_varlen_decode = (
+             separate_decode_routine and bool(decode_mode) and self.varlen_decode
+--- a/usr/local/bin/qwen38-serve
++++ b/usr/local/bin/qwen38-serve
+@@ -24,10 +24,17 @@
+   echo "MTP draft not found at $mtp_model" >&2; exit 2; }
+ [[ -f "$rankings" ]] || { echo "missing expert rankings: $rankings" >&2; exit 2; }
+ 
+-# The CPU decode path takes one request with up to 4 tokens per step (MTP depth <= 3).
++# The CPU decode path takes one request with up to 8 tokens per step (MTP depth <= 7; agx-ai: 4 and 3 before
++# 2026-11-26). With QWEN38_MTP_ADAPTIVE=1, MTP_DEPTH is the largest depth, and the scheduler chooses the depth of
++# each step from the drafts' recent acceptance (mtp-adaptive.patch).
+ [[ "$MAX_NUM_SEQS" == 1 ]] || { echo "MAX_NUM_SEQS must be 1 on the single-GPU runtime" >&2; exit 2; }
+-[[ "$MTP_DEPTH" =~ ^[0-3]$ ]] || { echo "MTP_DEPTH must be 0-3 on the single-GPU runtime" >&2; exit 2; }
+-if [[ "$KV_CACHE_DTYPE" == int8_per_token_head || "$KV_CACHE_DTYPE" == fp8_per_token_head ]]; then
++[[ "$MTP_DEPTH" =~ ^[0-7]$ ]] || { echo "MTP_DEPTH must be 0-7 on the single-GPU runtime" >&2; exit 2; }
++# agx-ai: BLOCK_SIZE (optional) is vLLM's --block-size: the attention block is rounded up to a multiple of it. MTP
++# depths 5-8 need a block that 12 divides (the QSA ring of the indexer; at depth 7 the block would be 3280 tokens):
++# BLOCK_SIZE=192 gives 3456, and VLLM_PREFIX_CACHE_RETENTION_INTERVAL must then be a multiple of 3456 (vLLM checks it).
++block_args=()
++[[ -z "${BLOCK_SIZE:-}" ]] || block_args=(--block-size "$BLOCK_SIZE")
++if [[ -z "${BLOCK_SIZE:-}" && ( "$KV_CACHE_DTYPE" == int8_per_token_head || "$KV_CACHE_DTYPE" == fp8_per_token_head ) ]]; then
+   (( VLLM_PREFIX_CACHE_RETENTION_INTERVAL % 3200 == 0 )) || {
+     echo "VLLM_PREFIX_CACHE_RETENTION_INTERVAL must be a multiple of 3200 with $KV_CACHE_DTYPE" >&2; exit 2; }
+ fi
+@@ -112,6 +119,7 @@
+   --kv-cache-memory-bytes "$KV_CACHE_MEMORY_BYTES" \
+   --enable-chunked-prefill \
+   --enable-prefix-caching \
++  ${block_args[@]+"${block_args[@]}"} \
+   --mamba-cache-mode align \
+   "$async_scheduling_arg" \
+   --disable-custom-all-reduce \

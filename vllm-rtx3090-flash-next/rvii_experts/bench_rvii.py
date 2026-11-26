@@ -27,12 +27,13 @@ MAGIC: int = 0x4949565238335651
 N_LAYERS: int = 48
 N_EXPERTS: int = 512
 HIDDEN: int = 2560
-MAXT: int = 4
+MAXT: int = 8  # tokens per request (protocol version 2, 2026-11-26)
+JN: int = 4    # tokens per job
 MAP_OFF: int = 4096
 REQ: int = 65536
-RESP: int = 131072
+RESP: int = 196608
 REQ_JOBS: int = 64
-REQ_X: int = 2048
+REQ_X: int = 4096
 RESP_Y: int = 64
 
 Jobs = list[tuple[int, list[int], list[float]]]
@@ -63,8 +64,8 @@ class Client:
         """jobs: [(e, [tok...], [wt...])]; x: float32 [T, H]. Returns (y [T, H], latency in s)."""
         n_tok = x.shape[0]
         for j, (e, tok, wt) in enumerate(jobs):
-            tok4 = list(tok) + [0] * (MAXT - len(tok))
-            wt4 = list(wt) + [0.0] * (MAXT - len(wt))
+            tok4 = list(tok) + [0] * (JN - len(tok))
+            wt4 = list(wt) + [0.0] * (JN - len(wt))
             struct.pack_into("<ii4i4f", self.mm, REQ + REQ_JOBS + 40 * j, e, len(tok), *tok4, *wt4)
         self.mm[REQ + REQ_X : REQ + REQ_X + x.nbytes] = x.tobytes()
         struct.pack_into("<iii", self.mm, REQ + 8, n_tok, layer, len(jobs))
@@ -88,10 +89,10 @@ def dequant(model_dir: Path, wm: dict[str, str], layer: int, e: int, m: str) -> 
 
 
 def random_jobs(rng: np.random.Generator, experts: np.ndarray, n_tok: int, n_jobs: int) -> Jobs:
-    """n_jobs distinct experts, each with 1..n_tok distinct tokens."""
+    """n_jobs distinct experts, each with 1..min(n_tok, 4) distinct tokens (a job has at most 4)."""
     jobs = []
     for e in rng.choice(experts, n_jobs, replace=False):
-        n = int(rng.integers(1, n_tok + 1))
+        n = int(rng.integers(1, min(n_tok, JN) + 1))
         tok = sorted(rng.choice(n_tok, n, replace=False).tolist())
         jobs.append((int(e), tok, rng.uniform(0.02, 0.3, n).astype(np.float32).tolist()))
     return jobs
@@ -103,7 +104,7 @@ def check(c: Client, rng: np.random.Generator, model_dir: Path, per_layer: dict[
         wm = json.load(f)["weight_map"]
     cache: dict[tuple[int, int], tuple[np.ndarray, ...]] = {}
     worst = 0.0
-    for n_tok in (1, 4):
+    for n_tok in (1, 4, 8):
         errs = []
         for _ in range(n):
             layer = int(rng.integers(N_LAYERS))
@@ -136,7 +137,7 @@ def main() -> None:
     p.add_argument("--check", type=int, default=40, help="requests checked against the reference per T")
     p.add_argument("--n", type=int, default=1000, help="requests per latency measurement")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--T", default="1,4", help="token counts of the latency measurement")
+    p.add_argument("--T", default="1,4,8", help="token counts of the latency measurement")
     p.add_argument("--J", default="1,4,8,12,16", help="job counts of the latency measurement")
     p.add_argument("--gap-us", type=float, default=0, help="pause between requests (as in decoding: ~1000 us)")
     a = p.parse_args()
