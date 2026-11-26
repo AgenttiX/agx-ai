@@ -120,8 +120,8 @@
 <use href="#logo-kubuntu" x="122" y="523" width="56" height="56"/>
 <text x="150" y="635" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">ThinkPad L14 Gen 5</text>
 <text x="150" y="653" font-size="14" font-weight="normal" fill="#52606d" text-anchor="middle">Core Ultra 5 125U, 32 GB RAM</text>
-<text x="150" y="671" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.9 | 106)</tspan></text>
-<text x="150" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (7.8 | 155)</tspan></text>
+<text x="150" y="671" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 26B A4B QAT<tspan font-weight="normal"> (8.5–9.2 | 125)</tspan></text>
+<text x="150" y="689" font-size="14" font-weight="bold" fill="#b4531c" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (7.5–7.9 | 288)</tspan></text>
 <text x="150" y="707" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">Gemma 4 E4B<tspan font-weight="normal"> (14.1–14.4 | 122)</tspan></text>
 <text x="150" y="725" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">Qwen3.5-9B<tspan font-weight="normal"> (12.2–12.7 | 149)</tspan></text>
 <text x="150" y="743" font-size="14" font-weight="bold" fill="#6b4fbb" text-anchor="middle">EmbeddingGemma 2</text>

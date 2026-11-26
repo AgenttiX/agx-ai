@@ -5,6 +5,18 @@ Intel Core Ultra 5 125U (2 P-cores with HT + 8 E-cores + 2 LP E-cores),
 Intel Graphics iGPU (Meteor Lake, 4 Xe cores), Meteor Lake NPU (NPU 3720), 32 GB RAM shared by all of them.
 The models and their settings are in [preset.ini](preset.ini), and the server-wide settings in [`../llama-cpp/config.ini`](../llama-cpp/config.ini).
 
+Current configuration (build b12723, Vulkan on the iGPU, ctx 50000, `parallel = 1`;
+tg = token generation in chat and with a 3.5k-token prompt, pp = prompt processing of 3.5k tokens, t/s):
+
+| Model                      | Quant (Unsloth) | Context | RAM (total in use)  | tg         | pp      | Notes                                                    |
+|----------------------------|-----------------|---------|---------------------|------------|---------|----------------------------------------------------------|
+| Gemma 4 26B-A4B QAT        | UD-Q4_K_XL      | 50000   | 24.8 GB at 45.5k    | 8.5-9.2    | 125-129 | Loaded at startup; no MTP, no checkpoints                |
+| Gemma 4 12B QAT            | UD-Q4_K_XL      | 50000   | -                   | 3.4-3.6    | 62      | No MTP, no checkpoints                                   |
+| Gemma 4 E4B QAT            | UD-Q4_K_XL      | 50000   | -                   | 7.5-7.9    | 275-288 | OpenVINO (../openvino-l14-e4b) generates 1.8x as fast    |
+| Qwen3.5-9B                 | UD-Q4_K_XL      | 50000   | ~24 GB at 46k       | 4.9-5.7    | 77-78   | MTP 2; OpenVINO (../openvino-l14) generates 2.2x as fast |
+
+The RAM column is the whole computer's use (with the desktop session), as the iGPU shares the RAM.
+
 All models run on the iGPU with Vulkan and flash attention off, as that gives the best performance overall:
 compared to the CPU, prompt processing is 3-4x faster, while token generation is 30-40 % slower
 (see the 8k and 32k results below). The iGPU is therefore faster whenever the prompt is longer than ~1.5-2.5x the answer,
@@ -24,7 +36,9 @@ On the iGPU, OpenVINO generates Gemma 4 E4B 1.8x as fast as llama.cpp (14 vs 7.8
 Do not run the LLM servers at the same time as this server:
 together they exhausted the 32 GB of RAM and the kernel killed the desktop session.
 
-Measured on 2026-09-25/26 (build b11176, tg = token generation, pp = prompt processing, t/s).
+The sections below were measured on 2026-09-25/26 (build b11176, tg = token generation, pp = prompt processing, t/s)
+unless otherwise noted; see [Update to b12723](#update-to-b12723-2026-11-26) and [Qwen3.5-9B](#qwen35-9b-2026-11-26)
+for the current numbers.
 
 ## llama bench
 `-fa 1`, no speculative decoding, UD-Q4_K_XL:
@@ -95,6 +109,64 @@ The CPU backend is as fast in the OpenVINO image as in the plain CPU image (`ser
 
 The results vary by ~10 % between runs, and the first benchmark after loading a model can be much slower
 (26B: tg 5.3 t/s) while the pages that other programs pushed to swap are read back.
+
+## Update to b12723 (2026-11-26)
+The image is pinned to the digest of build b12723, as there are no build-tagged `server-vulkan` images after b12282.
+The newer images set `LLAMA_ARG_PORT=8080`, which overrides `port = 9931` of `config.ini`,
+so [docker-compose.yml](docker-compose.yml) sets it back.
+`bench_http.py --tests generation prompt chat depth --prompt-tokens 3500 --depth 3500 --repeat 1`,
+same preset as before (fa off, no MTP, `ctx-checkpoints = 0`):
+
+| Model   | Generation | pp 3.5k   | Chat          | Depth 3.5k: pp / tg |
+|---------|------------|-----------|---------------|---------------------|
+| E4B     | 8.0        | 275 (155) | 7.9 (7.3-7.8) | 288 / 7.5           |
+| 12B     | 3.6        | 62 (55)   | 3.6 (3.3-3.5) | 62 / 3.4            |
+| 26B-A4B | 9.2        | 129 (106) | 9.2 (8.1-8.9) | 125 / 8.5           |
+
+The b11176 numbers of the final configuration are in parentheses: prompts are 20-80 % faster and generation 3-10 %
+faster, with no GPU hangs.
+
+## Qwen3.5-9B (2026-11-26)
+[unsloth/Qwen3.5-9B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF), b12723, Vulkan, fa off, ctx 50000.
+The model is hybrid: 24 Gated DeltaNet (recurrent) layers and 8 full-attention layers, so its KV cache is small.
+`bench_http.py --tests generation prompt chat depth image --prompt-tokens 3500 --depth 3500 --repeat 1`
+(the image test is a 1280x960 image, 1219 prompt tokens):
+
+| Variant                 | Generation | pp 3.5k | Chat (acceptance) | Depth 3.5k: pp / tg | Image   |
+|-------------------------|------------|---------|-------------------|---------------------|---------|
+| UD-Q4_K_XL              | 4.6        | 81      | 4.6               | 82 / 4.5            | 37 s    |
+| UD-Q4_K_XL, MTP 1       | -          | -       | 5.6 (76 %)        | 76 / 4.6            | 38 s    |
+| UD-Q4_K_XL, MTP 2       | 5.7-5.8    | 77      | 5.7 (62 %)        | 77-78 / 4.8-4.9     | 38 s    |
+| UD-Q4_K_XL, MTP 3       | -          | -       | 4.9 (53 %)        | 77 / 4.4            | 38 s    |
+| Q4_0                    | 4.5        | 105     | 4.5               | 106 / 4.4           | 33 s    |
+| Q4_0, MTP 2             | 5.8        | 99      | 5.0 (59 %)        | 100 / 4.3           | 34 s    |
+
+- UD-Q4_K_XL with MTP 2 was chosen. Q4_0 processes prompts ~30 % faster but does not generate faster,
+  and its drafts were accepted less often.
+- MTP 2 is +24 % in chat and +7 % at depth over no MTP. The greedy answers to 80 arithmetic questions were all correct
+  with MTP 1-3 and without it.
+- **Context checkpoints are needed** for this model, unlike for Gemma 4 (see above): with the default checkpoints,
+  the follow-up turns of a 3-turn chat on a 5k-token document processed 27 new tokens in 3 s,
+  while with `ctx-checkpoints = 0` every turn reprocessed the whole 5k tokens (63 s),
+  as the state of the recurrent layers cannot be rolled back to the common prefix.
+- The vision encoder: `hf` picks `mmproj-BF16`, which warns that the graph "uses unsupported operators by the backend"
+  but works (38 s per image). `mmproj-F16` took 252 s per image, and afterwards the server answered text with garbage
+  (0/80 arithmetic answers). The BF16 encoder on the CPU (`no-mmproj-offload = true`) took 100 s.
+- Final configuration: tg 5.8 (generation), 5.7 (chat), 4.9 (3.5k depth) and 2.9 t/s (16k depth);
+  pp 77 t/s (3.5k) and 66 t/s (16k). A 46k-token prompt found a password hidden in the middle,
+  pp 45 t/s (17 min), tg 2.1 t/s, with 7.5 GB of RAM still available.
+- OpenVINO Model Server runs the same model over twice as fast on the iGPU (tg 12.2-12.7 t/s, pp 149 t/s, INT4,
+  [../openvino-l14](../openvino-l14)), so it is the better choice for Qwen3.5-9B on this laptop.
+
+Commands, from the repository root (the test server runs on port 9933):
+```bash
+DOCKER_ARGS="--group-add 992" uv run -m agx_ai.benchmark.llama_cpp.test_server \
+  ghcr.io/ggml-org/llama.cpp@sha256:4e88890069ad09665bf3b8f430f49b308198b5326329693022fef8abc25d2930 \
+  llama-cpp-l14/preset.ini llama-cpp/config.ini llama-cpp/llama-cpp.env
+uv run -m agx_ai.benchmark.bench_http --url http://localhost:9933 --env-file llama-cpp/llama-cpp.env \
+  --model qwen/qwen3.5-9b --no-embedding --repeat 1 --tests generation prompt chat depth image \
+  --prompt-tokens 3500 --depth 3500 16000 --label "L14 b12723: Qwen3.5-9B final (UD-Q4_K_XL, MTP 2)"
+```
 
 ## NPU with llama.cpp
 OpenVINO backend, `GGML_OPENVINO_DEVICE=NPU`:

@@ -6,13 +6,17 @@
 services:
   llama-cpp:
     # The Vulkan image contains both the Vulkan (iGPU) and the CPU backends.
-    image: ghcr.io/ggml-org/llama.cpp:server-vulkan
+    # Pinned to build b12723 (2026-11-25), as there are no build-tagged Vulkan images after b12282.
+    image: ghcr.io/ggml-org/llama.cpp@sha256:4e88890069ad09665bf3b8f430f49b308198b5326329693022fef8abc25d2930
     container_name: llama-cpp
     devices:
       - /dev/dri:/dev/dri
     env_file:
       - path: ../llama-cpp/llama-cpp.env
         # required: false
+    environment:
+      # The image sets LLAMA_ARG_PORT=8080, which would override the port of config.ini.
+      LLAMA_ARG_PORT: "9931"
     # The group names do not exist in the image, so use the host's GIDs (getent group video render).
     group_add:
       - "44"

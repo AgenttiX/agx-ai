@@ -132,7 +132,8 @@ What has given the largest gains, roughly in order:
   own compute buffers.
 - **Not always worth it:** slower on the t480 CPU, on the l14 (dense models on the CPU, E4B, Vulkan 26B) and for
   Qwen3.8-Flash-Next with the drafter on the CPU (verification selects more distinct experts). Faster on the l14
-  CPU 26B (+10-20 %), frame E4B (+6-7 %), t550 E4B (~+50 %), the rtx3070 CPU model (+45 %).
+  CPU 26B (+10-20 %), frame E4B (+6-7 %), t550 E4B (~+50 %), the rtx3070 CPU model (+45 %), l14 Vulkan Qwen3.5-9B
+  (+24 % in chat, +7 % at depth).
 - Benchmarks with repeated text or temperature 0 overstate the acceptance (85-90 %); `llama bench` has no
   speculative decoding at all.
 - The Unsloth drafter of Gemma 4 26B-A4B also works with an uncensored finetune; give it by snapshot path
@@ -188,6 +189,9 @@ What has given the largest gains, roughly in order:
 - Qwen-VL warns that grounding needs `image-min-tokens = 1024` (left as a comment).
 - Test images with the `image` test of `bench_http.py`; the media peaks should stay below the text
   stress peaks.
+- **Check the text answers after an image** when changing the encoder file: on the l14 (Vulkan, b12723), Qwen3.5-9B's
+  `mmproj-F16` took 252 s per image (BF16: 38 s) and the server answered text with garbage afterwards (0/80
+  arithmetic answers vs 80/80). `hf` picks the BF16 file, which warns about unsupported operators but works.
 
 ## Loading (`load-mode`)
 
@@ -210,6 +214,9 @@ What has given the largest gains, roughly in order:
   conversation took 1.0 s instead of 19 s (~0.7-1 GB each). Set it to 0 when RAM is short (t550 WSL).
 - `ctx-checkpoints = 0` on Vulkan (l14): the SWA checkpoints cost ~10 s per request; follow-up turns still reuse
   the cache.
+  **Not for models with recurrent layers** (Qwen3.5 Gated DeltaNet): without checkpoints, every follow-up turn
+  reprocesses the whole conversation (l14 Qwen3.5-9B, 5k-token chat: 63 s vs 3 s per turn), and the checkpoints cost
+  nothing measurable there.
 - `sleep-idle-seconds = 600` unloads idle models (rtx-a4000).
 - The ROCm backend sampler does not support `top-k` (harmless error).
 
@@ -298,6 +305,9 @@ What has given the largest gains, roughly in order:
   `CUDA_CACHE_MAXSIZE=4G` (JIT; restart 343 -> 121 s). Windows: the CUDA 12.4 build for Turing with an older driver;
   native was faster than WSL (+4-11 % tg, 4-6x faster loading).
 - ARM big.LITTLE (frame): do not build with `GGML_NATIVE` (it detects the small core).
+- **Intel iGPU, Vulkan (l14):** b12723 processed 3.5k-token prompts 20-80 % faster than b11176 (Gemma 4 26B-A4B
+  106 -> 125-129 t/s, E4B 155 -> 275-288 t/s) and generated 3-10 % faster, without GPU hangs. There are no build-tagged
+  `server-vulkan` images after b12282, so pin the digest.
 
 ## Block-diffusion models (DiffusionGemma)
 

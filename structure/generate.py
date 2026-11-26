@@ -415,14 +415,15 @@ def build(specs: bool) -> str:
     # nearest length that was measured (in the comments).
     machines = [
         Machine("laptop", 150, pub("ThinkPad L14 Gen 5"), [spec("Core Ultra 5 125U, 32 GB RAM")],
-                # llama-cpp-l14/README.md: 26B-A4B without MTP and checkpoints, chat with a 3.5k-token prompt;
-                # E4B in the final configuration, chat with a 3.5k-token prompt;
+                # llama-cpp-l14/README.md: b12723, 26B-A4B and E4B without MTP and checkpoints, chat and the
+                # 3.5k-token depth test (Qwen3.5-9B is not shown for llama.cpp, as OVMS generates it over twice
+                # as fast);
                 # openvino-l14-e4b/README.md: E4B on the iGPU with OVMS, 4.1k-token prompt
                 # (embeddings on the NPU);
                 # openvino-l14/README.md: Qwen3.5-9B on the iGPU with OVMS, 3.9k-token prompt;
                 # openvino-l14-embeddinggemma2/README.md: EmbeddingGemma 2 on the NPU (no speeds, as for the other
                 # embedding models)
-                [(llama, gemma_moe, "8.9", "106"), (llama, "Gemma 4 E4B", "7.8", "155"),
+                [(llama, gemma_moe, "8.5–9.2", "125"), (llama, "Gemma 4 E4B", "7.5–7.9", "288"),
                  ("openvino.svg", "Gemma 4 E4B", "14.1–14.4", "122"),
                  ("openvino.svg", "Qwen3.5-9B", "12.2–12.7", "149"),
                  ("openvino.svg", "EmbeddingGemma 2", "", "")], ["kubuntu.svg"],
