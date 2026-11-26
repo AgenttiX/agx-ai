@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import io
 import json
 import math
 import os
@@ -350,6 +351,9 @@ def main() -> int:
     parser.add_argument("--hostname", default=os.environ.get("LLAMA_BENCH_HOSTNAME"),
                         help="hostname to store instead of this computer's (default: $LLAMA_BENCH_HOSTNAME, if set)")
     args = parser.parse_args()
+    # The summary contains characters outside of the Windows console encoding (cp1252), e.g. "Δ".
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
 
     api_key = (
         args.api_key or (read_env_key(args.env_file) if args.env_file else None) or os.environ.get("LLAMA_API_KEY")

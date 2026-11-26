@@ -44,6 +44,11 @@ What has given the largest gains, roughly in order:
   a quantized cache to f16 in a temporary buffer that grows with the context, and the model and the MTP drafter
   each reserve one. Gemma 4 26B-A4B on the RTX 3090 saves only 7 % per token with q8_0; on the RTX 3070 q8_0 saves
   a fixed ~670 MiB; on the T550 with MTP it saves nothing. Measure the VRAM before choosing.
+- **Head size 512 (Gemma 4's global layers) converts for every token:** the CUDA vector kernels, which read a
+  quantized cache directly, exist only for head sizes up to 256 (b12250), so a quantized cache goes through the tile
+  kernel and its f16 conversion also when generating. On the T550 (Gemma 4 E4B, no MTP), q8_0 generated 35-50 %
+  slower than f16 with MTP (11.9 vs 19.3 t/s at 32k), and q4_0 with MTP was slower still (11.7 t/s at 32k).
+  q8_0 without MTP is kept there only as a long-context variant (98k instead of 70k tokens).
 - **Where q8_0 was chosen:** Qwen3.8-27B (rtx3090: 64k -> 102k context; radeon-vii: 28k -> 47k), Gemma 4 31B (all
   layers fit), Gemma 4 26B-A4B on radeon-vii and t550, Qwen3.8-Flash-Next. **f16 kept:** Gemma 4 26B-A4B on the
   RTX 3090 and 3070 (little saving, 14 % slower), t480 (slower).

@@ -6,18 +6,21 @@ and the CUDA/WSL workarounds in [`docker-compose.yml`](docker-compose.yml).
 The benchmark results of this computer are saved with the hostname `t550` (`--hostname t550` for the scripts in
 [`../agx_ai/benchmark`](../agx_ai/benchmark/README.md)).
 
-Four models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
+Five models, one loaded at a time (`models-max = 1` in [`../llama-cpp/config.ini`](../llama-cpp/config.ini); requesting the other model unloads
 the loaded one):
 
 - `google/gemma-4-e4b-qat`, the default model, loaded at startup: Gemma 4 E4B QAT (`unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL`),
   entirely on the GPU, with its MTP drafter, flash attention, an f16 KV cache, `ctx-size = 69632`, a single slot
   and the vision/audio encoder (mmproj) on the CPU.
+- `google/gemma-4-e4b-qat-long`, loaded on request: the same model for long documents, with q8_0 K and V caches and
+  no MTP, `ctx-size = 98304`. Generation is 35-50 % slower (see
+  [KV cache quantization](#gemma-4-e4b-qat-kv-cache-quantization-and-context-2026-11-26)).
 - `google/gemma-4-26b-a4b-qat`, loaded on request: Gemma 4 26B-A4B QAT
   (`unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL`), with the MoE experts in RAM and everything else on the GPU, MTP,
   q8_0 K and V caches, `ctx-size = 73728`, a single slot and the vision encoder on the CPU (see
   [Gemma 4 26B-A4B QAT](#gemma-4-26b-a4b-qat)). Slower but much stronger than the E4B.
 - `qwen/qwen3.5-4b`, loaded on request: Qwen3.5-4B (`unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL`), entirely on the GPU,
-  f16 KV cache, `ctx-size = 24576`, the vision encoder on the CPU (see [Qwen3.5-4B and 9B](#qwen35-4b-and-9b-2026-11-26)).
+  f16 KV cache, `ctx-size = 28672`, the vision encoder on the CPU (see [Qwen3.5-4B and 9B](#qwen35-4b-and-9b-2026-11-26)).
 - `qwen/qwen3.5-9b`, loaded on request: Qwen3.5-9B (`unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL`), 20 of 32 layers on the
   GPU, q8_0 K and V caches, `ctx-size = 16384`, the vision encoder on the CPU.
 
@@ -35,6 +38,7 @@ Natively on Windows with llama.cpp b12250 (CUDA 12.4 build), GPU power limit 20 
 | Model | Context | VRAM (peak) | RAM (llama-server) | tg: chat / at 16k / at 32k | pp: 4096 tokens / at 16k / at 32k | Notes |
 |---|---|---|---|---|---|---|
 | Gemma 4 E4B QAT UD-Q4_K_XL, MTP 2 | 69632 | 3883 MiB | ~4.2 GB | 30.6 (native, after a reboot), 32.9 (Docker) / 25.1 (native), 26.9 (Docker) / 19.3 t/s | 245 (native), 253 (Docker) / 212 (native), 215 (Docker) / 180 t/s | Docker is as fast as native; builds after b12250 generate up to 29 % slower at long contexts (see [below](#llamacpp-update-2026-11-25)) |
+| Gemma 4 E4B QAT UD-Q4_K_XL, q8_0 K+V, no MTP (`-long`, 2026-11-26) | 98304 | 3897 MiB | ~4.2 GB | 19.9 / 14.5 / 11.9 t/s (8.1 at 64k, 6.1 at 94k) | 228 / 201 / 173 t/s (133 at 64k, 110 at 94k) | 41 % more context, generation 35-50 % slower; quality as f16 (see [below](#gemma-4-e4b-qat-kv-cache-quantization-and-context-2026-11-26)) |
 | Gemma 4 26B-A4B QAT UD-Q4_K_XL, MTP 2, experts in RAM | 73728 | 3867 MiB | ~16.2 GB | 6.2 (7.9 with b11262 and more free RAM on 2026-09-30) / 6.0 / - t/s | 87 / 82 / - t/s | RAM-bound: keep ~2 GB free for the page cache (see [below](#gemma-4-26b-a4b-qat-with-b12250-natively-2026-11-25)); 4-5 times slower than the E4B, but much stronger; in Docker only without the vision encoder (RAM of the WSL 2 VM) |
 | Qwen3.5-4B UD-Q4_K_XL (2026-11-26) | 28672 | 3835 MiB | ~4 GB | 13.3 / 12.6 (22k) / - t/s | 141 / 108 (22k) / - t/s | No MTP; slower than the E4B (see [Qwen3.5-4B and 9B](#qwen35-4b-and-9b-2026-11-26)) |
 | Qwen3.5-9B UD-Q4_K_XL, 20 of 32 layers on the GPU (2026-11-26) | 16384 | 3833 MiB | ~6.5 GB | 3.5 / 3.0 (14k) / - t/s | 66 / 61 (14k) / - t/s | CPU-bound; the 26B-A4B is faster and stronger here |
@@ -208,6 +212,58 @@ to find, followed by a generated summary. Peak = dedicated GPU memory.
 | non-QAT | 32768 | 29.8k tokens | 3813 MiB | 3941 MiB | works, but at the ~3940 MiB limit, leaving no margin for other programs that use the GPU |
 
 Each 4096 tokens cost 64 MiB. The next step, 73728, would peak at ~3930 MiB, i.e. at the limit. 69632 leaves ~70 MiB.
+
+## Gemma 4 E4B QAT: KV cache quantization and context (2026-11-26)
+
+Retested natively with b12250, to fit more context with a quantized KV cache. The earlier finding still holds:
+**with MTP, a quantized cache saves no VRAM**, and without MTP it costs a lot of generation speed. The default model
+therefore keeps its f16 cache, MTP and ctx 69632, and the q8_0 configuration is a second model,
+`google/gemma-4-e4b-qat-long`, for documents that do not fit otherwise.
+
+**Why:** the global-attention layers of Gemma 4 have a head size of 512, and llama.cpp's CUDA flash attention has
+vector kernels (which read a quantized cache directly) only for head sizes up to 256 (`FATTN_VEC_CASES_ALL_D` in
+`fattn.cu`). For head size 512, it uses the tile kernel, which converts the layer's whole quantized K and V to f16 in
+a temporary buffer (`ggml_cuda_flash_attn_ext_get_alloc_size`): for prompts, for MTP's verification batches, and
+for every generated token. The model and the MTP drafter each reserve this buffer (4 KiB per token of context), so
+q8_0 costs 8.5 + 4 + 4 = 16.5 KiB per token with MTP, as much as f16 (16 KiB). Without MTP it costs 12.5 KiB, but
+the conversion makes generation slower the longer the context.
+
+**VRAM** after loading (`ubatch-size = 256`; the KV buffer includes the ~30 MiB sliding-window cache):
+
+| KV cache | MTP | ctx-size | KV buffer | Compute buffers (model + drafter) | After loading |
+|---|---|---|---|---|---|
+| f16 | yes | 69632 | 1118 MiB | 88 + 44 MiB | 3863 MiB |
+| q8_0 K+V | yes | 69632 | 594 MiB | 354 + 313 MiB | 3889 MiB |
+| q5_0 K+V | yes | 81920 | 450 MiB | 408 + 367 MiB | 3857 MiB |
+| q4_0 K+V | yes | 86016 | | | 3827 MiB |
+| q4_0 K+V | yes | 90112 | 404 MiB | 444 + 403 MiB | 3881 MiB |
+| q8_0 K+V | no | **98304** | 832 MiB | 480 MiB | 3893-3897 MiB |
+| q8_0 K+V | no | 106496 | 900 MiB | 516 MiB | over the limit (~3990 MiB by the buffers) |
+
+ctx 98304 with q8_0 and no MTP held a 94k-token prompt at 3897 MiB, and the shared GPU memory of llama-server
+stayed at its normal 150 MiB (sampled every 20 s with the Windows GPU counters), i.e. nothing moved to shared memory.
+
+**Speed** with [`bench_http.py`](../agx_ai/benchmark/README.md), GPU power limit 20 W (t/s):
+
+| Configuration | Chat | Prompt, 4096 tokens | 16k context: pp / tg | 32k context: pp / tg | 64k context: pp / tg |
+|---|---|---|---|---|---|
+| f16, MTP 2, ctx 69632 (default) | 30.6 | 245 | 212 / 25.1 | 180 / 19.3 | (b12686: 109 / 11.6) |
+| q8_0 K+V, no MTP, ctx 98304 (`-long`) | 19.9 | 228 | 201 / 14.5 | 173 / 11.9 | 133 / 8.1 |
+| q4_0 K+V, MTP 2, ctx 86016 | 16.9 (acceptance 54 %) | | 180 / 10.9 | 174 / 11.7 | |
+
+At 94k tokens, the `-long` configuration processed the prompt at 110 t/s and generated 6.1 t/s. q4_0 with MTP is
+slower still, as every MTP step converts the cache, and q4_0 is measurably lossy (below), so it is not used.
+
+**Quality** with [`quality_http.py`](../agx_ai/benchmark/quality_http.py) (greedy retrieval questions, MTP off, see
+the method in the next section), q8_0 K+V at ctx 98304 against f16 at ctx 69632:
+
+| KV cache | 31k tokens: single / two-step | 61k tokens | 90k tokens | Same answer as f16 | Mean KLD | 99 % KLD | Top token changed |
+|---|---|---|---|---|---|---|---|
+| f16 | 32/32, 9/12 | 32/32, 9/12 | (does not fit) | | | | |
+| q8_0 K+V | 32/32, 10/12 | 32/32, 9/12 | 32/32, 9/12 | 86/88 | 0.00027 | 0.0070 | 2/570 |
+
+The mean KLD is below the noise floor measured in 2026-09 (0.00056 for another `ubatch-size`), i.e. the q8_0 cache is
+as good as f16, also at 90k tokens.
 
 ## Gemma 4 E4B QAT: KV cache quantization (2026-09-28)
 
