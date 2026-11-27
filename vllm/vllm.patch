@@ -37,6 +37,112 @@ diff -ruN a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/di
  
              for group_config, group_state in zip(
                  self.config.kv_group_configs, req_status.group_states
+diff -ruN a/model_executor/kernels/linear/mixed_precision/exllama.py b/model_executor/kernels/linear/mixed_precision/exllama.py
+--- a/model_executor/kernels/linear/mixed_precision/exllama.py
++++ b/model_executor/kernels/linear/mixed_precision/exllama.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ 
+ import torch
+ 
+@@ -16,6 +17,34 @@
+ from .MPLinearKernel import MPLinearKernel, MPLinearLayerConfig
+ 
+ 
++# agx-ai patch (from ../vllm-radeon-vii/vllm-gfx906.patch): ops.gptq_gemm allocates a K x N fp16 scratch buffer on
++# every call, even when it does not use it (fewer than 50 rows). For the lm_head of a large vocabulary that is up to
++# gigabytes (Qwen3.8: 2.4 GiB, Gemma 4: 1.4 GiB) of peak memory, which the KV cache then lacks, or which does not
++# exist at all on a 4 GB GPU. Matrices whose scratch buffer would be larger than this are therefore split into column
++# chunks. Each chunk costs one more kernel launch per forward pass, so the chunks are as large as the largest scratch
++# buffer of the other layers, which is needed anyway, but at least _MIN_CHUNK_ELEMS.
++_MAX_SCRATCH_ELEMS = int(os.environ.get("VLLM_EXLLAMA_MAX_SCRATCH_MB", "512")) * 2**20 // 2
++_MIN_CHUNK_ELEMS = 64 * 2**20 // 2
++_max_unchunked_elems = 0  # the largest scratch buffer of the layers processed so far (the lm_head comes last)
++# agx-ai patch: batches of more rows than this are split, so that gptq_gemm uses its own kernel (up to 50 rows)
++# instead of dequantizing the weights for a cuBLAS FP16 GEMM. 0 = off (the default). For GPUs whose FP16 GEMMs are
++# slow, e.g. the T550 (TU117, no tensor cores, 20 W): 50 rows processed prompts at 119 instead of 65 t/s.
++_ROW_CHUNK = int(os.environ.get("VLLM_EXLLAMA_ROW_CHUNK", "0"))
++
++
++@torch.library.custom_op("agx::row_chunked_gptq_gemm", mutates_args=())
++def _row_chunked_gptq_gemm(
++    x: torch.Tensor, w_q: torch.Tensor, w_zp: torch.Tensor, w_s: torch.Tensor, bits: int, rows: int
++) -> torch.Tensor:
++    """gptq_gemm in chunks of rows (an opaque op for torch.compile, whose row count is symbolic)."""
++    return torch.cat([ops.gptq_gemm(xc, w_q, w_zp, w_s, True, False, bits) for xc in x.split(rows)])
++
++
++@_row_chunked_gptq_gemm.register_fake
++def _(x, w_q, w_zp, w_s, bits, rows):
++    return x.new_empty((x.shape[0], w_s.shape[1]))
++
++
+ class ExllamaLinearKernel(MPLinearKernel):
+     SUPPORTED_QUANT_TYPES = [scalar_types.uint4b8, scalar_types.uint8b128]
+     # In theory supports `scalar_types.uint2b2, scalar_types.uint3b4` too but
+@@ -118,6 +147,30 @@
+         # Repack weights and scales for Machete
+         self._transform_param(layer, self.w_q_name, transform_w_q)
+         self._transform_param(layer, self.w_s_name, transform_w_s)
++        self._split_columns(layer)
++
++    def _split_columns(self, layer: torch.nn.Module) -> None:
++        """agx-ai patch: split a large matrix into column chunks (see _MAX_SCRATCH_ELEMS)."""
++        global _max_unchunked_elems
++        c = self.config
++        k, n = c.partition_weight_shape
++        if k * n <= _MAX_SCRATCH_ELEMS:
++            _max_unchunked_elems = max(_max_unchunked_elems, k * n)
++            return
++        w_q, w_s, w_zp = self._get_weight_params(layer)
++        step = max(128, max(_MIN_CHUNK_ELEMS, _max_unchunked_elems) // k // 128 * 128)
++        pack = 32 // c.weight_type.size_bits  # the zero points are packed along N
++        layer._exllama_chunks = [
++            (
++                w_q[:, a : a + step].contiguous(),
++                w_s[:, a : a + step].contiguous(),
++                w_zp[:, a // pack : (a + step) // pack].contiguous(),
++            )
++            for a in range(0, n, step)
++        ]
++        for name in (self.w_q_name, self.w_s_name, self.w_zp_name):
++            param = getattr(layer, name)
++            param.data = param.data.new_empty(0)
+ 
+     def apply_weights(
+         self,
+@@ -137,9 +190,25 @@
+         use_v2_format = False
+ 
+         assert w_zp is not None, "Zero points are required by Exllama"
+-        output = ops.gptq_gemm(
+-            x_2d, w_q, w_zp, w_s, True, use_v2_format, c.weight_type.size_bits
+-        )
++        chunks = getattr(layer, "_exllama_chunks", None)
++        if _ROW_CHUNK and chunks is None:
++            output = _row_chunked_gptq_gemm(
++                x_2d, w_q, w_zp, w_s, c.weight_type.size_bits, _ROW_CHUNK
++            )
++        elif chunks is not None:
++            output = torch.cat(
++                [
++                    ops.gptq_gemm(
++                        x_2d, q, zp, s, True, use_v2_format, c.weight_type.size_bits
++                    )
++                    for q, s, zp in chunks
++                ],
++                dim=1,
++            )
++        else:
++            output = ops.gptq_gemm(
++                x_2d, w_q, w_zp, w_s, True, use_v2_format, c.weight_type.size_bits
++            )
+ 
+         if bias is not None:
+             output.add_(bias)
 diff -ruN a/model_executor/layers/fused_moe/oracle/int_wna16.py b/model_executor/layers/fused_moe/oracle/int_wna16.py
 --- a/model_executor/layers/fused_moe/oracle/int_wna16.py
 +++ b/model_executor/layers/fused_moe/oracle/int_wna16.py
@@ -220,6 +326,38 @@ diff -ruN a/model_executor/model_loader/utils.py b/model_executor/model_loader/u
                  p.data = get_accelerator_view_from_cpu_tensor(cpu_data)
                  p._vllm_is_uva_offloaded = True
  
+diff -ruN a/model_executor/models/gemma4.py b/model_executor/models/gemma4.py
+--- a/model_executor/models/gemma4.py
++++ b/model_executor/models/gemma4.py
+@@ -1010,6 +1010,13 @@
+             quant_config=quant_config,
+             prefix=f"{prefix}.embed_tokens",
+         )
++        # make_layers() offloads only the decoder layers; the embeddings are only
++        # looked up, so they can be offloaded too (cpu_offload_params: embed_tokens,
++        # embed_tokens_per_layer). Each one right after its creation, so that the
++        # per-layer embedding of E2B/E4B never has to fit on the GPU together with it.
++        from vllm.model_executor.offloader import get_offloader
++
++        get_offloader().wrap_modules(iter([self.embed_tokens]), f"{prefix}.embed_tokens")
+ 
+         # Per-Layer Embedding (PLE) components
+         self.embed_tokens_per_layer: VocabParallelEmbedding | None
+@@ -1026,6 +1033,14 @@
+                 quant_config=quant_config,
+                 prefix=f"{prefix}.embed_tokens_per_layer",
+             )
++            get_offloader().wrap_modules(
++                iter([self.embed_tokens_per_layer]), f"{prefix}.embed_tokens_per_layer"
++            )
++            # Return the creation-time GPU copy of the PLE to the driver. Not needed by any
++            # configuration: tried for E4B on the 4 GB T550 (../vllm-t550), whose load still
++            # failed at the same GPU memory use, as PyTorch reuses its cached blocks anyway.
++            if torch.cuda.is_available():
++                torch.cuda.empty_cache()
+             # Scaled embedding factor (from config, not hardcoded)
+             # Register as buffer so it moves to GPU with the model
+             # and interacts correctly with torch.compile AOT caching.
 diff -ruN a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
@@ -637,12 +775,20 @@ diff -ruN a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/trit
  
      # Ideally we would launch with kernel with:
      # \sum_i[ceil(query_len[i] / BLOCK_Q)] blocks.
-@@ -1012,6 +1026,8 @@
+@@ -1012,6 +1026,16 @@
      # path (used when max_seqlen_q > 1) reads TILE_SIZE_PREFILL.
      if tuned_large_head:
          TILE_SIZE_PREFILL = 128
 +    if ampere_large_head:
 +        TILE_SIZE_PREFILL = 16
++    # agx-ai patch: Turing (sm_75, e.g. the T550) has only 64 KiB of shared memory per block, and the default tiles
++    # need 96 KiB for head_size 512 (Gemma 4's global attention layers). 16-token KV tiles and a single pipeline
++    # stage fit.
++    turing_large_head = head_size >= 512 and current_platform.is_device_capability(75)
++    if turing_large_head:
++        TILE_SIZE_PREFILL = 16
++        TILE_SIZE_DECODE = 16
++        launch_num_stages = 1
  
      # USE_TD requires BLOCK_SIZE % TILE_SIZE == 0 (enforced by a
      # ``tl.static_assert`` in the kernel).  The default prefill tile

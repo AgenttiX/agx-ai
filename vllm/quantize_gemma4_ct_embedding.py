@@ -5,10 +5,12 @@
 Google's quantization-aware training), but the embedding and the lm_head in BF16: 2.6 GiB each, 20.6 GiB on the GPU
 in total, which leaves no room for a KV cache in 21 GB. This script copies the checkpoint and quantizes the two with
 round-to-nearest (--embed-bits, --lm-head-bits; group size 32 for int4 and 128 for int8), with the functions of
-repack_gemma4_qat.py. The embedding and the lm_head stay untied, because vLLM cannot use a
-quantized embedding as the lm_head. All other tensors (the int4 linear weights, the norms and the vision tower) are
-copied unchanged. A tensor that is already quantized (e.g. the int8 lm_head of a checkpoint built by
-repack_gemma4_qat.py, given as a directory with --repo) is copied unchanged too.
+repack_gemma4_qat.py. For Gemma 4 E2B/E4B, --ple-bits quantizes their per-layer embedding the same way (4.4/5.3 GiB
+in BF16), which vLLM creates on the GPU before it offloads it to RAM, so that it fits on a 4 GB GPU.
+The embedding and the lm_head stay untied, because vLLM cannot use a quantized embedding as the lm_head. All other
+tensors (the int4 linear weights, the norms and the vision tower) are copied unchanged. A tensor that is already
+quantized (e.g. the int8 lm_head of a checkpoint built by repack_gemma4_qat.py, given as a directory with --repo) is
+copied unchanged too.
 
 Included as a command in the vLLM image of this directory, which has torch, safetensors, huggingface_hub and
 compressed-tensors (see README.md). repack_gemma4_qat.py must be in the same directory.
@@ -27,6 +29,8 @@ import torch  # pyrefly: ignore[missing-import]
 
 REPO = "google/gemma-4-31B-it-qat-w4a16-ct"
 EMBED = "model.language_model.embed_tokens"
+# The per-layer embedding of Gemma 4 E2B/E4B (262144 x 35 or 42 layers x 256), only in those models.
+PLE = "model.language_model.embed_tokens_per_layer"
 
 
 def main() -> None:
@@ -38,6 +42,8 @@ def main() -> None:
     )
     parser.add_argument("--embed-bits", type=int, default=4, choices=[4, 8])
     parser.add_argument("--lm-head-bits", type=int, default=8, choices=[4, 8])
+    parser.add_argument("--ple-bits", type=int, default=16, choices=[4, 8, 16],
+                        help="per-layer embedding of E2B/E4B (16 = keep; default %(default)s)")
     args = parser.parse_args()
 
     src = Path(args.repo) if Path(args.repo).is_dir() else Path(snapshot_download(args.repo))
@@ -55,6 +61,17 @@ def main() -> None:
                     tensors.update(repack.packed("lm_head", *repack.quant_sym(t, args.lm_head_bits), args.lm_head_bits))
                 if name == EMBED + ".weight":
                     tensors.update(repack.packed(EMBED, *repack.quant_sym(t, args.embed_bits), args.embed_bits))
+                elif name == PLE + ".weight" and args.ple_bits != 16:
+                    # In chunks of rows, as quantizing (FP32) and packing (int32) the whole tensor at once would
+                    # need ~9 GiB each for E2B, more than the RAM of the WSL 2 VM of a 32 GB laptop.
+                    parts = [repack.packed(PLE, *repack.quant_sym(c, args.ple_bits), args.ple_bits)
+                             for c in t.split(8192)]
+                    tensors.update({
+                        f"{PLE}.weight_packed": torch.cat([d[f"{PLE}.weight_packed"] for d in parts]),
+                        f"{PLE}.weight_scale": torch.cat([d[f"{PLE}.weight_scale"] for d in parts]),
+                        f"{PLE}.weight_shape": torch.tensor(list(t.shape), dtype=torch.int64),
+                    })
+                    del parts
                 elif name != "lm_head.weight":
                     tensors[name] = t
                 print(name, flush=True)
@@ -74,6 +91,10 @@ def main() -> None:
     q["config_groups"]["group_lm_head"] = repack.group_args(
         args.lm_head_bits, repack.group_size(args.lm_head_bits), ["re:.*lm_head$"]
     )
+    if args.ple_bits != 16:
+        q["config_groups"]["group_ple"] = repack.group_args(
+            args.ple_bits, repack.group_size(args.ple_bits), [f"re:.*{PLE.rsplit('.', 1)[1]}$"]
+        )
     q["ignore"] = [n for n in q.get("ignore", []) if n != "lm_head"]
     (args.out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     size = sum(t.numel() * t.element_size() for t in tensors.values()) / 2**30

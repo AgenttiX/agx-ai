@@ -1,0 +1,63 @@
+# vLLM on the NVIDIA T550 Laptop GPU (4 GB, Turing TU117) under Docker Desktop with WSL 2 on Windows.
+# See README.md for the configuration and results. Gemma 4 E2B QAT only: E4B does not fit (README.md).
+# The same port as ../llama-cpp-t550 (9931): only one of the two fits on the GPU at a time.
+# The API key is the one of the llama.cpp server (LLAMA_API_KEY in ../llama-cpp/llama-cpp.env), so that clients work
+# with both.
+# Start: docker compose -f ../llama-cpp-t550/docker-compose.yml stop && docker compose up -d
+services:
+  vllm:
+    # vllm/vllm-openai with ../vllm/vllm.patch, whose Gemma 4 embedding offload, Turing Triton attention tiles and
+    # exllama kernel changes are needed here, see ../vllm/README.md.
+    # Built by ../.github/workflows/deploy-docker-vllm.yml.
+    image: ghcr.io/agenttix/agx-ai/vllm:latest
+    container_name: vllm-t550
+    entrypoint: ["/bin/sh", "-c", "exec vllm serve --config /etc/vllm/config.yaml --api-key \"$$LLAMA_API_KEY\""]
+    env_file:
+      - ../llama-cpp/llama-cpp.env
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # vLLM disables pinned memory under WSL 2, but UVA offloading of the embeddings needs it.
+      VLLM_WSL2_ENABLE_PIN_MEMORY: "1"
+      # No PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, unlike the other vLLM configurations: under Windows, its
+      # allocations fail at ~3.4 GiB ("CUDA driver error: device not ready"), while cudaMalloc reaches ~3.7 GiB in
+      # VRAM, which E4B needs (README.md#gpu-memory-under-windows).
+      # The Marlin kernel relies on tensor cores, which the TU117 lacks: generation 15.5 t/s vs. 43.7 t/s with the
+      # exllama (GPTQ) kernel, which vLLM selects next (README.md#int4-kernel).
+      VLLM_DISABLED_KERNELS: MarlinLinearKernel
+      # The exllama kernel's dequantization scratch is K x N FP16 per layer (1.4 GiB for the int8 lm_head); with the
+      # column chunking of ../vllm/vllm.patch, the wide layers are split so that it stays below 128 MiB.
+      VLLM_EXLLAMA_MAX_SCRATCH_MB: "128"
+      # Above 50 rows, the exllama kernel dequantizes the weights and calls cuBLAS, whose FP16 GEMM is slow without
+      # tensor cores (~0.4 TFLOPS). Splitting the prefill into chunks of 50 rows keeps its own kernel:
+      # prompt processing 119 t/s vs. 65 t/s (../vllm/vllm.patch).
+      VLLM_EXLLAMA_ROW_CHUNK: "50"
+      # Keep the Triton and Inductor caches, so that a restart is faster.
+      TRITON_CACHE_DIR: /root/.cache/vllm/triton
+      TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
+    ipc: host
+    ports:
+      - "9931:8000"
+    volumes:
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      # Checkpoints built locally, see README.md#checkpoint
+      - ~/.cache/vllm-models:/models:ro
+      - vllm-cache:/root/.cache/vllm
+      - ./config-gemma-4-e2b-qat.yaml:/etc/vllm/config.yaml:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: all
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start compiles kernels and captures CUDA graphs for several minutes.
+      start_period: 25m
+
+volumes:
+  vllm-cache:

@@ -5,8 +5,11 @@
 # - Triton attention uses larger prefill blocks on sm_86,
 # - UVA weight offloading works for MoE models with experts in RAM on small GPUs, e.g. Qwen3.8-Flash-Next on 8 GB,
 # - native CPU KV offloading restores sliding-window models with an MTP drafter in the full-attention group (Gemma 4),
-# - and Qwen3.8-Flash-Next and Qwen3.5/3.6/3.8 can run their vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for
-#   image and video input.
+# - Qwen3.8-Flash-Next and Qwen3.5/3.6/3.8 can run their vision tower on the CPU (QWEN38_VISION_DEVICE=cpu) for
+#   image and video input,
+# - and Gemma 4 E2B/E4B run on a 4 GB Turing GPU (the T550): embedding offloading, Triton attention tiles for head
+#   size 512 on sm_75, and a faster exllama kernel without tensor cores (VLLM_EXLLAMA_MAX_SCRATCH_MB,
+#   VLLM_EXLLAMA_ROW_CHUNK).
 # It also includes the Gemma 4 checkpoint scripts (repack_gemma4_qat.py, quantize_gemma4_ct_embedding.py) as commands,
 # and on x86-64 the pth-flash-attn kernel (an attention backend plugin, --attention-backend CUSTOM) for int8 KV caches
 # on sm_80/86/89.

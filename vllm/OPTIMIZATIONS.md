@@ -386,6 +386,31 @@ natively supported by vLLM 0.33.0:
   `bench_http`) rather than the generation speed between chunks.
 - Not tried: `max-num-seqs` > 1, FULL CUDA graphs.
 
+## Turing without tensor cores, 4 GB under Windows (T550)
+
+Gemma 4 E2B and E4B QAT on the NVIDIA T550 Laptop GPU (TU117, sm_75) under Docker Desktop with WSL 2,
+[`../vllm-t550`](../vllm-t550/README.md), 2026-11-26/27:
+
+- **Do not use `expandable_segments` under Windows (WDDM) near the memory limit.** CUDA reports only ~3.2 GiB of the
+  4 GiB as free (natively and in WSL 2, with nothing else on the GPU): the driver's budget, not a limit. `cudaMalloc`
+  goes past it at full VRAM speed up to ~3.7 GiB (then WDDM pages to system RAM, without an error), but PyTorch's
+  `expandable_segments` (the CUDA virtual memory API) fails at ~3.4 GiB with "CUDA driver error: device not ready".
+  Without it, E4B fits; llama.cpp, which uses `cudaMalloc` and never asks for the free memory, used ~3.9 GiB.
+  Set the KV cache with `kv-cache-memory-bytes` and `gpu-memory-utilization` below the reported free memory.
+- **Marlin is slow without tensor cores:** 15.5 t/s generation for E2B vs. 43.7 t/s with the exllama (GPTQ) kernel
+  (`VLLM_DISABLED_KERNELS=MarlinLinearKernel`; it needs the column chunking of `vllm.patch` for wide layers).
+- **cuBLAS FP16 GEMM is slow without tensor cores** (~0.4 TFLOPS at the 20 W power limit): exllama switches to it
+  above 50 rows, so prefill splits the input into 50-row chunks (`VLLM_EXLLAMA_ROW_CHUNK=50`): 119 instead of 65 t/s.
+- **Triton attention needs smaller tiles** for Gemma 4's head size 512 on sm_75 (64 KiB of shared memory), see
+  `vllm.patch`.
+- **Embeddings in RAM:** Gemma 4 E2B/E4B's per-layer embedding (PLE) is larger than the int4 decoder (2.2-2.7 GiB in
+  int8); with the patched embedding offload it and the token embedding live in pinned RAM (UVA), which needs
+  `VLLM_WSL2_ENABLE_PIN_MEMORY=1` under WSL 2. vLLM creates the PLE on the GPU first, so it is quantized to int8
+  (`quantize_gemma4_ct_embedding.py --ple-bits 8`) to fit even temporarily.
+- **The lm_head stays on the GPU** (read for every token; in RAM it would take ~50 ms per token over PCIe x4): int8
+  for E2B, int4 for E4B, whose decoder takes 2.05 GiB.
+- **MTP:** 2 draft tokens were best (E2B: chat 58.3 t/s, vs. 40.9 without the drafter).
+
 ## vLLM or llama.cpp?
 
 - **vLLM won:** Qwen3.8-27B on the RTX 3090 (+52 % context, 65-155 % faster tg; hyperqwen faster still), throughput

@@ -1,0 +1,44 @@
+# vllm serve --config for Gemma 4 E2B QAT on the NVIDIA T550 Laptop GPU (4 GB, Turing TU117). Benchmarks: README.md
+#
+# Google's int4 QAT checkpoint (google/gemma-4-E2B-it-qat-w4a16-ct) with its BF16 embedding, lm_head and per-layer
+# embedding (PLE) quantized to int8 by ../vllm/quantize_gemma4_ct_embedding.py (README.md#checkpoint):
+# 4.85 GiB instead of 7.9 GiB, and the PLE (2.2 GiB in int8, 4.4 GiB in BF16) can be created on the GPU before it
+# is offloaded to RAM.
+model: /models/gemma-4-E2B-it-qat-w4a16-ct-embed8-head8-ple8
+served-model-name: google/gemma-4-e2b-qat
+# Turing has no BF16.
+dtype: float16
+# The vision and audio encoders do not fit (0.9 GiB).
+language-model-only: true
+
+# The embedding and the PLE (2.6 GiB) in pinned RAM, looked up over PCIe (UVA): only a few rows per token.
+# Needs VLLM_WSL2_ENABLE_PIN_MEMORY=1 under WSL 2 (docker-compose.yml) and the embedding offload of
+# ../vllm/vllm.patch (gemma4.py), as vLLM offloads only the decoder layers by default. 10 GiB is only an upper limit.
+offload-backend: uva
+cpu-offload-gb: 10
+cpu-offload-params: [embed_tokens, embed_tokens_per_layer]
+
+# CUDA reports only ~3.2 GiB of the 4 GiB as free (the budget of the Windows driver, also natively; README.md), so
+# vLLM's default gpu-memory-utilization of 0.9 (3.6 GiB) refuses to start. The KV cache is set in bytes instead:
+# 0.52 GB of int8 KV holds 147k tokens (Gemma 4's sliding-window layers need only their window), more than the
+# model's maximum context. Peak 3129 MiB in the benchmarks.
+max-model-len: 131072
+kv-cache-memory-bytes: 520000000
+gpu-memory-utilization: 0.78
+kv-cache-dtype: int8_per_token_head
+# The Triton attention with the Turing tile sizes of ../vllm/vllm.patch: the default tiles need 96 KiB of shared
+# memory for the head size 512 of Gemma 4's global layers, Turing has 64 KiB. FlashAttention 2 does not support sm_75.
+attention-backend: TRITON_ATTN
+max-num-batched-tokens: 2048
+max-num-seqs: 1
+enable-prefix-caching: true
+
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+
+# Chat 55.6 t/s with 2 draft tokens (acceptance 50 %), 56.5 with 3 (more variance), 49.4 with 1, 40.9 without the
+# drafter (12 chat requests at 20 W).
+speculative-config: {"method": "mtp", "model": "google/gemma-4-E2B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
+# CUDA graphs only for decode (1 token + up to 2 drafts, 4 for headroom): fewer graphs, less VRAM.
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4]}

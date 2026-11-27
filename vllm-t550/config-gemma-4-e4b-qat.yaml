@@ -1,0 +1,40 @@
+# vllm serve --config for Gemma 4 E4B QAT on the NVIDIA T550 Laptop GPU (4 GB, Turing TU117). Benchmarks: README.md
+#
+# Works, but llama.cpp is better for E4B on this GPU (../llama-cpp-t550: chat 30.6 vs. 25.8 t/s, prompt processing
+# 245 vs. 115 t/s, 69632 vs. 30720 tokens of context, and llama.cpp at 20 W vs. 30 W here). Only loads without
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (docker-compose.yml, README.md#gpu-memory-under-windows).
+#
+# Built by ../vllm/quantize_gemma4_ct_embedding.py with --embed-bits 8 --lm-head-bits 4 --ple-bits 8
+# (README.md#checkpoint): the int4 lm_head leaves 0.32 GiB more for the KV cache than int8.
+model: /models/gemma-4-E4B-it-qat-w4a16-ct-embed8-head4-ple8
+served-model-name: google/gemma-4-e4b-qat
+# Turing has no BF16.
+dtype: float16
+# The vision and audio encoders do not fit (0.9 GiB).
+language-model-only: true
+
+# The embedding (0.63 GiB) and the PLE (2.67 GiB) in pinned RAM, see config-gemma-4-e2b-qat.yaml.
+offload-backend: uva
+cpu-offload-gb: 10
+cpu-offload-params: [embed_tokens, embed_tokens_per_layer]
+
+# The model takes 2.96 GiB on the GPU (with the drafter); 0.45 GB of int8 KV hold 31094 tokens (~14 KB per token, 4
+# times as much as E2B). Peak 3859 MiB in the benchmarks, at the limit of what WDDM keeps in VRAM (~3.7 GiB of
+# allocations plus the CUDA context): do not raise the KV cache.
+max-model-len: 30720
+kv-cache-memory-bytes: 450000000
+gpu-memory-utilization: 0.78
+kv-cache-dtype: int8_per_token_head
+# The Triton attention with the Turing tile sizes of ../vllm/vllm.patch, see config-gemma-4-e2b-qat.yaml.
+attention-backend: TRITON_ATTN
+max-num-batched-tokens: 2048
+max-num-seqs: 1
+enable-prefix-caching: true
+
+reasoning-parser: gemma4
+enable-auto-tool-choice: true
+tool-call-parser: gemma4
+
+# 2 draft tokens as for E2B (not tuned separately): acceptance 53 % in chat.
+speculative-config: {"method": "mtp", "model": "google/gemma-4-E4B-it-qat-q4_0-unquantized-assistant", "num_speculative_tokens": 2}
+compilation-config: {"cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 3, 4]}

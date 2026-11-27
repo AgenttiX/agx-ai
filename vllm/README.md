@@ -11,8 +11,8 @@ locally:
 docker build -t ghcr.io/agenttix/agx-ai/vllm:latest .
 ```
 
-Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rtx3090) and
-[`../vllm-rtx3070`](../vllm-rtx3070). For gfx906 (Radeon VII), see
+Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rtx3090),
+[`../vllm-rtx3070`](../vllm-rtx3070) and [`../vllm-t550`](../vllm-t550). For gfx906 (Radeon VII), see
 [`../vllm-radeon-vii`](../vllm-radeon-vii) instead.
 
 - The base image is `vllm/vllm-openai:v0.33.0` (CUDA 13.0), pinned in the [`Dockerfile`](Dockerfile) (v0.31.0 until
@@ -101,6 +101,30 @@ Used by [`../vllm-rtx-a4000`](../vllm-rtx-a4000), [`../vllm-rtx3090`](../vllm-rt
     15.9 ms (BF16 cache: 14.6 ms). The cache is written by vLLM's CUDA `reshape_and_cache`, which supports FP8 on
     Ampere. As the hybrid model's attention pages are as large as its Gated DeltaNet state pages, the FP8 cache doubles
     the tokens per page, which roughly halves the memory per token of all cache groups.
+  - Gemma 4 E2B/E4B QAT on the 4 GB NVIDIA T550 (Turing TU117, sm_75, no usable tensor cores) of
+    [`../vllm-t550`](../vllm-t550), added on 2026-11-27. Each part is inactive unless its setting or its hardware asks
+    for it, so the other configurations are unchanged:
+    - Gemma 4 offloads its token embedding and its per-layer embedding (PLE) with `cpu-offload-params: embed_tokens,
+      embed_tokens_per_layer` (`model_executor/models/gemma4.py`; like Qwen4Exp above, they are created outside
+      `make_layers`). Each one right after its creation, so that the two never have to fit on the GPU together (the
+      PLE of E2B is 2.2 GiB in int8). After the PLE, the patch also calls `torch.cuda.empty_cache()`. **Not needed by
+      any configuration**: it was an attempt to make E4B fit, which failed at the same GPU memory use, as PyTorch
+      reuses its cached blocks anyway (the cause was `expandable_segments`, see
+      [`../vllm-t550/README.md`](../vllm-t550/README.md#gpu-memory-under-windows)). Kept, as it is harmless.
+    - Triton attention on sm_75 with head size 512 (Gemma 4's global layers) uses KV tiles of 16 tokens and one
+      pipeline stage (`triton_unified_attention.py`): the default tiles need 96 KiB of shared memory, Turing has
+      64 KiB (`OutOfResources`).
+    - The exllama (GPTQ) kernel (`model_executor/kernels/linear/mixed_precision/exllama.py`), which the T550 uses
+      instead of Marlin (`VLLM_DISABLED_KERNELS=MarlinLinearKernel`; Marlin relies on tensor cores):
+      - Layers whose K x N FP16 dequantization scratch would exceed `VLLM_EXLLAMA_MAX_SCRATCH_MB` (default 512) are
+        split into column chunks (ported from `vllm-gfx906.patch` of [`../vllm-radeon-vii`](../vllm-radeon-vii)).
+        Gemma 4's lm_head would need 1.3 GiB.
+      - `VLLM_EXLLAMA_ROW_CHUNK=N` (off by default) splits the input into chunks of N rows, as the kernel
+        dequantizes the weights and calls cuBLAS above 50 rows, whose FP16 GEMM is slow without tensor cores
+        (~0.4 TFLOPS on the T550). With 50: prompt processing 119 instead of 65 t/s (E2B). A
+        `torch.library.custom_op`, as a Python split fails under `torch.compile`. Column-chunked layers are not
+        split into rows: on the T550, that is only the lm_head, which gets one row per sequence (plus the drafts)
+        even during prefill, as vLLM computes only the logits it samples.
 - v0.33.0 against v0.31.0, both images with the Qwen3.8-27B configuration of [`../vllm-rtx3090`](../vllm-rtx3090)
   measured back to back on 2026-11-11 with the GPU unlock (`--tests generation prompt chat depth --prompt-tokens 145000
   --depth 6400 32000 100000`): the same speed within the noise (prompt processing 1063 vs 1061 t/s at 145k, 1715 vs
