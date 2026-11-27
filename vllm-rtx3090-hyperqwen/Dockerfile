@@ -3,7 +3,7 @@
 # stay on the CPU (hyperqwen-vision.patch), so that it takes no VRAM. Its pth-flash-attn kernel can also read vLLM's
 # int4_per_token_head KV cache (pthfa-int4/), for twice the context: PTH_KV_DTYPE=int4_per_token_head (with PTH_FA=1)
 # selects it in the launcher; unset, the KV cache stays int8_per_token_head. See README.md.
-FROM ghcr.io/syv-ai/hyperqwen@sha256:68557954f5700e3bbdab37e0e310b83adc42e2cd20ddcd71e46b5690ca92f71e
+FROM ghcr.io/syv-ai/hyperqwen@sha256:371e1209cd3e717f47c1e94a47d7f20ca63133859c57964d4bd1b38278b7af7b
 
 COPY cpu_vision.py /app/venv/lib/python3.12/site-packages/vllm/model_executor/models/qwen3_vl_cpu_vision.py
 COPY hyperqwen-vision.patch /tmp/
